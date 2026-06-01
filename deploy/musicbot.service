@@ -1,0 +1,23 @@
+[Unit]
+Description=Discord MusicBot
+After=network.target
+StartLimitIntervalSec=120
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/musicbot
+Environment="PATH=/home/ubuntu/musicbot/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin"
+EnvironmentFile=/home/ubuntu/musicbot/.env
+ExecStart=/home/ubuntu/musicbot/.venv/bin/python bot.py
+Restart=on-failure
+RestartSec=5
+MemoryMax=700M
+OOMScoreAdjust=500
+LimitNOFILE=65536
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

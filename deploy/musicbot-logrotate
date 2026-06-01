@@ -1,0 +1,10 @@
+/home/ubuntu/apps/musicbot/logs/musicbot.log {
+    su ubuntu ubuntu
+    weekly
+    rotate 4
+    compress
+    delaycompress
+    missingok
+    notifempty
+    copytruncate
+}
