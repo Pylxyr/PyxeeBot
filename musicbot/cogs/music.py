@@ -1373,7 +1373,6 @@ class MusicCog(commands.Cog):
         self._http_session: aiohttp.ClientSession = aiohttp.ClientSession()
 
         # Oracle Micro memory management
-        self._resolve_cache_max = 500  # ~25MB cap
         self._last_search_max = 100    # ~500KB cap
 
     # ------------------------------------------------------------------
@@ -1428,7 +1427,7 @@ class MusicCog(commands.Cog):
                 (False, True):  fs,
                 (True,  True):  fps,
             }
-        return dict(self._ytdl_variants[(flat_playlist, flat_search)])
+        return self._ytdl_variants[(flat_playlist, flat_search)]
 
     async def _validate_stream_url(self, track: Track) -> bool:
         """Quick HEAD check that the stream URL is still alive. Returns False if dead."""
@@ -1529,11 +1528,11 @@ class MusicCog(commands.Cog):
         return cleaned
 
     def _token_overlap_ratio(
-        self, query_tokens: list[str], candidate_tokens: list[str]
+        self, query_tokens: list[str], candidate_tokens: list[str] | set[str] | tuple[str, ...]
     ) -> float:
         if not query_tokens or not candidate_tokens:
             return 0.0
-        candidate_set = set(candidate_tokens)
+        candidate_set = candidate_tokens if isinstance(candidate_tokens, set) else set(candidate_tokens)
         matches = sum(1 for token in query_tokens if token in candidate_set)
         return matches / len(query_tokens)
 
@@ -1699,14 +1698,14 @@ class MusicCog(commands.Cog):
         is_anime_query = intent.get("anime", False)
         is_dash_query = intent.get("dash_format", False)
 
-        title_overlap = self._token_overlap_ratio(query.query_tokens, entry.title_tokens)
-        uploader_overlap = self._token_overlap_ratio(query.query_tokens, entry.uploader_tokens)
-        metadata_overlap = self._token_overlap_ratio(query.query_tokens, entry.metadata_tokens)
+        title_overlap = self._token_overlap_ratio(query.query_tokens, entry.title_token_set)
+        uploader_overlap = self._token_overlap_ratio(query.query_tokens, entry.uploader_token_set)
+        metadata_overlap = self._token_overlap_ratio(query.query_tokens, entry.metadata_token_set)
         missing_title_tokens = [
             t for t in query.query_tokens if t not in entry.title_token_set
         ]
         missing_title_uploader_overlap = self._token_overlap_ratio(
-            missing_title_tokens, entry.uploader_tokens
+            missing_title_tokens, entry.uploader_token_set
         )
         ratio = SequenceMatcher(
             None, query.normalized_query, entry.normalized_title, autojunk=False
@@ -2023,9 +2022,9 @@ class MusicCog(commands.Cog):
         )
         return view
 
-    def _queue_lines(self, player: GuildPlayer, *, limit: int) -> list[str]:
+    def _queue_lines(self, player: GuildPlayer, *, limit: int, include_current: bool = True) -> list[str]:
         lines: list[str] = []
-        if player.current:
+        if include_current and player.current:
             lines.append(
                 f"Now: `{discord.utils.escape_markdown(player.current.title)}` "
                 f"[{player.current.duration_label}]"
@@ -2092,10 +2091,7 @@ class MusicCog(commands.Cog):
             inline=True,
         )
 
-        preview_lines = self._queue_lines(player, limit=NOW_PLAYING_PREVIEW_LIMIT)
-        # _queue_lines includes the current track as "Now:" — strip it.
-        if preview_lines and player.current:
-            preview_lines = preview_lines[1:]
+        preview_lines = self._queue_lines(player, limit=NOW_PLAYING_PREVIEW_LIMIT, include_current=False)
         embed.add_field(
             name="Up Next",
             value="\n".join(preview_lines) if preview_lines else "Nothing queued.",
@@ -2125,10 +2121,21 @@ class MusicCog(commands.Cog):
     async def _update_bot_presence(self) -> None:
         """Set bot activity based on how many guilds are actively playing.
 
-        Discord allows only one global status per bot account — last writer wins
-        when multiple guilds are active.  This shows a summary instead of a
-        race-condition winner.
+        Debounced to 5 seconds so rapid queue changes don't flood the gateway.
         """
+        # Cancel any pending presence update and reschedule.
+        existing = getattr(self, "_presence_task", None)
+        if existing and not existing.done():
+            existing.cancel()
+        self._presence_task: asyncio.Task[None] = asyncio.create_task(
+            self._debounced_presence_update()
+        )
+
+    async def _debounced_presence_update(self) -> None:
+        try:
+            await asyncio.sleep(5.0)
+        except asyncio.CancelledError:
+            return
         active = [
             p for p in self.players.values()
             if p.current and p.voice_client and p.voice_client.is_playing()
@@ -2138,8 +2145,8 @@ class MusicCog(commands.Cog):
                 prefix = self.bot.settings.default_prefix
                 await self.bot.change_presence(
                     activity=discord.Activity(
-                        type=discord.ActivityType.listening,
-                        name=f"{prefix}play",
+                        type=discord.ActivityType.watching,
+                        name="pylxyr.github.io/PyxeeBot",
                     )
                 )
             elif len(active) == 1:
@@ -2737,11 +2744,17 @@ class MusicCog(commands.Cog):
                     break
                 if not track.stream_url:
                     candidates.append(track)
+            if not candidates:
+                return
             token = _CURRENT_GUILD_ID.set(guild_id)
             try:
-                for track in candidates:
+                async def _prefetch_one(track: Track) -> None:
                     with contextlib.suppress(commands.BadArgument, Exception):
                         await self._resolve_track(track)
+
+                # Gather concurrently — the guild semaphore inside _extract_info
+                # already bounds parallelism to 1 per guild, so this is safe.
+                await asyncio.gather(*(_prefetch_one(t) for t in candidates))
             finally:
                 _CURRENT_GUILD_ID.reset(token)
             self._persist_snapshot(guild_id)
@@ -3069,11 +3082,19 @@ class MusicCog(commands.Cog):
         if not player:
             await context.send("I am not connected.")
             return
+        gid = context.guild.id
         await player.destroy()
-        self.players.pop(context.guild.id, None)
-        await self._flush_snapshot(context.guild.id, entries=[])
+        self.players.pop(gid, None)
+        await self._flush_snapshot(gid, entries=[])
+        # Clean up all per-guild task dicts and cached state (Fix #17).
+        for task_dict in (self.snapshot_tasks, self.np_refresh_tasks, self.prefetch_tasks):
+            task = task_dict.pop(gid, None)
+            if task and not task.done():
+                task.cancel()
+        self._guild_extract_semaphores.pop(gid, None)
+        self.now_playing_messages.pop(gid, None)
         await context.send("Disconnected and cleared the queue.")
-        await self._refresh_now_playing_message(context.guild.id)
+        await self._refresh_now_playing_message(gid)
 
     @commands.hybrid_command(name="history")
     @commands.guild_only()
@@ -3172,8 +3193,11 @@ class MusicCog(commands.Cog):
         if target.thumbnail_url:
             embed.set_thumbnail(url=target.thumbnail_url)
         await context.send(embed=embed)
-        if player.current and player.voice_client:
-            player.skip()
+        # Do NOT call player.skip() here. Editing the deque is sufficient —
+        # the player loop will dequeue the new front when the current track ends,
+        # or the user can call !skip manually to advance immediately.
+        # Calling skip() here creates a race: the loop can pop the new front
+        # before the stop() callback fires, causing the wrong track to play.
 
     @commands.hybrid_command(name="replay")
     @commands.guild_only()
@@ -3324,14 +3348,13 @@ class MusicCog(commands.Cog):
             await context.send("Nothing is playing.")
             return
         self._remember_channel(player, context.channel)
-        if player.loop_mode == "one":
-            player.loop_mode = "off"
-            await context.send("🔁 Repeat **off**.")
-        else:
-            player.loop_mode = "one"
-            await context.send(
-                f"🔂 Repeating **{discord.utils.escape_markdown(player.current.title)}**."
-            )
+        # Fix #28: consistent format with !loop / _toggle_loop_for_member.
+        prev_label = LOOP_LABELS.get(player.loop_mode, "Off")
+        player.loop_mode = "off" if player.loop_mode == "one" else "one"
+        self._persist_snapshot(context.guild.id)
+        label = LOOP_LABELS.get(player.loop_mode, "Off")
+        icon = LOOP_ICONS.get(player.loop_mode, "→")
+        await context.send(f"Loop changed: **{prev_label}** → {icon} **{label}**")
         await self._refresh_now_playing_message(context.guild.id)
 
     @commands.hybrid_command(name="search", aliases=["find", "s"])
@@ -3690,16 +3713,17 @@ class MusicCog(commands.Cog):
             await context.send("Playlist not found.")
             return
 
-        added = 0
-        skipped = 0
+        cap_rows = list(rows[: self.bot.settings.max_playlist_size])
+        results: list[bool] = []
+
         async with context.typing():
-            for row in rows[: self.bot.settings.max_playlist_size]:
+            for row in cap_rows:
                 if len(player.queue) >= self.bot.settings.max_queue_size:
                     break
                 query = row["query"]
                 webpage_url = row["webpage_url"] or query
                 if not query or not webpage_url:
-                    skipped += 1
+                    results.append(False)
                     continue
                 await player.enqueue(
                     Track(
@@ -3712,8 +3736,10 @@ class MusicCog(commands.Cog):
                         query=query,
                     )
                 )
-                added += 1
+                results.append(True)
 
+        added = sum(results)
+        skipped = len(results) - added
         self._persist_snapshot(context.guild.id)
         self._schedule_prefetch(context.guild.id)
         suffix = f" Skipped `{skipped}` unavailable items." if skipped else ""

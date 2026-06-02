@@ -21,6 +21,8 @@ class Database:
         self._prefix_cache: dict[int, str | None] = {}
         self._dj_role_cache: dict[int, int | None] = {}
         self._conn: aiosqlite.Connection | None = None
+        # Per-guild hash of last persisted snapshot for dirty-detection (Fix #6).
+        self._snapshot_hashes: dict[int, int] = {}
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -285,11 +287,6 @@ class Database:
     # Queue snapshots
     # ------------------------------------------------------------------
 
-    # FIX #6: keep a per-guild hash of the last persisted snapshot so we can
-    # skip the DELETE+INSERT round-trip when nothing changed.
-    def __init_subclass__(cls, **kwargs: Any) -> None:  # pragma: no cover
-        super().__init_subclass__(**kwargs)
-
     def _snapshot_hash(self, guild_id: int, entries: list[dict[str, Any]]) -> int:
         """Cheap fingerprint of the snapshot payload for dirty-detection."""
         return hash((guild_id, tuple(
@@ -303,12 +300,10 @@ class Database:
     ) -> None:
         if self._conn is None:
             return
-        # FIX #6: skip the write when the snapshot hasn't changed.
+        # Skip the write when the snapshot hasn't changed (Fix #6).
         new_hash = self._snapshot_hash(guild_id, entries)
-        if getattr(self, "_snapshot_hashes", {}).get(guild_id) == new_hash:
+        if self._snapshot_hashes.get(guild_id) == new_hash:
             return
-        if not hasattr(self, "_snapshot_hashes"):
-            self._snapshot_hashes: dict[int, int] = {}
 
         await self._conn.execute(
             "DELETE FROM queue_snapshots WHERE guild_id = ?", (guild_id,)

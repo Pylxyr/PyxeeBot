@@ -27,19 +27,28 @@ MAX_PLAYLIST = 25
 REFILL_AT    = 10   # trigger auto-refill when queue drops to this many tracks
 REFILL_MAX   = 15   # how many new tracks to suggest at refill time
 
+# Import the shared embed colour lazily to avoid circular import at module load.
+# Falls back to the same value if the import fails for any reason.
+def _embed_colour() -> discord.Colour:
+    try:
+        from musicbot.cogs.music import EMBED_COLOUR  # noqa: PLC0415
+        return EMBED_COLOUR
+    except Exception:
+        return discord.Colour.from_rgb(255, 170, 64)
+
 
 # ---------------------------------------------------------------------------
 # Data classes
 # ---------------------------------------------------------------------------
 
-@dataclass
+@dataclass(slots=True)
 class CuratedTrack:
     title:   str
     artist:  str
     selected: bool = True          # True = will be added to queue
 
 
-@dataclass
+@dataclass(slots=True)
 class CurationSession:
     guild_id:    int
     author_id:   int
@@ -310,6 +319,8 @@ class CurationCog(commands.Cog, name="CurationCog"):
         self._last_queue_len: dict[int, int] = {}
         # Refill seed per guild: (artist, track) for Last.fm lookups
         self._refill_seeds:   dict[int, tuple[str, str]] = {}
+        # Fix #24: guard against concurrent refill tasks for the same guild.
+        self._refill_in_progress: set[int] = set()
 
     async def cog_load(self) -> None:
         self._session = aiohttp.ClientSession()
@@ -471,7 +482,7 @@ class CurationCog(commands.Cog, name="CurationCog"):
         embed = discord.Embed(
             title=f"Curated Playlist — {discord.utils.escape_markdown(session.seed_query)}",
             description="\n".join(lines) if lines else "*No tracks remaining.*",
-            colour=discord.Colour.from_rgb(255, 170, 64),
+            colour=_embed_colour(),
         )
         embed.set_footer(
             text=f"{len(tracks)}/{MAX_PLAYLIST} tracks selected  ·  use the dropdown to remove tracks"
@@ -489,7 +500,7 @@ class CurationCog(commands.Cog, name="CurationCog"):
         embed = discord.Embed(
             title="Queue Refill",
             description="\n".join(lines) or "*No tracks found.*",
-            colour=discord.Colour.from_rgb(255, 170, 64),
+            colour=_embed_colour(),
         )
         embed.set_footer(
             text=f"Based on: {seed}"
@@ -687,13 +698,12 @@ class CurationCog(commands.Cog, name="CurationCog"):
             f"Loading **{discord.utils.escape_markdown(name.strip())}** — {len(entries)} tracks…"
         )
 
-        queued = 0
-        failed = 0
+        # Fix #6: use a results list instead of nonlocal integer mutation —
+        # integer assignment across concurrent coroutines is semantically wrong
+        # even if CPython's GIL makes it safe in practice today.
+        results: list[bool] = []
 
-        # FIX #5: resolve all entries concurrently, bounded by the existing guild
-        # extract semaphore inside MusicCog._extract_tracks so we don't overload yt-dlp.
         async def _load_one(entry: dict[str, Any]) -> None:
-            nonlocal queued, failed
             query = str(entry["query"])
             try:
                 tracks, _ = await music._extract_tracks(
@@ -703,13 +713,15 @@ class CurationCog(commands.Cog, name="CurationCog"):
                 )
                 if tracks:
                     await player.enqueue(tracks[0])
-                    queued += 1
+                    results.append(True)
                 else:
-                    failed += 1
+                    results.append(False)
             except Exception:
-                failed += 1
+                results.append(False)
 
         await asyncio.gather(*(_load_one(e) for e in entries))
+        queued = sum(results)
+        failed = len(results) - queued
         music._persist_snapshot(context.guild.id)
         await msg.edit(
             content=f"Loaded {queued} track(s) from **{discord.utils.escape_markdown(name.strip())}**."
@@ -731,7 +743,7 @@ class CurationCog(commands.Cog, name="CurationCog"):
         embed = discord.Embed(
             title="Saved Playlists",
             description="\n".join(lines),
-            colour=discord.Colour.from_rgb(255, 170, 64),
+            colour=_embed_colour(),
         )
         await context.send(embed=embed)
 
@@ -772,15 +784,19 @@ class CurationCog(commands.Cog, name="CurationCog"):
             return
 
         seed_artist, seed_track = seed
+        # Fix #24: prevent a second refill from firing while one is in progress.
+        if guild.id in self._refill_in_progress:
+            return
+        self._refill_in_progress.add(guild.id)
         task = asyncio.create_task(
             self._do_refill(guild, seed_artist, seed_track),
             name=f"refill-{guild.id}",
         )
-        task.add_done_callback(
-            lambda t: log.exception("_do_refill failed", exc_info=t.exception())
-            if not t.cancelled() and t.exception() is not None
-            else None
-        )
+        def _on_refill_done(t: asyncio.Task[None]) -> None:
+            self._refill_in_progress.discard(guild.id)
+            if not t.cancelled() and t.exception() is not None:
+                log.exception("_do_refill failed", exc_info=t.exception())
+        task.add_done_callback(_on_refill_done)
 
     async def _do_refill(
         self, guild: discord.Guild, artist: str, track: str
