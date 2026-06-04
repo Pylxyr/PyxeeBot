@@ -18,7 +18,7 @@ from discord.ext import commands
 
 if TYPE_CHECKING:
     from musicbot.bot import MusicBot
-    from musicbot.cogs.music import MusicCog
+    from musicbot.cogs.music.cog import MusicCog
 
 log = logging.getLogger(__name__)
 

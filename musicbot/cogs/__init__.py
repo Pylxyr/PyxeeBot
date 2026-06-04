@@ -1,1 +1,1 @@
-"""Bot cogs."""
+"""musicbot.cogs — Discord cog extensions."""
