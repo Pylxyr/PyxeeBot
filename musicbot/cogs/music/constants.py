@@ -25,7 +25,10 @@ FFMPEG_OPTIONS = "-vn -ar 48000 -ac 2"
 # ---------------------------------------------------------------------------
 
 YTDL_OPTIONS: dict[str, object] = {
-    "format": "bestaudio/best",
+    # Prefer Opus/WebM (already encoded, no transcode needed) then M4A, then
+    # any audio-only stream, and only fall back to a muxed video stream as a
+    # last resort capped at 480p to avoid pulling multi-megabit video data.
+    "format": "bestaudio[ext=webm]/bestaudio[ext=m4a]/bestaudio/best[height<=480]",
     "quiet": True,
     "noplaylist": False,
     "skip_download": True,
@@ -47,7 +50,7 @@ SNAPSHOT_DEBOUNCE_SECONDS          = 0.5
 STREAM_URL_REFRESH_AGE_SECONDS     = 4 * 60 * 60
 SEARCH_SELECTION_PAGE_SIZE         = 5
 SEARCH_SELECTION_LIMIT             = 10
-SEARCH_SELECTION_TIMEOUT_SECONDS   = 600
+SEARCH_SELECTION_TIMEOUT_SECONDS   = 120
 VOICE_RECONNECT_ATTEMPTS           = 2
 NP_REFRESH_DEBOUNCE_SECONDS        = 0.8
 PRESENCE_DEBOUNCE_SECONDS          = 5.0

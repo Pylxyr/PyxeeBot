@@ -3,8 +3,17 @@ from __future__ import annotations
 
 import asyncio
 import math
+import re
 from dataclasses import dataclass, field
 from typing import Any
+
+# Precompiled pattern for escape_markdown — avoids repeated re.compile calls.
+_MD_ESCAPE_RE = re.compile(r"([\\*_`|~<>{}[\]()#+\-!])")
+
+
+def _escape_md(text: str) -> str:
+    """Lightweight markdown escaper (mirrors discord.utils.escape_markdown)."""
+    return _MD_ESCAPE_RE.sub(r"\\\1", text)
 
 
 @dataclass(slots=True)
@@ -19,6 +28,24 @@ class Track:
     thumbnail_url: str       = ""
     resolved_at:   float     = 0.0
     tags:          list[str] = field(default_factory=list)
+
+    # Cached escaped strings — computed on first access, stored in the slot.
+    # These are set to "" initially; _escaped_title/_escaped_uploader are
+    # populated lazily by the properties below.
+    _escaped_title:    str = field(default="", init=False, repr=False, compare=False)
+    _escaped_uploader: str = field(default="", init=False, repr=False, compare=False)
+
+    @property
+    def escaped_title(self) -> str:
+        if not self._escaped_title:
+            self._escaped_title = _escape_md(self.title)
+        return self._escaped_title
+
+    @property
+    def escaped_uploader(self) -> str:
+        if not self._escaped_uploader:
+            self._escaped_uploader = _escape_md(self.uploader or "Unknown")
+        return self._escaped_uploader
 
     @property
     def duration_label(self) -> str:

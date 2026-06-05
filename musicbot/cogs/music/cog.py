@@ -119,7 +119,12 @@ class MusicCog(commands.Cog):
         self.extract_semaphore = asyncio.Semaphore(self.bot.settings.ytdlp_concurrent_extracts)
 
         self._last_search: OrderedDict[int, SearchDebugRecord] = OrderedDict()
-        self._last_search_max = 100
+        self._last_search_max = 50   # was 100; halved to reduce memory footprint
+
+        # Fix #1b: cached YoutubeDL instances — one per options variant.
+        # Creating YoutubeDL parses options and loads extractors (~5-20ms);
+        # reusing the same instance per variant eliminates that overhead.
+        self._ytdl_instances: dict[tuple[bool, bool], YoutubeDL] = {}
 
     # ------------------------------------------------------------------
     # Lifecycle — Fix #2: proper async session management
@@ -140,6 +145,7 @@ class MusicCog(commands.Cog):
             self._presence_task.cancel()
         if self._http_session and not self._http_session.closed:
             asyncio.ensure_future(self._http_session.close())
+        self._ytdl_instances.clear()
         self._ytdl_executor.shutdown(wait=False)
 
     # ------------------------------------------------------------------
@@ -191,7 +197,29 @@ class MusicCog(commands.Cog):
         except Exception:
             return False
 
+    # URL patterns that yt-dlp returns for pre-encoded Opus audio — no probe needed.
+    _OPUS_STREAM_RE = re.compile(
+        r"googlevideo\.com/|\.googlevideo\.com/|mime=audio%2Fwebm|mime=audio/webm",
+        re.IGNORECASE,
+    )
+
     async def _build_audio_source(self, track: Track) -> discord.AudioSource:
+        # Fix #14: YouTube WebM/Opus streams are already Opus-encoded.
+        # Skipping from_probe() saves an ffprobe subprocess (~50-150ms latency
+        # at track start) by going straight to copy-codec passthrough.
+        if self._OPUS_STREAM_RE.search(track.stream_url or ""):
+            try:
+                return discord.FFmpegOpusAudio(
+                    track.stream_url,
+                    codec="copy",
+                    before_options=FFMPEG_BEFORE_OPTIONS,
+                    options=FFMPEG_OPTIONS,
+                )
+            except (discord.ClientException, OSError, TypeError, ValueError) as exc:
+                self.logger.debug(
+                    "Opus copy passthrough failed for %s (%s), falling back to probe.",
+                    track.webpage_url, exc,
+                )
         try:
             source: discord.AudioSource = await discord.FFmpegOpusAudio.from_probe(
                 track.stream_url, method="fallback",
@@ -213,6 +241,20 @@ class MusicCog(commands.Cog):
                 raise
         return source
 
+    def _get_ytdl_instance(self, options: dict[str, Any]) -> YoutubeDL:
+        """Return a cached YoutubeDL instance for this options dict.
+
+        YoutubeDL construction is expensive (~5-20ms: parses options, loads
+        extractors). We key the cache on the identity of the options dict
+        returned by _build_ytdl_options, which produces exactly 4 variants.
+        """
+        key = id(options)  # options dicts are module-level singletons after first build
+        inst = self._ytdl_instances.get(key)
+        if inst is None:
+            inst = YoutubeDL(options)
+            self._ytdl_instances[key] = inst
+        return inst
+
     async def _extract_info(self, options: dict[str, Any], query: str) -> dict[str, Any]:
         """Run yt-dlp in the dedicated executor (Fix #1) with per-guild serialisation."""
         guild_id = _CURRENT_GUILD_ID.get()
@@ -224,14 +266,16 @@ class MusicCog(commands.Cog):
         async def _do() -> dict[str, Any]:
             async with self.extract_semaphore:
                 try:
-                    loop   = asyncio.get_running_loop()
-                    opts   = options   # captured for thread
-                    qry    = query
-                    # Fix #1: submit to the dedicated yt-dlp executor
+                    loop = asyncio.get_running_loop()
+                    ydl  = self._get_ytdl_instance(options)
+                    qry  = query
+                    # Fix #1: submit to the dedicated yt-dlp executor.
+                    # Use the cached instance; extract_info is thread-safe for
+                    # concurrent calls with different queries.
                     result = await asyncio.wait_for(
                         loop.run_in_executor(
                             self._ytdl_executor,
-                            lambda: YoutubeDL(opts).extract_info(qry, download=False),
+                            lambda: ydl.extract_info(qry, download=False),
                         ),
                         timeout=self.bot.settings.ytdlp_extract_timeout_seconds,
                     )
@@ -775,13 +819,13 @@ class MusicCog(commands.Cog):
         lines: list[str] = []
         if include_current and player.current:
             lines.append(
-                f"Now: `{discord.utils.escape_markdown(player.current.title)}` "
+                f"Now: `{player.current.escaped_title}` "
                 f"[{player.current.duration_label}]"
             )
         for index, track in enumerate(itertools.islice(player.queue, limit), start=1):
             duration = track.duration_label if track.duration else "pending"
             lines.append(
-                f"{index}. `{discord.utils.escape_markdown(track.title)}` [{duration}]"
+                f"{index}. `{track.escaped_title}` [{duration}]"
             )
         if len(player.queue) > limit:
             lines.append(f"...and {len(player.queue) - limit} more.")
@@ -815,7 +859,7 @@ class MusicCog(commands.Cog):
         embed.title = "Now Playing" if not is_paused else "Paused"
         embed.add_field(
             name="Track",
-            value=f"[{discord.utils.escape_markdown(track.title)}]({track.webpage_url})",
+            value=f"[{track.escaped_title}]({track.webpage_url})",
             inline=False,
         )
         embed.add_field(
@@ -824,7 +868,7 @@ class MusicCog(commands.Cog):
             inline=False,
         )
         embed.add_field(name="Uploader",
-                        value=discord.utils.escape_markdown(track.uploader or "Unknown"), inline=True)
+                        value=track.escaped_uploader, inline=True)
         embed.add_field(name="Duration",
                         value=f"`{track.duration_label}`", inline=True)
         embed.add_field(name="Requested by", value=requester_label, inline=True)
@@ -906,7 +950,20 @@ class MusicCog(commands.Cog):
         if channel is None or not hasattr(channel, "get_partial_message"):
             return
         player = self.players.get(guild_id)
-        embed  = self._render_now_playing_embed(guild, player, controller)
+
+        # Fix #7: hash the visible embed state; skip the HTTP edit if nothing
+        # has changed since the last render to avoid redundant API calls.
+        elapsed_bucket = int(player.elapsed_seconds // 4) if player else 0
+        queue_preview  = tuple(t.title for t in itertools.islice(player.queue, NOW_PLAYING_PREVIEW_LIMIT)) if player else ()
+        current_title  = player.current.title if player and player.current else ""
+        loop_mode      = player.loop_mode if player else "off"
+        is_paused      = bool(player and player.voice_client and player.voice_client.is_paused())
+        state_key      = (current_title, elapsed_bucket, queue_preview, loop_mode, is_paused, controller.status_text)
+        if getattr(controller, "_last_render_key", None) == state_key:
+            return
+        controller._last_render_key = state_key  # type: ignore[attr-defined]
+
+        embed = self._render_now_playing_embed(guild, player, controller)
         partial = channel.get_partial_message(controller.message_id)
         with contextlib.suppress(discord.HTTPException, discord.NotFound):
             await partial.edit(embed=embed)
@@ -991,8 +1048,7 @@ class MusicCog(commands.Cog):
             )
             for row in rows
         ]
-        cap = self.bot.settings.max_queue_size
-        player.queue = deque(restored[:cap])
+        player.replace_queue(restored)
         if restored:
             self._bg_task(
                 self._warmup_restore(list(restored[:2]), guild_id=player.guild.id),
@@ -1170,7 +1226,7 @@ class MusicCog(commands.Cog):
         if channel:
             with contextlib.suppress(discord.HTTPException):
                 await channel.send(
-                    f"Skipped **{discord.utils.escape_markdown(track.title)}** — {reason}"
+                    f"Skipped **{track.escaped_title}** — {reason}"
                 )
 
     @commands.Cog.listener()
@@ -1316,6 +1372,11 @@ class MusicCog(commands.Cog):
         if record is None:
             await context.send("No search has been run this session. Use `!play <query>` first.")
             return
+        stale_suffix = ""
+        age_seconds = time.monotonic() - record.timestamp
+        if age_seconds > 300:   # Fix #11: flag records older than 5 minutes
+            mins = int(age_seconds // 60)
+            stale_suffix = f"\n> ⚠️ This breakdown is {mins}m old — run a new search for fresh data."
         embed = discord.Embed(
             title=f"Score breakdown — `{discord.utils.escape_markdown(record.query_text)}`",
             colour=EMBED_COLOUR,
@@ -1335,7 +1396,7 @@ class MusicCog(commands.Cog):
                 f"`#{c.rank}` **{c.final_score:+.3f}**{sel} "
                 f"[{title_short}]({c.webpage_url})\n└ `{dur_label}` · {detail}"
             )
-        embed.description = "\n\n".join(lines) if lines else "No data."
+        embed.description = "\n\n".join(lines) + stale_suffix if lines else "No data."
         embed.set_footer(text="Press the button for a full per-component DM breakdown.")
         view = ScoreDebugView(author_id=context.author.id, record=record)
         await context.send(embed=embed, view=view)
@@ -1359,7 +1420,7 @@ class MusicCog(commands.Cog):
             return
         queue_list    = list(player.queue)
         dropped       = position - 1
-        player.queue  = deque(queue_list[position - 1:])
+        player.replace_queue(queue_list[position - 1:])
         self._persist_snapshot(context.guild.id)
         target = player.queue[0]
         embed  = discord.Embed(title="Jumped to Position", colour=EMBED_COLOUR)
@@ -1394,7 +1455,7 @@ class MusicCog(commands.Cog):
         self._persist_snapshot(context.guild.id)
         await self._refresh_now_playing_message(context.guild.id)
         await context.send(
-            f"Re-queued **{discord.utils.escape_markdown(player.current.title)}** to play next."
+            f"Re-queued **{player.current.escaped_title}** to play next."
         )
 
     @commands.hybrid_command(name="qsearch", aliases=["qs"])
@@ -1435,11 +1496,19 @@ class MusicCog(commands.Cog):
         if len(player.queue) >= self.bot.settings.max_queue_size:
             await context.send("Queue is full. Clear or play tracks before adding more.")
             return
-        query    = self._normalize_query(query)
-        is_url   = query.startswith(("http://", "https://"))
-        fetch_msg: discord.Message | None = None
-        if is_url:
+        query  = self._normalize_query(query)
+        is_url = query.startswith(("http://", "https://"))
+
+        # Fix #13 + Fix #16: send immediate feedback before the yt-dlp call so
+        # the user sees a response within one RTT instead of waiting 1-3 seconds.
+        is_playlist = self._is_playlist_query(query)
+        if is_playlist:
+            fetch_msg: discord.Message | None = await context.send("⏳ Loading playlist…")
+        elif is_url:
             fetch_msg = await context.send("🔍 Fetching…")
+        else:
+            fetch_msg = await context.send("🔍 Searching…")
+
         async with context.typing():
             tracks, skipped = await self._extract_tracks(
                 query, requester_id=context.author.id, guild_id=context.guild.id,
@@ -1466,9 +1535,9 @@ class MusicCog(commands.Cog):
         await self._refresh_now_playing_message(context.guild.id)
         suffix = f" Skipped `{skipped}` unavailable items." if skipped else ""
         result = (
-            f"Queued [{discord.utils.escape_markdown(tracks[0].title)}]({tracks[0].webpage_url}).{suffix}"
+            f"Queued [{tracks[0].escaped_title}]({tracks[0].webpage_url}).{suffix}"
             if added == 1
-            else f"Queued `{added}` tracks from the playlist/search results.{suffix}"
+            else f"Queued `{added}` tracks.{suffix}"
         )
         if fetch_msg:
             await fetch_msg.edit(content=result)
@@ -1482,20 +1551,22 @@ class MusicCog(commands.Cog):
         await self._require_dj(context)
         player = await self._join_for_context(context)
         query  = self._normalize_query(query)
+        # Fix #13: immediate feedback
+        fetch_msg = await context.send("🔍 Searching…")
         async with context.typing():
             tracks, _ = await self._extract_tracks(
                 query, requester_id=context.author.id, guild_id=context.guild.id,
             )
         track = tracks[0] if tracks else None
         if track is None:
-            await context.send("No playable result found.")
+            await fetch_msg.edit(content="No playable result found.")
             return
         await player.enqueue(track, front=True)
         self._persist_snapshot(context.guild.id)
         self._schedule_prefetch(context.guild.id)
         await self._refresh_now_playing_message(context.guild.id)
-        await context.send(
-            f"Queued next: [{discord.utils.escape_markdown(track.title)}]({track.webpage_url})."
+        await fetch_msg.edit(
+            content=f"Queued next: [{track.escaped_title}]({track.webpage_url})."
         )
 
     @commands.hybrid_command(name="repeat", aliases=["rp"])
@@ -1676,9 +1747,9 @@ class MusicCog(commands.Cog):
         if removed.requester_id != context.author.id and not await self._is_dj(context.author):
             raise commands.CheckFailure("Only the requester or a DJ can remove this track.")
         queue_list.pop(index - 1)
-        player.queue = deque(queue_list)
+        player.replace_queue(queue_list)
         self._persist_snapshot(context.guild.id)
-        await context.send(f"Removed **{discord.utils.escape_markdown(removed.title)}** from the queue.")
+        await context.send(f"Removed **{removed.escaped_title}** from the queue.")
         await self._refresh_now_playing_message(context.guild.id)
 
     @commands.hybrid_command(name="clear")
@@ -1708,7 +1779,7 @@ class MusicCog(commands.Cog):
         self._remember_channel(player, context.channel)
         shuffled = list(player.queue)
         random.shuffle(shuffled)
-        player.queue = deque(shuffled)
+        player.replace_queue(shuffled)
         self._persist_snapshot(context.guild.id)
         await context.send("Shuffled the queue.")
         await self._refresh_now_playing_message(context.guild.id)
@@ -1736,10 +1807,10 @@ class MusicCog(commands.Cog):
         queue_list = list(player.queue)
         track      = queue_list.pop(from_index - 1)
         queue_list.insert(to_index - 1, track)
-        player.queue = deque(queue_list)
+        player.replace_queue(queue_list)
         self._persist_snapshot(context.guild.id)
         await context.send(
-            f"Moved **{discord.utils.escape_markdown(track.title)}** "
+            f"Moved **{track.escaped_title}** "
             f"from position `{from_index}` to `{to_index}`."
         )
         await self._refresh_now_playing_message(context.guild.id)

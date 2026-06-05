@@ -6,6 +6,11 @@ without spinning up a Discord bot or any async infrastructure.
 
 Fix #7: _derive_anchor_phrases_cached is @lru_cache'd on a normalised tuple,
         so repeated searches for the same song are free after the first call.
+Fix #4: rapidfuzz replaces difflib.SequenceMatcher — 10-100× faster for the
+        ratio/quick_ratio calls that sit in the hot scoring path.
+Fix #5: breakdown dict is only allocated when guild_id is not None (i.e. when
+        the !why debug record is actually needed), eliminating the alloc+fill
+        on every regular !play / !search call.
 """
 from __future__ import annotations
 
@@ -14,9 +19,11 @@ import math
 import re
 import time
 from collections import OrderedDict
-from difflib import SequenceMatcher
 from functools import lru_cache
 from typing import Any
+
+from rapidfuzz.distance import Levenshtein
+from rapidfuzz import fuzz as _fuzz
 
 from musicbot.cogs.music.constants import (
     _ANIME_INTENT_RE,
@@ -268,8 +275,8 @@ def score_entry(
     missing_title_tokens = [t for t in query.query_tokens if t not in entry.title_token_set]
     missing_title_uploader_overlap = token_overlap_ratio(missing_title_tokens, entry.uploader_token_set)
 
-    ratio          = SequenceMatcher(None, query.normalized_query, entry.normalized_title, autojunk=False).ratio()
-    metadata_ratio = SequenceMatcher(None, query.normalized_query, entry.normalized_metadata, autojunk=False).quick_ratio()
+    ratio          = _fuzz.ratio(query.normalized_query, entry.normalized_title) / 100.0
+    metadata_ratio = _fuzz.partial_ratio(query.normalized_query, entry.normalized_metadata) / 100.0
 
     exact_metadata_match      = 1.0 if query.normalized_query in entry.normalized_metadata else 0.0
     metadata_prefix_match     = 1.0 if entry.normalized_metadata.startswith(query.normalized_query) else 0.0
@@ -428,16 +435,18 @@ def rank_entries(
     if ctx is None:
         return [item for (_, item, _) in prepared]
 
-    scored: list[tuple[float, int, dict[str, Any], SearchEntryContext, dict[str, float]]] = []
+    scored: list[tuple[float, int, dict[str, Any], SearchEntryContext, dict[str, float] | None]] = []
+    need_debug = guild_id is not None
     for orig_i, item, ectx in prepared:
-        bd: dict[str, float] = {}
+        bd: dict[str, float] | None = {} if need_debug else None
         sc = score_entry(ctx, ectx, breakdown=bd)
         scored.append((sc, orig_i, item, ectx, bd))
     scored.sort(key=lambda t: (t[0], -t[1]), reverse=True)
 
-    if guild_id is not None:
+    if need_debug:
         records: list[ScoreBreakdown] = []
         for rank, (sc, _oi, item, ectx, bd) in enumerate(scored[:8], start=1):
+            assert bd is not None
             records.append(ScoreBreakdown(
                 rank=rank,
                 title=str(item.get("title") or ""),

@@ -130,8 +130,8 @@ class SearchSelectionView(discord.ui.View):
         for offset, track in enumerate(page_candidates, start=start + 1):
             duration = track.duration_label if track.duration else "pending"
             lines.append(
-                f"`{offset}.` **{discord.utils.escape_markdown(track.title)}**"
-                f" by {discord.utils.escape_markdown(track.uploader or 'Unknown')}"
+                f"`{offset}.` **{track.escaped_title}**"
+                f" by {track.escaped_uploader}"
                 f" `[{duration}]`"
             )
         embed.add_field(
@@ -155,6 +155,7 @@ class SearchSelectionView(discord.ui.View):
         else:
             self.selection.set_result(None)
         self.stop()
+        self.candidates = []   # release Track refs; the selection future holds the chosen one
         _disable_view_items(self)
         with contextlib.suppress(discord.HTTPException):
             await interaction.response.edit_message(view=self)
@@ -190,6 +191,7 @@ class SearchSelectionView(discord.ui.View):
     async def on_timeout(self) -> None:
         if not self.selection.done():
             self.selection.set_result(None)
+        self.candidates = []   # release Track refs
         _disable_view_items(self)
         if self.message:
             with contextlib.suppress(discord.HTTPException, discord.NotFound):
@@ -242,7 +244,7 @@ class QueueView(discord.ui.View):
             duration = track.duration_label if track.duration else "pending"
             prefix   = "▶" if i == 0 and self.player.current else f"{i}."
             lines.append(
-                f"`{prefix}` [{discord.utils.escape_markdown(track.title)}]"
+                f"`{prefix}` [{track.escaped_title}]"
                 f"({track.webpage_url}) `[{duration}]` — <@{track.requester_id}>"
             )
         embed.description = "\n".join(lines) if lines else "Nothing queued."
@@ -250,7 +252,8 @@ class QueueView(discord.ui.View):
         summary: list[str] = [f"{len(tracks)} track(s)"]
         if self._page_count() > 1:
             summary.append(f"Page {self.page_index + 1}/{self._page_count()}")
-        total_secs = sum(t.duration for t in tracks) + (self.player.current.duration if self.player.current else 0)
+        # Use the running total from GuildPlayer rather than iterating the whole queue.
+        total_secs = self.player._total_duration + (self.player.current.duration if self.player.current else 0)
         if total_secs > 0:
             h, rem = divmod(int(total_secs), 3600)
             m, s   = divmod(rem, 60)
@@ -317,6 +320,9 @@ class NowPlayingView(discord.ui.View):
         super().__init__(timeout=NOW_PLAYING_TIMEOUT_SECONDS)
         self.cog      = cog
         self.guild_id = guild_id
+        # Direct reference to the pause/resume button — avoids scanning
+        # self.children by callback.__name__ string on every button press.
+        self._pause_btn: discord.ui.Button | None = None
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         player = self.cog.players.get(self.guild_id)
@@ -328,11 +334,10 @@ class NowPlayingView(discord.ui.View):
         return False
 
     def _sync_pause_emoji(self, player: "GuildPlayer | None") -> None:
+        if self._pause_btn is None:
+            return
         is_paused = bool(player and player.voice_client and player.voice_client.is_paused())
-        for item in self.children:
-            if isinstance(item, discord.ui.Button) and item.callback.__name__ == "pause_resume":
-                item.emoji = discord.PartialEmoji(name="▶" if is_paused else "⏸")
-                break
+        self._pause_btn.emoji = discord.PartialEmoji(name="▶" if is_paused else "⏸")
 
     async def _respond(self, interaction: discord.Interaction, status_text: str) -> None:
         controller = self.cog._controller(self.guild_id)
@@ -370,7 +375,10 @@ class NowPlayingView(discord.ui.View):
         await self._respond(interaction, msg)
 
     @discord.ui.button(emoji="\N{BLACK RIGHT-POINTING TRIANGLE WITH DOUBLE VERTICAL BAR}", style=discord.ButtonStyle.secondary)
-    async def pause_resume(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
+    async def pause_resume(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        # Wire up the direct reference on first use (decorators run before __init__).
+        if self._pause_btn is None:
+            self._pause_btn = button
         player = self.cog.players.get(self.guild_id)
         if player is None:
             await interaction.response.send_message("Nothing is playing.", ephemeral=True)

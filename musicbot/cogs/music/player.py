@@ -48,9 +48,10 @@ class GuildPlayer:
         self.logger               = logging.getLogger(f"musicbot.player.{guild.id}")
 
         self.voice_client: discord.VoiceClient | None = None
-        self.queue:   deque[Track] = deque()
+        self.queue:   deque[Track] = deque(maxlen=bot.settings.max_queue_size)
         self.history: deque[Track] = deque(maxlen=20)
         self.current: Track | None = None
+        self._total_duration: int = 0   # sum of durations of queued tracks (not current)
 
         self.announce_channel_id: int | None = None
         self.loop_mode: str  = "off"
@@ -105,7 +106,24 @@ class GuildPlayer:
         await self.refresh_empty_channel_state()
         return self.voice_client
 
+    def replace_queue(self, tracks: list[Track]) -> None:
+        """Replace the entire queue and recalculate the running duration total.
+
+        All direct assignments to self.queue from outside the player should
+        use this method to keep _total_duration accurate.
+        """
+        cap = self.queue.maxlen
+        trimmed = tracks[:cap] if cap is not None else tracks
+        self.queue = deque(trimmed, maxlen=cap)
+        self._total_duration = sum(t.duration for t in self.queue)
+
     async def enqueue(self, track: Track, *, front: bool = False) -> None:
+        # If the deque is full, the oldest tail item gets dropped automatically
+        # (maxlen). Subtract its duration so the running total stays accurate.
+        if len(self.queue) == self.queue.maxlen:
+            evicted = self.queue[-1] if not front else self.queue[0]
+            self._total_duration = max(0, self._total_duration - evicted.duration)
+        self._total_duration += track.duration
         if front:
             self.queue.appendleft(track)
         else:
@@ -143,6 +161,7 @@ class GuildPlayer:
     async def stop(self) -> None:
         self.queue.clear()
         self.history.clear()
+        self._total_duration = 0
         self.loop_mode = "off"
         self.rewind_requested = False
         self.skip_votes.clear()
@@ -179,6 +198,7 @@ class GuildPlayer:
             await self.voice_client.disconnect(force=False)
         self.voice_client = None
         self.current = None
+        self._total_duration = 0
         self.started_at = self._pause_started = self._total_paused = 0.0
         self._resolve_fail_counts.clear()
         self.history.clear()
@@ -445,6 +465,7 @@ class GuildPlayer:
                 await self.idle_task
         self.idle_task = None
         self.current = self.queue.popleft()
+        self._total_duration = max(0, self._total_duration - self.current.duration)
         self.bot.dispatch("musicbot_queue_updated", self.guild)
 
     async def _disconnect_when_idle(self) -> None:

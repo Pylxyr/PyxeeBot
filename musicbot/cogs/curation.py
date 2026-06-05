@@ -323,7 +323,10 @@ class CurationCog(commands.Cog, name="CurationCog"):
         self._refill_in_progress: set[int] = set()
 
     async def cog_load(self) -> None:
-        self._session = aiohttp.ClientSession()
+        # Fix #15: cap Last.fm connections at 5 — we never need more than a
+        # handful of concurrent API calls and the default (100) is wasteful.
+        connector = aiohttp.TCPConnector(limit=5, ttl_dns_cache=300)
+        self._session = aiohttp.ClientSession(connector=connector)
         if not self._key:
             log.warning("LASTFM_API_KEY not set — CurationCog will not work.")
         else:
@@ -575,21 +578,23 @@ class CurationCog(commands.Cog, name="CurationCog"):
 
         # Process one at a time — the guild/global extract semaphores already
         # serialize yt-dlp calls. Running concurrently only starves the player.
-        batch_size = 5  # keep for progress update cadence only
-        for batch_start in range(0, total, batch_size):
-            batch = tracks[batch_start: batch_start + batch_size]
-            for ct in batch:          # sequential, not gathered
-                await _resolve_one(ct)
-
-            progress_lines = "\n".join(f"· {t}" for t in added[-10:])
-            pct  = int(queued / total * 100) if total else 100
-            bar  = "█" * (pct // 10) + "░" * (10 - pct // 10)
-            text = (
-                f"`{bar}` {queued}/{total} added\n\n"
-                + (progress_lines or "*resolving…*")
-            )
-            with contextlib.suppress(discord.HTTPException):
-                await interaction.edit_original_response(content=f"{text}")
+        # Fix #17: update progress every 10 tracks (max 2-3 edits for 25 tracks)
+        # and use ▓░ bar style matching the now-playing panel.
+        UPDATE_EVERY = 10
+        for i, ct in enumerate(tracks):
+            await _resolve_one(ct)
+            is_last = (i == total - 1)
+            if is_last or ((i + 1) % UPDATE_EVERY == 0):
+                progress_lines = "\n".join(f"· {t}" for t in added[-10:])
+                pct    = int((i + 1) / total * 100) if total else 100
+                filled = round(pct / 100 * 16)
+                bar    = "▓" * filled + "░" * (16 - filled)
+                text   = (
+                    f"`{bar}` {queued}/{total} added\n\n"
+                    + (progress_lines or "*resolving…*")
+                )
+                with contextlib.suppress(discord.HTTPException):
+                    await interaction.edit_original_response(content=text)
 
         music._persist_snapshot(guild_id)
         return queued, failed
@@ -698,30 +703,28 @@ class CurationCog(commands.Cog, name="CurationCog"):
             f"Loading **{discord.utils.escape_markdown(name.strip())}** — {len(entries)} tracks…"
         )
 
-        # Fix #6: use a results list instead of nonlocal integer mutation —
-        # integer assignment across concurrent coroutines is semantically wrong
-        # even if CPython's GIL makes it safe in practice today.
-        results: list[bool] = []
+        queued = 0
+        failed = 0
 
-        async def _load_one(entry: dict[str, Any]) -> None:
+        # Fix #3: use ytsearch5: so the scoring engine picks the best candidate
+        # (matching !vibe behaviour). Process sequentially to respect the guild
+        # semaphore instead of hammering it with a gather.
+        for entry in entries:
             query = str(entry["query"])
             try:
                 tracks, _ = await music._extract_tracks(
-                    f"ytsearch1:{query}",
+                    f"ytsearch5:{query}",
                     requester_id=context.author.id,
                     guild_id=context.guild.id,
                 )
                 if tracks:
                     await player.enqueue(tracks[0])
-                    results.append(True)
+                    queued += 1
                 else:
-                    results.append(False)
+                    failed += 1
             except Exception:
-                results.append(False)
+                failed += 1
 
-        await asyncio.gather(*(_load_one(e) for e in entries))
-        queued = sum(results)
-        failed = len(results) - queued
         music._persist_snapshot(context.guild.id)
         await msg.edit(
             content=f"Loaded {queued} track(s) from **{discord.utils.escape_markdown(name.strip())}**."
