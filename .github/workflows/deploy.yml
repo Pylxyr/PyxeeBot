@@ -1,10 +1,7 @@
 name: Deploy Music Bot
-
 on:
   push:
-    branches:
-      - main
-
+    branches: [main]
 jobs:
   deploy:
     runs-on: ubuntu-latest
@@ -17,14 +14,11 @@ jobs:
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           port: 22
           script: |
+            set -e
             cd ~/musicbot
-            
-            # Fetch latest changes from GitHub
             git fetch origin main
-            
-            # Force reset local files to match remote repository exactly
             git reset --hard origin/main
-            
-            # Restart your systemd service using sudo (configured for no password)
-            # Change 'musicbot' if your actual service file has a different name
+            pip install -r requirements.txt --break-system-packages -q
             sudo systemctl restart musicbot
+            sleep 3
+            systemctl is-active --quiet musicbot || { journalctl -u musicbot -n 20 --no-pager; exit 1; }
