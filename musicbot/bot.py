@@ -292,9 +292,9 @@ class MusicBot(commands.Bot):
         self._shutting_down = True
         music_cog = self.cogs.get("MusicCog")
         if isinstance(music_cog, MusicCog):
-            for task in list(music_cog.np_refresh_tasks.values()):
+            for task in list(music_cog._np_refresh_tasks.values()):
                 task.cancel()
-            for task in list(music_cog.snapshot_tasks.values()):
+            for task in list(music_cog._snapshot_tasks.values()):
                 task.cancel()
             for guild_id in list(music_cog.players):
                 with contextlib.suppress(Exception):
