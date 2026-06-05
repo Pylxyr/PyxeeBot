@@ -22,7 +22,6 @@ from collections import OrderedDict
 from functools import lru_cache
 from typing import Any
 
-from rapidfuzz.distance import Levenshtein
 from rapidfuzz import fuzz as _fuzz
 
 from musicbot.cogs.music.constants import (

@@ -118,10 +118,10 @@ class GuildPlayer:
         self._total_duration = sum(t.duration for t in self.queue)
 
     async def enqueue(self, track: Track, *, front: bool = False) -> None:
-        # If the deque is full, the oldest tail item gets dropped automatically
-        # (maxlen). Subtract its duration so the running total stays accurate.
+        # When a maxlen deque is full, Python drops from the opposite end to
+        # the insertion point: append() drops queue[0], appendleft() drops queue[-1].
         if len(self.queue) == self.queue.maxlen:
-            evicted = self.queue[-1] if not front else self.queue[0]
+            evicted = self.queue[-1] if front else self.queue[0]
             self._total_duration = max(0, self._total_duration - evicted.duration)
         self._total_duration += track.duration
         if front:

@@ -320,9 +320,19 @@ class NowPlayingView(discord.ui.View):
         super().__init__(timeout=NOW_PLAYING_TIMEOUT_SECONDS)
         self.cog      = cog
         self.guild_id = guild_id
-        # Direct reference to the pause/resume button — avoids scanning
-        # self.children by callback.__name__ string on every button press.
-        self._pause_btn: discord.ui.Button | None = None
+        # Wire the pause/resume button reference eagerly from self.children,
+        # which is already populated by the @discord.ui.button decorators during
+        # super().__init__(). This avoids the lazy-first-press approach that
+        # would leave _pause_btn=None whenever other buttons are pressed first.
+        self._pause_btn: discord.ui.Button | None = next(
+            (
+                item for item in self.children
+                if isinstance(item, discord.ui.Button)
+                and getattr(item, "callback", None) is not None
+                and getattr(item.callback, "__name__", "") == "pause_resume"
+            ),
+            None,
+        )
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         player = self.cog.players.get(self.guild_id)
@@ -376,9 +386,6 @@ class NowPlayingView(discord.ui.View):
 
     @discord.ui.button(emoji="\N{BLACK RIGHT-POINTING TRIANGLE WITH DOUBLE VERTICAL BAR}", style=discord.ButtonStyle.secondary)
     async def pause_resume(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-        # Wire up the direct reference on first use (decorators run before __init__).
-        if self._pause_btn is None:
-            self._pause_btn = button
         player = self.cog.players.get(self.guild_id)
         if player is None:
             await interaction.response.send_message("Nothing is playing.", ephemeral=True)
