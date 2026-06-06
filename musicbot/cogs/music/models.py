@@ -72,10 +72,11 @@ class NowPlayingController:
     Fix #6: avoids keeping a full discord.Message (embed payload, attachment
     data, member caches) alive for every guild that ever ran !np.
     """
-    channel_id:  int
-    message_id:  int
-    expires_at:  float
-    status_text: str = ""
+    channel_id:       int
+    message_id:       int
+    expires_at:       float
+    status_text:      str           = ""
+    _last_render_key: tuple | None  = field(default=None, init=False, repr=False, compare=False)
 
 
 @dataclass(slots=True)
