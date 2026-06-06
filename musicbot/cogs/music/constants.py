@@ -16,9 +16,11 @@ FFMPEG_BEFORE_OPTIONS = (
     "-threads 1 "
     "-reconnect 1 "
     "-reconnect_streamed 1 "
-    "-reconnect_delay_max 5"
+    "-reconnect_delay_max 5 "
+    "-probesize 32M "
+    "-analyzeduration 0"
 )
-FFMPEG_OPTIONS = "-vn -ar 48000 -ac 2"
+FFMPEG_OPTIONS = "-vn -ar 48000 -ac 2 -bufsize 128k"
 
 # ---------------------------------------------------------------------------
 # yt-dlp base options (settings-dependent values added at runtime)

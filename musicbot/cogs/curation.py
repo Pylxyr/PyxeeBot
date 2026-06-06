@@ -43,9 +43,10 @@ def _embed_colour() -> discord.Colour:
 
 @dataclass(slots=True)
 class CuratedTrack:
-    title:   str
-    artist:  str
-    selected: bool = True          # True = will be added to queue
+    title:       str
+    artist:      str
+    selected:    bool  = True   # True = will be added to queue
+    match_score: float = 0.0    # Last.fm similarity score (0.0–1.0); higher = more confident
 
 
 @dataclass(slots=True)
@@ -383,78 +384,85 @@ class CurationCog(commands.Cog, name="CurationCog"):
     async def _get_similar_tracks(
         self, artist: str, track: str, limit: int = MAX_PLAYLIST
     ) -> list[CuratedTrack]:
-        """Return up to `limit` tracks from SIMILAR ARTISTS (not the same artist).
+        """Return up to `limit` curated tracks sorted by Last.fm match confidence.
 
         Strategy:
-          1. artist.getSimilar  → up to 15 similar artists (genre/vibe based)
-          2. artist.getTopTracks → 3 top tracks per similar artist
-          3. Mix + deduplicate  → genuine cross-artist genre discovery
-
-        Artist dedup uses a normalized key that strips non-ASCII so that
-        romanized variants like "Yorushika" and "ヨルシカ" map to the same slot.
+          1. track.getSimilar  → direct similar tracks with match scores (0–1)
+          2. artist.getSimilar → fallback if track.getSimilar is thin (<10 results)
+          3. Seed artist top tracks get guaranteed first slots
+          4. Sort by match_score descending so best picks appear at the top of
+             the curation panel and are least likely to be deselected.
         """
         def _artist_key(name: str) -> str:
-            """Normalize artist name for dedup: strip non-ASCII then lowercase.
-            Falls back to full lowercase for pure-CJK names so they still dedup
-            against themselves (e.g. two entries of ヨルシカ stay deduplicated).
-            Also strips spaces/punctuation so 'Ryokuoushoku Shakai' ≡ 'ryokuoushokushakai'.
-            """
             import re as _re
             ascii_only = _re.sub(r'[^a-z0-9]', '', name.lower())
             return ascii_only if ascii_only else name.lower().strip()
 
-        seed_key = _artist_key(artist)
-        seen_titles:  set[str]        = {track.lower()}
-        artist_counts: dict[str, int] = {seed_key: 0}  # seed gets 0 so its bonus tracks count
-        result: list[CuratedTrack]    = []
+        seed_key    = _artist_key(artist)
+        seen_titles: set[str]           = {track.lower()}
+        result:      list[CuratedTrack] = []
 
-        # ── 1. Get 15 similar artists ──────────────────────────────────────
-        data = await self._lastfm("artist.getsimilar", artist=artist, limit=15)
-        similar_artists: list[str] = []
-        if data:
-            for item in data.get("similarartists", {}).get("artist", []):
-                name = str(item.get("name", "")).strip()
-                if name and _artist_key(name) != seed_key:
-                    similar_artists.append(name)
-
-        # ── 2. Fetch top tracks from each similar artist (parallel) ────────
-        tasks = [
-            self._lastfm("artist.gettoptracks", artist=a, limit=3)
-            for a in similar_artists
-        ]
-        responses = await asyncio.gather(*tasks, return_exceptions=True)
-
-        for a, resp in zip(similar_artists, responses):
-            if not isinstance(resp, dict):
-                continue
-            akey = _artist_key(a)
-            for item in resp.get("toptracks", {}).get("track", []):
-                t = str(item.get("name", "")).strip()
-                if not t or t.lower() in seen_titles:
+        # ── 1. track.getSimilar — direct matches with confidence scores ────
+        sim_data = await self._lastfm(
+            "track.getsimilar", artist=artist, track=track, limit=50
+        )
+        if sim_data:
+            for item in sim_data.get("similartracks", {}).get("track", []):
+                t_name = str(item.get("name", "")).strip()
+                a_name = str(item.get("artist", {}).get("name", "")).strip()
+                score  = float(item.get("match", 0.0))
+                if not t_name or not a_name:
                     continue
-                if artist_counts.get(akey, 0) >= 2:
-                    continue           # max 2 tracks per artist (normalized)
-                seen_titles.add(t.lower())
-                artist_counts[akey] = artist_counts.get(akey, 0) + 1
-                result.append(CuratedTrack(title=t, artist=a))
+                if t_name.lower() in seen_titles:
+                    continue
+                if _artist_key(a_name) == seed_key:
+                    continue
+                seen_titles.add(t_name.lower())
+                result.append(CuratedTrack(title=t_name, artist=a_name, match_score=score))
 
-        # ── 3. Seed artist gets guaranteed slots (up to 5) placed first ────
-        seed_data = await self._lastfm("artist.gettoptracks", artist=artist, limit=6)
+        # ── 2. Fallback: artist.getSimilar when track.getSimilar is thin ───
+        if len(result) < 10:
+            artist_sim = await self._lastfm("artist.getsimilar", artist=artist, limit=10)
+            similar_artists: list[str] = []
+            if artist_sim:
+                for item in artist_sim.get("similarartists", {}).get("artist", []):
+                    name = str(item.get("name", "")).strip()
+                    if name and _artist_key(name) != seed_key:
+                        similar_artists.append(name)
+            if similar_artists:
+                tasks     = [self._lastfm("artist.gettoptracks", artist=a, limit=3) for a in similar_artists]
+                responses = await asyncio.gather(*tasks, return_exceptions=True)
+                artist_counts: dict[str, int] = {}
+                for a, resp in zip(similar_artists, responses):
+                    if not isinstance(resp, dict):
+                        continue
+                    akey = _artist_key(a)
+                    for item in resp.get("toptracks", {}).get("track", []):
+                        t = str(item.get("name", "")).strip()
+                        if not t or t.lower() in seen_titles:
+                            continue
+                        if artist_counts.get(akey, 0) >= 2:
+                            continue
+                        seen_titles.add(t.lower())
+                        artist_counts[akey] = artist_counts.get(akey, 0) + 1
+                        result.append(CuratedTrack(title=t, artist=a, match_score=0.0))
+
+        # Sort by confidence so strongest matches appear first in the panel.
+        result.sort(key=lambda ct: ct.match_score, reverse=True)
+
+        # ── 3. Seed artist gets guaranteed first slots (up to 5) ───────────
+        seed_data   = await self._lastfm("artist.gettoptracks", artist=artist, limit=6)
         seed_tracks: list[CuratedTrack] = []
         if seed_data:
             for item in seed_data.get("toptracks", {}).get("track", []):
                 t = str(item.get("name", "")).strip()
                 if t and t.lower() not in seen_titles:
                     seen_titles.add(t.lower())
-                    seed_tracks.append(CuratedTrack(title=t, artist=artist))
+                    seed_tracks.append(CuratedTrack(title=t, artist=artist, match_score=1.0))
                 if len(seed_tracks) >= 5:
                     break
 
-        # Shuffle only the similar-artist tracks, then put seed tracks first
-        # so they are never cut by the [:limit] slice.
-        random.shuffle(result)
-        combined = seed_tracks + result
-        return combined[:limit]
+        return (seed_tracks + result)[:limit]
 
     async def _get_artist_top_tracks(
         self, artist: str, limit: int = MAX_PLAYLIST
@@ -554,18 +562,19 @@ class CurationCog(commands.Cog, name="CurationCog"):
 
         async def _resolve_one(ct: CuratedTrack) -> None:
             nonlocal queued, failed
-            query = f"ytsearch5:{ct.artist} - {ct.title}"
+            # Append "official audio" to bias YouTube's own ranking toward
+            # studio uploads before the curation scorer even runs.
+            query = f"ytsearch5:{ct.artist} - {ct.title} official audio"
             try:
                 resolved, _ = await music._extract_tracks(
                     query,
                     requester_id=requester_id,
                     guild_id=guild_id,
+                    curation_mode=True,
                 )
                 if resolved:
                     await player.enqueue(resolved[0])
                     added.append(f"**{discord.utils.escape_markdown(ct.artist)}** — {discord.utils.escape_markdown(ct.title)}")
-                    # Only pin the seed to the first track we successfully queue —
-                    # drifting to the last track loses the original vibe.
                     if queued == 0:
                         self._refill_seeds[guild_id] = (ct.artist, ct.title)
                     queued += 1
@@ -576,13 +585,12 @@ class CurationCog(commands.Cog, name="CurationCog"):
                 log.warning("Failed to resolve %s - %s: %s", ct.artist, ct.title, exc)
                 failed += 1
 
-        # Process one at a time — the guild/global extract semaphores already
-        # serialize yt-dlp calls. Running concurrently only starves the player.
-        # Fix #17: update progress every 10 tracks (max 2-3 edits for 25 tracks)
-        # and use ▓░ bar style matching the now-playing panel.
         UPDATE_EVERY = 10
         for i, ct in enumerate(tracks):
             await _resolve_one(ct)
+            # Yield to the event loop between each resolve so the audio
+            # callback thread isn't starved while yt-dlp is working.
+            await asyncio.sleep(0)
             is_last = (i == total - 1)
             if is_last or ((i + 1) % UPDATE_EVERY == 0):
                 progress_lines = "\n".join(f"· {t}" for t in added[-10:])

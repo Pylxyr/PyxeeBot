@@ -260,6 +260,7 @@ def score_entry(
     entry: SearchEntryContext,
     *,
     breakdown: dict[str, float] | None = None,
+    curation_mode: bool = False,
 ) -> float:
     if not query.normalized_query or not entry.normalized_metadata:
         return 0.0
@@ -285,7 +286,7 @@ def score_entry(
     artist_token_matches  = len(query.query_token_set & entry.uploader_token_set)
     artist_match_bonus    = 0.28 if artist_token_matches >= 2 else (0.12 if artist_token_matches == 1 else 0.0)
     strong_uploader_bonus = 0.18 if uploader_overlap >= 0.45 else 0.0
-    topic_bonus           = 0.30 if "topic" in entry.uploader_token_set else 0.0
+    topic_bonus = (0.55 if curation_mode else 0.30) if "topic" in entry.uploader_token_set else 0.0
     uploader_preference_bonus = sum(
         w for tok, w in SEARCH_PREFERRED_UPLOADER_TOKENS.items() if tok in entry.uploader_token_set
     )
@@ -314,10 +315,23 @@ def score_entry(
 
     discouraged_penalty   = 0.0
     raw_query_token_set   = set(query.raw_query_tokens)
+
+    # In curation mode we heavily penalise live/concert content — the user
+    # wants studio versions, not festival recordings or TV sessions.
+    _CURATION_EXTRA_TOKENS   = {"live", "concert", "festival", "session", "acoustic"}
+    _CURATION_EXTRA_PHRASES  = {
+        "live at", "live from", "live in", "live performance",
+        "at the", "in concert", "tour", "unplugged",
+        "bbc session", "radio session", "tv performance",
+        "live version", "live recording",
+    }
+
     for token, weight in SEARCH_DISCOURAGED_TOKENS.items():
         if token not in raw_query_token_set and token in entry.metadata_token_set:
             if is_anime_query and token in {"live"}:
                 discouraged_penalty += weight * 0.3
+            elif curation_mode and token in _CURATION_EXTRA_TOKENS:
+                discouraged_penalty += weight * 3.0   # 3× heavier in curation
             else:
                 discouraged_penalty += weight
     for phrase, weight in SEARCH_DISCOURAGED_PHRASES.items():
@@ -325,6 +339,12 @@ def score_entry(
             if is_anime_query and phrase == "tv size":
                 continue
             discouraged_penalty += weight
+
+    if curation_mode:
+        norm_meta = entry.normalized_metadata
+        for phrase in _CURATION_EXTRA_PHRASES:
+            if phrase not in query.normalized_query and phrase in norm_meta:
+                discouraged_penalty += 0.65
 
     raw_title = str(entry.item.get("title") or "")
     if _JP_COVER_BRACKET_RE.search(raw_title):
@@ -424,6 +444,7 @@ def rank_entries(
     last_search: OrderedDict[int, SearchDebugRecord],
     last_search_max: int,
     playlist_entry_url: Any,   # callable(item) -> str|None
+    curation_mode: bool = False,
 ) -> list[dict[str, Any]]:
     """Score, sort, and return search result dicts in descending score order."""
     prepared = [(i, item, prepare_entry(item)) for i, item in enumerate(entries) if item]
@@ -438,7 +459,7 @@ def rank_entries(
     need_debug = guild_id is not None
     for orig_i, item, ectx in prepared:
         bd: dict[str, float] | None = {} if need_debug else None
-        sc = score_entry(ctx, ectx, breakdown=bd)
+        sc = score_entry(ctx, ectx, breakdown=bd, curation_mode=curation_mode)
         scored.append((sc, orig_i, item, ectx, bd))
     scored.sort(key=lambda t: (t[0], -t[1]), reverse=True)
 

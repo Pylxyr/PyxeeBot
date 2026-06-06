@@ -461,6 +461,7 @@ class MusicCog(commands.Cog):
 
     async def _extract_search_candidates(
         self, query: str, requester_id: int, *, limit: int = SEARCH_SELECTION_LIMIT,
+        curation_mode: bool = False,
     ) -> tuple[list[Track], int]:
         try:
             info = await self._extract_info(self._build_ytdl_options(flat_search=True), query)
@@ -472,13 +473,13 @@ class MusicCog(commands.Cog):
         entries = info.get("entries") if isinstance(info, dict) else None
         if not entries:
             return [], 0
-        # Delegate to pure scoring module
         guild_id    = _CURRENT_GUILD_ID.get()
         search_text = self._search_text(query)
         ranked_items = rank_entries(
             search_text, list(entries), guild_id,
             self._last_search, self._last_search_max,
             self._playlist_entry_url,
+            curation_mode=curation_mode,
         )
         tracks: list[Track] = []
         skipped = 0
@@ -498,12 +499,15 @@ class MusicCog(commands.Cog):
         return await self._extract_search_candidates(query, requester_id, limit=1)
 
     async def _extract_tracks(
-        self, query: str, requester_id: int, *, guild_id: int | None = None
+        self, query: str, requester_id: int, *, guild_id: int | None = None,
+        curation_mode: bool = False,
     ) -> tuple[list[Track], int]:
         token = _CURRENT_GUILD_ID.set(guild_id)
         try:
             if query.startswith("ytsearch"):
-                return await self._extract_search_tracks(query, requester_id)
+                return await self._extract_search_candidates(
+                    query, requester_id, limit=1, curation_mode=curation_mode,
+                )
             if self._is_playlist_query(query):
                 return await self._extract_playlist_tracks(query, requester_id)
             return await self._extract_full_tracks(query, requester_id)
