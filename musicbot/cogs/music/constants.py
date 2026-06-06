@@ -50,6 +50,13 @@ QUEUE_VIEW_TIMEOUT_SECONDS         = 300
 NOW_PLAYING_TIMEOUT_SECONDS        = 1800
 SNAPSHOT_DEBOUNCE_SECONDS          = 0.5
 STREAM_URL_REFRESH_AGE_SECONDS     = 4 * 60 * 60
+# Pipeline: how many queue positions to keep warm at all times.
+# Position 0 (next-up) is always highest priority; 1 and 2 are resolved
+# sequentially in the background so they're ready well before they're needed.
+URL_PIPELINE_DEPTH                 = 3
+# Safety-net near-end trigger: if the next URL somehow isn't warm yet,
+# force-resolve it with this many seconds left on the current track.
+NEAR_END_SAFETY_SECONDS            = 20
 SEARCH_SELECTION_PAGE_SIZE         = 5
 SEARCH_SELECTION_LIMIT             = 10
 SEARCH_SELECTION_TIMEOUT_SECONDS   = 120

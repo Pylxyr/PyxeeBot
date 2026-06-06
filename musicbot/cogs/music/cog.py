@@ -51,8 +51,10 @@ from musicbot.cogs.music.constants import (
     PRESENCE_DEBOUNCE_SECONDS,
     QUEUE_PAGE_SIZE,
     SEARCH_SELECTION_LIMIT,
+    NEAR_END_SAFETY_SECONDS,
     SNAPSHOT_DEBOUNCE_SECONDS,
     STREAM_URL_REFRESH_AGE_SECONDS,
+    URL_PIPELINE_DEPTH,
     YTDL_OPTIONS,
 )
 from musicbot.cogs.music.models import (
@@ -101,7 +103,7 @@ class MusicCog(commands.Cog):
         self.resolve_cache: OrderedDict[str, tuple[float, ResolvedTrackData]] = OrderedDict()
 
         # Per-guild task dicts.
-        self.prefetch_tasks: dict[int, asyncio.Task[None]] = {}
+        self._pipeline_tasks: dict[int, asyncio.Task[None]] = {}
 
         # Fix #5: snapshot debounce uses a deadline float + single long-lived task per guild.
         self._snapshot_deadlines: dict[int, float] = {}
@@ -138,7 +140,7 @@ class MusicCog(commands.Cog):
         self.now_playing_messages.clear()
         for player in self.players.values():
             self._bg_task(player.destroy(), name="cog-unload-destroy")
-        for task_dict in (self.prefetch_tasks, self._snapshot_tasks, self._np_refresh_tasks):
+        for task_dict in (self._pipeline_tasks, self._snapshot_tasks, self._np_refresh_tasks):
             for task in task_dict.values():
                 task.cancel()
         if self._presence_task and not self._presence_task.done():
@@ -622,54 +624,68 @@ class MusicCog(commands.Cog):
         return await self._resolve_track(tracks[0])
 
     # ------------------------------------------------------------------
-    # Prefetch
+    # URL Pipeline — eager background pre-resolution of queued tracks
+    # ------------------------------------------------------------------
+    # One long-lived task per guild resolves the top URL_PIPELINE_DEPTH
+    # queue positions sequentially (never concurrently).  Wakes on every
+    # queue mutation via _kick_pipeline().  The near-end task in player.py
+    # is now only a NEAR_END_SAFETY_SECONDS safety-net refresh.
     # ------------------------------------------------------------------
 
-    def _schedule_prefetch(self, guild_id: int) -> None:
-        if self.bot.settings.ytdlp_prefetch_count < 1:
-            return
-        task = self.prefetch_tasks.get(guild_id)
+    def _kick_pipeline(self, guild_id: int) -> None:
+        """Wake or restart the URL pipeline task for this guild."""
+        task = self._pipeline_tasks.get(guild_id)
         if task and not task.done():
             return
-        self.prefetch_tasks[guild_id] = asyncio.create_task(
-            self._prefetch_tracks(guild_id)
+        self._pipeline_tasks[guild_id] = self._bg_task(
+            self._url_pipeline(guild_id), name=f"url-pipeline-{guild_id}"
         )
 
-    async def _prefetch_tracks(self, guild_id: int) -> None:
+    async def _url_pipeline(self, guild_id: int) -> None:
+        """Sequentially resolve the top URL_PIPELINE_DEPTH unresolved tracks.
+
+        Runs to completion then exits — _kick_pipeline reschedules on demand.
+        Skips tracks whose URL is still fresh (age < STREAM_URL_REFRESH_AGE_SECONDS).
+        """
         try:
             player = self.players.get(guild_id)
             if player is None:
                 return
-            candidates: list[Track] = []
-            if player.current and not player.current.stream_url:
-                candidates.append(player.current)
-            for track in player.queue:
-                if len(candidates) >= self.bot.settings.ytdlp_prefetch_count:
-                    break
-                if not track.stream_url:
-                    candidates.append(track)
-            if not candidates:
-                return
             token = _CURRENT_GUILD_ID.set(guild_id)
             try:
-                async def _prefetch_one(t: Track) -> None:
-                    with contextlib.suppress(commands.BadArgument, Exception):
-                        await self._resolve_track(t)
-                await asyncio.gather(*(_prefetch_one(t) for t in candidates))
+                resolved_count = 0
+                for track in itertools.islice(player.queue, URL_PIPELINE_DEPTH):
+                    if resolved_count >= URL_PIPELINE_DEPTH:
+                        break
+                    if track.stream_url:
+                        age = time.monotonic() - track.resolved_at
+                        if age < STREAM_URL_REFRESH_AGE_SECONDS:
+                            resolved_count += 1
+                            continue
+                        track.stream_url  = ""
+                        track.resolved_at = 0.0
+                    try:
+                        await self._resolve_track(track)
+                        resolved_count += 1
+                        await asyncio.sleep(0)   # yield to audio thread between resolves
+                    except (commands.BadArgument, Exception) as exc:
+                        self.logger.debug(
+                            "Pipeline resolve failed for %s: %s", track.webpage_url, exc
+                        )
             finally:
                 _CURRENT_GUILD_ID.reset(token)
-            self._persist_snapshot(guild_id)
+            if resolved_count:
+                self._persist_snapshot(guild_id)
         finally:
-            self.prefetch_tasks.pop(guild_id, None)
+            self._pipeline_tasks.pop(guild_id, None)
 
-    async def _preload_next_track(self, guild_id: int, *, force_refresh: bool = False) -> None:
+    async def _safety_net_refresh(self, guild_id: int) -> None:
+        """Force-refresh position 0 URL if stale. Called by the near-end event."""
         player = self.players.get(guild_id)
         if player is None or not player.queue:
             return
         next_track = player.queue[0]
-        if next_track.stream_url and not force_refresh:
-            return
-        if force_refresh and next_track.stream_url:
+        if next_track.stream_url:
             age = time.monotonic() - next_track.resolved_at
             if age < STREAM_URL_REFRESH_AGE_SECONDS:
                 return
@@ -682,7 +698,7 @@ class MusicCog(commands.Cog):
             finally:
                 _CURRENT_GUILD_ID.reset(token)
         except commands.BadArgument as exc:
-            self.logger.warning("Near-end preload failed for guild %s: %s", guild_id, exc)
+            self.logger.warning("Safety-net refresh failed for guild %s: %s", guild_id, exc)
             return
         if resolved is not None:
             self._persist_snapshot(guild_id)
@@ -1261,7 +1277,7 @@ class MusicCog(commands.Cog):
         if player and not player.current and not player.queue:
             await self._update_bot_presence()
         self._persist_snapshot(guild.id)
-        self._schedule_prefetch(guild.id)
+        self._kick_pipeline(guild.id)
         self._schedule_np_refresh(guild.id)
 
     @commands.Cog.listener()
@@ -1269,7 +1285,7 @@ class MusicCog(commands.Cog):
         player = self.players.get(guild.id)
         if player is None or player.loop_mode == "one":
             return
-        await self._preload_next_track(guild.id, force_refresh=True)
+        await self._safety_net_refresh(guild.id)
 
     @commands.Cog.listener()
     async def on_guild_remove(self, guild: discord.Guild) -> None:
@@ -1278,7 +1294,7 @@ class MusicCog(commands.Cog):
             await player.destroy()
         self._guild_extract_semaphores.pop(guild.id, None)
         await self._flush_snapshot(guild.id, entries=[])
-        for task_dict in (self._snapshot_tasks, self._np_refresh_tasks, self.prefetch_tasks):
+        for task_dict in (self._snapshot_tasks, self._np_refresh_tasks, self._pipeline_tasks):
             task = task_dict.pop(guild.id, None)
             if task and not task.done():
                 task.cancel()
@@ -1320,7 +1336,7 @@ class MusicCog(commands.Cog):
         """Dock into your current voice channel."""
         player = await self._join_for_context(context)
         if player.queue:
-            self._schedule_prefetch(context.guild.id)
+            self._kick_pipeline(context.guild.id)
         await context.send("Connected to your voice channel.")
         await self._refresh_now_playing_message(context.guild.id)
 
@@ -1337,7 +1353,7 @@ class MusicCog(commands.Cog):
         await player.destroy()
         self.players.pop(gid, None)
         await self._flush_snapshot(gid, entries=[])
-        for task_dict in (self._snapshot_tasks, self._np_refresh_tasks, self.prefetch_tasks):
+        for task_dict in (self._snapshot_tasks, self._np_refresh_tasks, self._pipeline_tasks):
             task = task_dict.pop(gid, None)
             if task and not task.done():
                 task.cancel()
@@ -1496,7 +1512,7 @@ class MusicCog(commands.Cog):
     async def play(self, context: commands.Context[Any], *, query: str) -> None:
         """Queue a URL, playlist, or search query. Searches go direct via YouTube Music."""
         player = await self._join_for_context(context)
-        self._schedule_prefetch(context.guild.id)
+        self._kick_pipeline(context.guild.id)
         if len(player.queue) >= self.bot.settings.max_queue_size:
             await context.send("Queue is full. Clear or play tracks before adding more.")
             return
@@ -1535,7 +1551,7 @@ class MusicCog(commands.Cog):
             await player.enqueue(track)
             added += 1
         self._persist_snapshot(context.guild.id)
-        self._schedule_prefetch(context.guild.id)
+        self._kick_pipeline(context.guild.id)
         await self._refresh_now_playing_message(context.guild.id)
         suffix = f" Skipped `{skipped}` unavailable items." if skipped else ""
         result = (
@@ -1567,7 +1583,7 @@ class MusicCog(commands.Cog):
             return
         await player.enqueue(track, front=True)
         self._persist_snapshot(context.guild.id)
-        self._schedule_prefetch(context.guild.id)
+        self._kick_pipeline(context.guild.id)
         await self._refresh_now_playing_message(context.guild.id)
         await fetch_msg.edit(
             content=f"Queued next: [{track.escaped_title}]({track.webpage_url})."
@@ -1611,7 +1627,7 @@ class MusicCog(commands.Cog):
             return
         await player.enqueue(selected)
         self._persist_snapshot(context.guild.id)
-        self._schedule_prefetch(context.guild.id)
+        self._kick_pipeline(context.guild.id)
         await self._refresh_now_playing_message(context.guild.id)
         await context.send(
             f"Queued [{discord.utils.escape_markdown(selected.title)}]({selected.webpage_url})."
@@ -1934,7 +1950,7 @@ class MusicCog(commands.Cog):
         added   = sum(results)
         skipped = len(results) - added
         self._persist_snapshot(context.guild.id)
-        self._schedule_prefetch(context.guild.id)
+        self._kick_pipeline(context.guild.id)
         suffix = f" Skipped `{skipped}` unavailable items." if skipped else ""
         await context.send(f"Loaded `{added}` tracks from playlist `{name.lower()}`.{suffix}")
         await self._refresh_now_playing_message(context.guild.id)
