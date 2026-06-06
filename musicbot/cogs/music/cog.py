@@ -199,41 +199,23 @@ class MusicCog(commands.Cog):
         except Exception:
             return False
 
-    # URL patterns that yt-dlp returns for pre-encoded Opus audio — no probe needed.
-    _OPUS_STREAM_RE = re.compile(
-        r"googlevideo\.com/|\.googlevideo\.com/|mime=audio%2Fwebm|mime=audio/webm",
-        re.IGNORECASE,
-    )
+    # _OPUS_STREAM_RE removed — codec=copy passthrough causes fast-forward/jitter
+    # because it bypasses the libopus encoder, sending raw container packets at
+    # whatever cadence FFmpeg buffered them rather than strict 20ms frames.
+    # Always re-encode through libopus with -frame_duration 20 -flush_packets 1.
 
     async def _build_audio_source(self, track: Track) -> discord.AudioSource:
-        # Fix #14: YouTube WebM/Opus streams are already Opus-encoded.
-        # Skipping from_probe() saves an ffprobe subprocess (~50-150ms latency
-        # at track start) by going straight to copy-codec passthrough.
-        if self._OPUS_STREAM_RE.search(track.stream_url or ""):
-            try:
-                return discord.FFmpegOpusAudio(
-                    track.stream_url,
-                    codec="copy",
-                    before_options=FFMPEG_BEFORE_OPTIONS,
-                    options=FFMPEG_OPTIONS,
-                )
-            except (discord.ClientException, OSError, TypeError, ValueError) as exc:
-                self.logger.debug(
-                    "Opus copy passthrough failed for %s (%s), falling back to probe.",
-                    track.webpage_url, exc,
-                )
         try:
             source: discord.AudioSource = await discord.FFmpegOpusAudio.from_probe(
                 track.stream_url, method="fallback",
                 before_options=FFMPEG_BEFORE_OPTIONS, options=FFMPEG_OPTIONS,
             )
         except (discord.ClientException, OSError, TypeError, ValueError) as exc:
-            self.logger.warning("Opus probe fallback engaged for %s: %s", track.webpage_url, exc)
+            self.logger.warning("Opus probe fallback for %s: %s", track.webpage_url, exc)
             try:
                 source = discord.FFmpegOpusAudio(
                     track.stream_url,
                     bitrate=self.bot.settings.opus_bitrate_kbps,
-                    codec="libopus",
                     before_options=FFMPEG_BEFORE_OPTIONS,
                     options=FFMPEG_OPTIONS,
                 )
@@ -654,7 +636,10 @@ class MusicCog(commands.Cog):
             token = _CURRENT_GUILD_ID.set(guild_id)
             try:
                 resolved_count = 0
-                for track in itertools.islice(player.queue, URL_PIPELINE_DEPTH):
+                # Snapshot the queue to a list before iterating — the player
+                # loop can popleft() the deque concurrently, causing
+                # "RuntimeError: deque mutated during iteration".
+                for track in list(itertools.islice(player.queue, URL_PIPELINE_DEPTH)):
                     if resolved_count >= URL_PIPELINE_DEPTH:
                         break
                     if track.stream_url:

@@ -20,7 +20,11 @@ FFMPEG_BEFORE_OPTIONS = (
     "-probesize 32M "
     "-analyzeduration 0"
 )
-FFMPEG_OPTIONS = "-vn -ar 48000 -ac 2 -bufsize 128k"
+# -application lowdelay + -frame_duration 20: forces exactly 20ms Opus frames,
+# matching AudioPlayer.DELAY precisely. Prevents the fast-forward/jitter caused
+# by FFmpeg pre-buffering packets at uneven intervals.
+# -flush_packets 1: prevents FFmpeg holding completed packets in its output buffer.
+FFMPEG_OPTIONS = "-vn -ar 48000 -ac 2 -application lowdelay -frame_duration 20 -flush_packets 1"
 
 # ---------------------------------------------------------------------------
 # yt-dlp base options (settings-dependent values added at runtime)

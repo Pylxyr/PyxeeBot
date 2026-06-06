@@ -75,8 +75,8 @@ class NowPlayingController:
     channel_id:       int
     message_id:       int
     expires_at:       float
-    status_text:      str           = ""
-    _last_render_key: tuple | None  = field(default=None, init=False, repr=False, compare=False)
+    status_text:      str          = ""
+    _last_render_key: tuple | None = field(default=None, init=False, repr=False, compare=False)
 
 
 @dataclass(slots=True)
