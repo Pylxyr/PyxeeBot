@@ -257,20 +257,18 @@ def score_entry(
     discouraged_penalty   = 0.0
     raw_query_token_set   = set(query.raw_query_tokens)
 
-    _CURATION_EXTRA_TOKENS   = {"live", "concert", "festival", "session", "acoustic"}
+    _CURATION_EXTRA_TOKENS   = {"live", "concert", "stage", "festival", "session", "acoustic"}
     _CURATION_EXTRA_PHRASES  = {
-        "live at", "live from", "live in", "live performance",
         "at the", "in concert", "tour", "unplugged",
         "bbc session", "radio session", "tv performance",
-        "live version", "live recording",
     }
 
     for token, weight in SEARCH_DISCOURAGED_TOKENS.items():
         if token not in raw_query_token_set and token in entry.metadata_token_set:
-            if is_anime_query and token in {"live"}:
+            if is_anime_query and token in {"live", "stage", "concert"}:
                 discouraged_penalty += weight * 0.3
             elif curation_mode and token in _CURATION_EXTRA_TOKENS:
-                discouraged_penalty += weight * 3.0   # 3× heavier in curation
+                discouraged_penalty += weight * 3.0
             else:
                 discouraged_penalty += weight
     for phrase, weight in SEARCH_DISCOURAGED_PHRASES.items():
