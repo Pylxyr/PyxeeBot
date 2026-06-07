@@ -58,7 +58,7 @@ SEARCH_DISCOURAGED_TOKENS: dict[str, float] = {
     "amv": 0.60, "cast": 0.70, "cover": 0.60, "edit": 0.15,
     "instrumental": 0.60, "karaoke": 0.70, "nightcore": 0.70,
     "remix": 0.45, "reverb": 0.22, "seiyuu": 0.70, "slowed": 0.45,
-    "live": 0.20,
+    "live": 0.50, "stage": 0.45, "concert": 0.50,        # raised live; added stage + concert
     "guitar": 0.50, "piano": 0.50, "violin": 0.45,
     "acoustic": 0.35, "fingerstyle": 0.55, "ukulele": 0.55,
     "bass": 0.45, "drums": 0.45, "drum": 0.40,
@@ -79,6 +79,10 @@ SEARCH_DISCOURAGED_PHRASES: dict[str, float] = {
     "2 hours": 0.90, "3 hours": 0.90,
     "extended mix": 0.30, "full album": 0.60,
     "compilation": 0.50, "best of": 0.35,
+    # live / stage — fires unless user's query contains the phrase
+    "live at": 0.60, "live from": 0.60, "live in": 0.55,
+    "live performance": 0.65, "live version": 0.55, "live recording": 0.60,
+    "in concert": 0.60, "on stage": 0.55,
 }
 SEARCH_PREFERRED_PHRASES: dict[str, float] = {
     "official audio": 0.30, "official music video": 0.22,
