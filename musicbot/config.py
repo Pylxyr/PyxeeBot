@@ -32,6 +32,7 @@ class Settings:
     ytdlp_socket_timeout: int
     ytdlp_prefetch_count: int
     ytdlp_concurrent_extracts: int
+    ytdlp_curation_concurrency: int
     near_end_prefetch_seconds: int
     opus_bitrate_kbps: int
     ytdlp_search_results: int
@@ -101,6 +102,7 @@ def load_settings() -> Settings:
         ytdlp_socket_timeout=max(5, _int_env("YTDLP_SOCKET_TIMEOUT", 15)),
         ytdlp_prefetch_count=max(0, _int_env("YTDLP_PREFETCH_COUNT", 1)),
         ytdlp_concurrent_extracts=max(1, _int_env("YTDLP_CONCURRENT_EXTRACTS", 1)),
+        ytdlp_curation_concurrency=max(1, min(6, _int_env("YTDLP_CURATION_CONCURRENCY", 3))),
         near_end_prefetch_seconds=max(0, _int_env("NEAR_END_PREFETCH_SECONDS", 30)),
         opus_bitrate_kbps=max(64, min(256, _int_env("OPUS_BITRATE_KBPS", 96))),
         ytdlp_search_results=max(1, min(10, _int_env("YTDLP_SEARCH_RESULTS", 5))),
