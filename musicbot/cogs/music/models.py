@@ -1,4 +1,4 @@
-"""models.py — Pure data classes. No discord/bot imports."""
+"""models.py — Pure data classes."""
 from __future__ import annotations
 
 import re
@@ -27,7 +27,6 @@ class Track:
     resolved_at:   float     = 0.0
     tags:          list[str] = field(default_factory=list)
 
-    # None = not yet computed; "" = computed and the result is an empty string.
     _escaped_title:    str | None = field(default=None, init=False, repr=False, compare=False)
     _escaped_uploader: str | None = field(default=None, init=False, repr=False, compare=False)
 
@@ -67,11 +66,6 @@ class ResolvedTrackData:
 
 @dataclass(slots=True)
 class NowPlayingController:
-    """Stores only channel_id + message_id as integers (no full Message object).
-
-    Fix #6: avoids keeping a full discord.Message (embed payload, attachment
-    data, member caches) alive for every guild that ever ran !np.
-    """
     channel_id:       int
     message_id:       int
     expires_at:       float

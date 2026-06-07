@@ -15,7 +15,6 @@ from musicbot.cogs.curation import CurationCog
 from musicbot.config import Settings, load_settings
 from musicbot.database import Database
 
-
 class PyxeeHelpCommand(commands.HelpCommand):
     CATEGORY_STYLES = {
         "MusicCog":    ("\N{MUSICAL NOTE}", "Playback Deck"),
@@ -209,7 +208,6 @@ class PyxeeHelpCommand(commands.HelpCommand):
         embed = self._base_embed("\N{WARNING SIGN} Help Error", error)
         await self.get_destination().send(embed=embed)
 
-
 class MusicBot(commands.Bot):
     def __init__(self, settings: Settings, database: Database) -> None:
         intents = discord.Intents.default()
@@ -227,8 +225,6 @@ class MusicBot(commands.Bot):
         )
         self.settings = settings
         self.database = database
-        # FIX #1/#10: Synchronous prefix cache on the bot to eliminate the async
-        # DB round-trip on every single message in the common case.
         self._prefix_cache: dict[int, str] = {}
 
     async def setup_hook(self) -> None:
@@ -241,12 +237,10 @@ class MusicBot(commands.Bot):
         prefixes = [self.settings.default_prefix]
         if message.guild:
             guild_id = message.guild.id
-            # Fast synchronous path — avoids an await on every message.
             if guild_id in self._prefix_cache:
                 custom = self._prefix_cache[guild_id]
             else:
                 custom = await self.database.get_prefix(guild_id)
-                # Populate the fast cache; None means "use default".
                 self._prefix_cache[guild_id] = custom or ""
             if custom and custom not in prefixes:
                 prefixes.insert(0, custom)
@@ -292,19 +286,9 @@ class MusicBot(commands.Bot):
         self._shutting_down = True
         music_cog = self.cogs.get("MusicCog")
         if isinstance(music_cog, MusicCog):
-            for task in list(music_cog._np_refresh_tasks.values()):
-                task.cancel()
-            for task in list(music_cog._snapshot_tasks.values()):
-                task.cancel()
-            for guild_id in list(music_cog.players):
-                with contextlib.suppress(Exception):
-                    await music_cog._flush_snapshot(guild_id)
-            for player in list(music_cog.players.values()):
-                with contextlib.suppress(Exception):
-                    await player.destroy()
+            await music_cog.shutdown()
         await self.database.close()
         await super().close()
-
 
 def configure_logging(settings: Settings) -> None:
     formatter = logging.Formatter("%(asctime)s | %(levelname)s | %(name)s | %(message)s")
@@ -331,7 +315,6 @@ def configure_logging(settings: Settings) -> None:
     logging.getLogger("discord.http").setLevel(logging.WARNING)
     logging.getLogger("yt_dlp").setLevel(logging.WARNING)
 
-
 async def _async_run() -> None:
     import signal
 
@@ -350,7 +333,6 @@ async def _async_run() -> None:
             loop.add_signal_handler(signal.SIGTERM, _handle_sigterm)
 
         await bot.start(settings.token)
-
 
 def run() -> None:
     asyncio.run(_async_run())

@@ -1,9 +1,4 @@
-"""views.py — All discord.ui views for the music subsystem.
-
-SearchSelectionView, QueueView, NowPlayingView, ScoreDebugView.
-Fix #6: NowPlayingView.on_timeout uses channel.get_partial_message() instead
-        of storing a full discord.Message object.
-"""
+"""views.py — SearchSelectionView, QueueView, NowPlayingView, ScoreDebugView."""
 from __future__ import annotations
 
 import asyncio
@@ -31,16 +26,10 @@ if TYPE_CHECKING:
     from musicbot.cogs.music.cog import MusicCog
     from musicbot.cogs.music.player import GuildPlayer
 
-
 def _disable_view_items(view: discord.ui.View) -> None:
     for item in view.children:
         if hasattr(item, "disabled"):
             item.disabled = True
-
-
-# ---------------------------------------------------------------------------
-# Search selector
-# ---------------------------------------------------------------------------
 
 class SearchSelectionMenu(discord.ui.Select):
     def __init__(self) -> None:
@@ -68,7 +57,6 @@ class SearchSelectionMenu(discord.ui.Select):
         if self.view is None:
             return
         await self.view.handle_selection(interaction, int(self.values[0]))
-
 
 class SearchSelectionView(discord.ui.View):
     def __init__(
@@ -197,11 +185,6 @@ class SearchSelectionView(discord.ui.View):
             with contextlib.suppress(discord.HTTPException, discord.NotFound):
                 await self.message.edit(view=self)
 
-
-# ---------------------------------------------------------------------------
-# Queue view
-# ---------------------------------------------------------------------------
-
 class QueueView(discord.ui.View):
     def __init__(
         self,
@@ -310,20 +293,11 @@ class QueueView(discord.ui.View):
                     "That queue interaction failed. Run the command again.", ephemeral=True
                 )
 
-
-# ---------------------------------------------------------------------------
-# Now-playing view
-# ---------------------------------------------------------------------------
-
 class NowPlayingView(discord.ui.View):
     def __init__(self, cog: "MusicCog", guild_id: int) -> None:
         super().__init__(timeout=NOW_PLAYING_TIMEOUT_SECONDS)
         self.cog      = cog
         self.guild_id = guild_id
-        # Wire the pause/resume button reference eagerly from self.children,
-        # which is already populated by the @discord.ui.button decorators during
-        # super().__init__(). This avoids the lazy-first-press approach that
-        # would leave _pause_btn=None whenever other buttons are pressed first.
         self._pause_btn: discord.ui.Button | None = next(
             (
                 item for item in self.children
@@ -413,7 +387,6 @@ class NowPlayingView(discord.ui.View):
 
     async def on_timeout(self) -> None:
         _disable_view_items(self)
-        # Fix #6: use get_partial_message — no full Message object stored.
         controller = self.cog.now_playing_messages.get(self.guild_id)
         if controller is None or time.monotonic() >= controller.expires_at:
             return
@@ -436,11 +409,6 @@ class NowPlayingView(discord.ui.View):
                 await interaction.response.send_message(
                     "That control failed. Try the command again.", ephemeral=True
                 )
-
-
-# ---------------------------------------------------------------------------
-# Score debug view
-# ---------------------------------------------------------------------------
 
 class ScoreDebugView(discord.ui.View):
     def __init__(self, author_id: int, record: SearchDebugRecord) -> None:

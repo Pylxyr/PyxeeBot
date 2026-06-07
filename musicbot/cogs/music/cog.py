@@ -1,21 +1,4 @@
-"""cog.py — MusicCog: commands and event handlers only.
-
-All scoring, player state, views, and constants live in their own modules.
-This file is ~750 lines vs the original 3,758-line monolith.
-
-Architecture changes vs the monolith
--------------------------------------
-Fix #1:  Dedicated ThreadPoolExecutor for yt-dlp (size=2) so yt-dlp threads
-         never compete with other blocking work on the Oracle Micro.
-Fix #2:  aiohttp ClientSession created in async cog_load / closed in cog_unload.
-Fix #3:  Cache key uses real URL when available; bare queries get a prefixed key.
-Fix #4:  validate_stream_url injected into GuildPlayer at construction.
-Fix #5:  Snapshot debounce uses a per-guild deadline timestamp — no Task churn.
-Fix #6:  NowPlayingController stores only (channel_id, message_id) integers;
-         NowPlayingView.on_timeout uses get_partial_message().
-Fix #9:  _build_np_refresh uses per-guild deadline — no Task churn.
-Fix #10: Resolve task done_callback logs exceptions unconditionally.
-"""
+"""cog.py — MusicCog: commands and event handlers."""
 from __future__ import annotations
 
 import asyncio
@@ -75,10 +58,7 @@ from musicbot.cogs.music.views import (
 if TYPE_CHECKING:
     from musicbot.bot import MusicBot
 
-# ContextVar so _extract_info can find the current guild's semaphore without
-# threading guild_id through every call in the chain.
 _CURRENT_GUILD_ID: ContextVar[int | None] = ContextVar("_CURRENT_GUILD_ID", default=None)
-
 
 class MusicCog(commands.Cog):
     def __init__(self, bot: "MusicBot") -> None:
@@ -92,28 +72,21 @@ class MusicCog(commands.Cog):
         self._ytdl_base_options: dict[str, Any] | None = None
         self._ytdl_variants: dict[tuple[bool, bool], dict[str, Any]] | None = None
 
-        # Fix #1: dedicated executor — yt-dlp threads isolated from everything else.
         self._ytdl_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="ytdlp")
 
-        # Fix #2: session created in async cog_load, not here in __init__.
         self._http_session: aiohttp.ClientSession | None = None
 
-        # Resolve deduplication: in-flight task per cache key.
         self.resolve_tasks: dict[str, asyncio.Task[ResolvedTrackData | None]] = {}
         self.resolve_cache: OrderedDict[str, tuple[float, ResolvedTrackData]] = OrderedDict()
 
-        # Per-guild task dicts.
         self._pipeline_tasks: dict[int, asyncio.Task[None]] = {}
 
-        # Fix #5: snapshot debounce uses a deadline float + single long-lived task per guild.
         self._snapshot_deadlines: dict[int, float] = {}
         self._snapshot_tasks:     dict[int, asyncio.Task[None]] = {}
 
-        # Fix #9: NP refresh debounce — same long-lived task pattern.
         self._np_refresh_deadlines: dict[int, float] = {}
         self._np_refresh_tasks:     dict[int, asyncio.Task[None]] = {}
 
-        # Presence debounce — single bot-wide task.
         self._presence_task: asyncio.Task[None] | None = None
         self._presence_deadline: float = 0.0
 
@@ -123,14 +96,7 @@ class MusicCog(commands.Cog):
         self._last_search: OrderedDict[int, SearchDebugRecord] = OrderedDict()
         self._last_search_max = 50   # was 100; halved to reduce memory footprint
 
-        # Fix #1b: cached YoutubeDL instances — one per options variant.
-        # Creating YoutubeDL parses options and loads extractors (~5-20ms);
-        # reusing the same instance per variant eliminates that overhead.
         self._ytdl_instances: dict[tuple[bool, bool], YoutubeDL] = {}
-
-    # ------------------------------------------------------------------
-    # Lifecycle — Fix #2: proper async session management
-    # ------------------------------------------------------------------
 
     async def cog_load(self) -> None:
         """Called by discord.py after the cog is added to the bot."""
@@ -146,13 +112,21 @@ class MusicCog(commands.Cog):
         if self._presence_task and not self._presence_task.done():
             self._presence_task.cancel()
         if self._http_session and not self._http_session.closed:
-            asyncio.ensure_future(self._http_session.close())
+            asyncio.create_task(self._http_session.close())
         self._ytdl_instances.clear()
         self._ytdl_executor.shutdown(wait=False)
 
-    # ------------------------------------------------------------------
-    # yt-dlp helpers — Fix #1: uses dedicated executor
-    # ------------------------------------------------------------------
+    async def shutdown(self) -> None:
+        for task in list(self._np_refresh_tasks.values()):
+            task.cancel()
+        for task in list(self._snapshot_tasks.values()):
+            task.cancel()
+        for guild_id in list(self.players):
+            with contextlib.suppress(Exception):
+                await self._flush_snapshot(guild_id)
+        for player in list(self.players.values()):
+            with contextlib.suppress(Exception):
+                await player.destroy()
 
     def _build_ytdl_options(
         self, *, flat_playlist: bool = False, flat_search: bool = False
@@ -199,10 +173,6 @@ class MusicCog(commands.Cog):
         except Exception:
             return False
 
-    # _OPUS_STREAM_RE removed — codec=copy passthrough causes fast-forward/jitter
-    # because it bypasses the libopus encoder, sending raw container packets at
-    # whatever cadence FFmpeg buffered them rather than strict 20ms frames.
-    # Always re-encode through libopus with -frame_duration 20 -flush_packets 1.
 
     async def _build_audio_source(self, track: Track) -> discord.AudioSource:
         try:
@@ -225,22 +195,9 @@ class MusicCog(commands.Cog):
                 raise
         return source
 
-    def _get_ytdl_instance(self, options: dict[str, Any]) -> YoutubeDL:
-        """Return a cached YoutubeDL instance for this options dict.
-
-        YoutubeDL construction is expensive (~5-20ms: parses options, loads
-        extractors). We key the cache on the identity of the options dict
-        returned by _build_ytdl_options, which produces exactly 4 variants.
-        """
-        key = id(options)  # options dicts are module-level singletons after first build
-        inst = self._ytdl_instances.get(key)
-        if inst is None:
-            inst = YoutubeDL(options)
-            self._ytdl_instances[key] = inst
-        return inst
-
-    async def _extract_info(self, options: dict[str, Any], query: str) -> dict[str, Any]:
-        """Run yt-dlp in the dedicated executor (Fix #1) with per-guild serialisation."""
+    async def _extract_info(self, query: str, *, flat_playlist: bool = False, flat_search: bool = False) -> dict[str, Any]:
+        key     = (flat_playlist, flat_search)
+        options = self._build_ytdl_options(flat_playlist=flat_playlist, flat_search=flat_search)
         guild_id = _CURRENT_GUILD_ID.get()
         guild_sem = (
             self._guild_extract_semaphores.setdefault(guild_id, asyncio.Semaphore(1))
@@ -248,41 +205,40 @@ class MusicCog(commands.Cog):
         )
 
         async def _do() -> dict[str, Any]:
-            async with self.extract_semaphore:
-                try:
-                    loop = asyncio.get_running_loop()
-                    ydl  = self._get_ytdl_instance(options)
-                    qry  = query
-                    # Fix #1: submit to the dedicated yt-dlp executor.
-                    # Use the cached instance; extract_info is thread-safe for
-                    # concurrent calls with different queries.
-                    result = await asyncio.wait_for(
-                        loop.run_in_executor(
-                            self._ytdl_executor,
-                            lambda: ydl.extract_info(qry, download=False),
-                        ),
-                        timeout=self.bot.settings.ytdlp_extract_timeout_seconds,
-                    )
-                    if result is None:
-                        raise commands.BadArgument(
-                            "No information could be extracted for the provided source."
+            if guild_sem is not None:
+                await guild_sem.acquire()
+            try:
+                async with self.extract_semaphore:
+                    try:
+                        loop = asyncio.get_running_loop()
+                        ydl  = self._ytdl_instances.get(key)
+                        if ydl is None:
+                            ydl = YoutubeDL(options)
+                            self._ytdl_instances[key] = ydl
+                        qry  = query
+                        result = await asyncio.wait_for(
+                            loop.run_in_executor(
+                                self._ytdl_executor,
+                                lambda: ydl.extract_info(qry, download=False),
+                            ),
+                            timeout=self.bot.settings.ytdlp_extract_timeout_seconds,
                         )
-                    return result
-                except asyncio.TimeoutError as exc:
-                    self.logger.warning("yt-dlp timed out for query %s", query)
-                    raise commands.BadArgument(
-                        f"Source lookup timed out after "
-                        f"{self.bot.settings.ytdlp_extract_timeout_seconds} seconds."
-                    ) from exc
+                        if result is None:
+                            raise commands.BadArgument(
+                                "No information could be extracted for the provided source."
+                            )
+                        return result
+                    except asyncio.TimeoutError as exc:
+                        self.logger.warning("yt-dlp timed out for query %s", query)
+                        raise commands.BadArgument(
+                            f"Source lookup timed out after "
+                            f"{self.bot.settings.ytdlp_extract_timeout_seconds} seconds."
+                        ) from exc
+            finally:
+                if guild_sem is not None:
+                    guild_sem.release()
 
-        if guild_sem is not None:
-            async with guild_sem:
-                return await _do()
         return await _do()
-
-    # ------------------------------------------------------------------
-    # Track extraction helpers
-    # ------------------------------------------------------------------
 
     def _is_playlist_query(self, query: str) -> bool:
         if not query.startswith(("http://", "https://")):
@@ -335,7 +291,7 @@ class MusicCog(commands.Cog):
         self, query: str, requester_id: int
     ) -> tuple[list[Track], int]:
         try:
-            info = await self._extract_info(self._build_ytdl_options(flat_playlist=True), query)
+            info = await self._extract_info(query, flat_playlist=True)
         except commands.BadArgument:
             raise
         except DownloadError as exc:
@@ -370,7 +326,7 @@ class MusicCog(commands.Cog):
     ) -> Track | None:
         if "url" not in item and item.get("webpage_url"):
             try:
-                item = await self._extract_info(self._build_ytdl_options(), item["webpage_url"])
+                item = await self._extract_info(item["webpage_url"])
             except DownloadError as exc:
                 self.logger.warning("Skipping unplayable item %s: %s", item.get("webpage_url"), exc)
                 return None
@@ -384,7 +340,7 @@ class MusicCog(commands.Cog):
             uploader=item.get("uploader", "Unknown uploader"),
             duration=int(item.get("duration") or 0),
             requester_id=requester_id, query=webpage_url,
-            thumbnail_url=item.get("thumbnail") or "",
+            thumbnail_url=self._item_thumbnail_url(item),
             resolved_at=time.monotonic(),
             tags=list(item.get("tags") or []) + list(item.get("categories") or []),
         )
@@ -393,7 +349,7 @@ class MusicCog(commands.Cog):
         self, query: str, requester_id: int
     ) -> tuple[list[Track], int]:
         try:
-            info = await self._extract_info(self._build_ytdl_options(), query)
+            info = await self._extract_info(query)
         except commands.BadArgument:
             raise
         except DownloadError as exc:
@@ -448,7 +404,7 @@ class MusicCog(commands.Cog):
         curation_mode: bool = False,
     ) -> tuple[list[Track], int]:
         try:
-            info = await self._extract_info(self._build_ytdl_options(flat_search=True), query)
+            info = await self._extract_info(query, flat_search=True)
         except commands.BadArgument:
             raise
         except DownloadError as exc:
@@ -498,13 +454,7 @@ class MusicCog(commands.Cog):
         finally:
             _CURRENT_GUILD_ID.reset(token)
 
-    # ------------------------------------------------------------------
-    # Resolve cache — Fix #3 (cache key) + Fix #10 (exception logging)
-    # ------------------------------------------------------------------
-
     def _cache_key(self, track: Track) -> str:
-        # Fix #3: only use webpage_url as key when it's a real HTTP URL.
-        # Bare search strings get a 'q:' prefix so they never collide with URLs.
         url = track.webpage_url
         if url and url.startswith(("http://", "https://")):
             return url
@@ -577,7 +527,6 @@ class MusicCog(commands.Cog):
             pending = asyncio.create_task(runner(), name=f"resolve:{cache_key[:60]}")
             self.resolve_tasks[cache_key] = pending
 
-            # Fix #10: log exceptions unconditionally via done_callback.
             def _on_done(t: asyncio.Task[Any]) -> None:
                 self.resolve_tasks.pop(cache_key, None)
                 if not t.cancelled() and t.exception() is not None:
@@ -605,14 +554,6 @@ class MusicCog(commands.Cog):
             return None
         return await self._resolve_track(tracks[0])
 
-    # ------------------------------------------------------------------
-    # URL Pipeline — eager background pre-resolution of queued tracks
-    # ------------------------------------------------------------------
-    # One long-lived task per guild resolves the top URL_PIPELINE_DEPTH
-    # queue positions sequentially (never concurrently).  Wakes on every
-    # queue mutation via _kick_pipeline().  The near-end task in player.py
-    # is now only a NEAR_END_SAFETY_SECONDS safety-net refresh.
-    # ------------------------------------------------------------------
 
     def _kick_pipeline(self, guild_id: int) -> None:
         """Wake or restart the URL pipeline task for this guild."""
@@ -688,10 +629,6 @@ class MusicCog(commands.Cog):
         if resolved is not None:
             self._persist_snapshot(guild_id)
 
-    # ------------------------------------------------------------------
-    # Snapshot — Fix #5: deadline + single long-lived task per guild
-    # ------------------------------------------------------------------
-
     def _persist_snapshot(self, guild_id: int) -> None:
         """Schedule a debounced snapshot write via deadline timestamp."""
         self._snapshot_deadlines[guild_id] = time.monotonic() + SNAPSHOT_DEBOUNCE_SECONDS
@@ -756,10 +693,6 @@ class MusicCog(commands.Cog):
         snapshot = self._snapshot_entries(guild_id) if entries is None else entries
         await self.bot.database.save_queue_snapshot(guild_id, snapshot)
 
-    # ------------------------------------------------------------------
-    # NP refresh — Fix #9: deadline + single long-lived task per guild
-    # ------------------------------------------------------------------
-
     def _schedule_np_refresh(
         self, guild_id: int, *, delay: float = NP_REFRESH_DEBOUNCE_SECONDS
     ) -> None:
@@ -785,10 +718,6 @@ class MusicCog(commands.Cog):
                 await self._refresh_now_playing_message(guild_id)
         finally:
             self._np_refresh_tasks.pop(guild_id, None)
-
-    # ------------------------------------------------------------------
-    # Now-playing helpers — Fix #6: PartialMessage, no full Message stored
-    # ------------------------------------------------------------------
 
     def _controller(
         self, guild_id: int, *, message_id: int | None = None
@@ -918,7 +847,6 @@ class MusicCog(commands.Cog):
         if target_channel is None:
             return None
 
-        # Fix #6: delete old panel by fetching partial message — no cached Message object needed.
         if replace_existing:
             existing = self._controller(guild.id)
             if existing and existing.message_id:
@@ -950,14 +878,11 @@ class MusicCog(commands.Cog):
         guild      = self.bot.get_guild(guild_id)
         if controller is None or guild is None:
             return
-        # Fix #6: use get_partial_message — zero fetch_message HTTP calls.
         channel = self.bot.get_channel(controller.channel_id)
         if channel is None or not hasattr(channel, "get_partial_message"):
             return
         player = self.players.get(guild_id)
 
-        # Fix #7: hash the visible embed state; skip the HTTP edit if nothing
-        # has changed since the last render to avoid redundant API calls.
         elapsed_bucket = int(player.elapsed_seconds // 4) if player else 0
         queue_preview  = tuple(t.title for t in itertools.islice(player.queue, NOW_PLAYING_PREVIEW_LIMIT)) if player else ()
         current_title  = player.current.title if player and player.current else ""
@@ -972,10 +897,6 @@ class MusicCog(commands.Cog):
         partial = channel.get_partial_message(controller.message_id)
         with contextlib.suppress(discord.HTTPException, discord.NotFound):
             await partial.edit(embed=embed)
-
-    # ------------------------------------------------------------------
-    # Presence — debounced (already correct from prior fix)
-    # ------------------------------------------------------------------
 
     async def _update_bot_presence(self) -> None:
         self._presence_deadline = time.monotonic() + PRESENCE_DEBOUNCE_SECONDS
@@ -1013,10 +934,6 @@ class MusicCog(commands.Cog):
                     type=discord.ActivityType.listening, name=f"music in {len(active)} servers",
                 ))
 
-    # ------------------------------------------------------------------
-    # Player management
-    # ------------------------------------------------------------------
-
     def _bg_task(self, coro: Any, *, name: str | None = None) -> asyncio.Task[Any]:
         task = asyncio.create_task(coro, name=name)
         def _on_done(t: asyncio.Task[Any]) -> None:
@@ -1029,7 +946,6 @@ class MusicCog(commands.Cog):
     async def _get_player(self, guild: discord.Guild) -> GuildPlayer:
         player = self.players.get(guild.id)
         if not player:
-            # Fix #4: inject validate_stream_url so player never does string cog lookup.
             player = await GuildPlayer.create(
                 self.bot, guild,
                 self._resolve_track,
@@ -1066,10 +982,6 @@ class MusicCog(commands.Cog):
             async with sem:
                 with contextlib.suppress(Exception):
                     await self._resolve_track(track)
-
-    # ------------------------------------------------------------------
-    # Permission helpers
-    # ------------------------------------------------------------------
 
     async def _ensure_author_voice(
         self, context: commands.Context[Any]
@@ -1150,10 +1062,6 @@ class MusicCog(commands.Cog):
         view.message = prompt
         return await view.wait_for_selection()
 
-    # ------------------------------------------------------------------
-    # Shared action helpers
-    # ------------------------------------------------------------------
-
     async def _skip_for_member(self, player: GuildPlayer, member: discord.Member) -> str:
         if not player.current or not player.voice_client or not player.voice_client.channel:
             return "Nothing is playing."
@@ -1209,10 +1117,6 @@ class MusicCog(commands.Cog):
         label = LOOP_LABELS.get(player.loop_mode, "Off")
         icon  = LOOP_ICONS.get(player.loop_mode, "→")
         return f"Loop changed: **{prev_label}** → {icon} **{label}**"
-
-    # ------------------------------------------------------------------
-    # Event listeners
-    # ------------------------------------------------------------------
 
     @commands.Cog.listener()
     async def on_musicbot_np_auto_refresh(self, guild: discord.Guild) -> None:
@@ -1311,10 +1215,6 @@ class MusicCog(commands.Cog):
         if before.channel == tracked_channel or after.channel == tracked_channel:
             await player.refresh_empty_channel_state()
 
-    # ------------------------------------------------------------------
-    # Commands
-    # ------------------------------------------------------------------
-
     @commands.hybrid_command(name="join", aliases=["summon"])
     @commands.guild_only()
     async def join(self, context: commands.Context[Any]) -> None:
@@ -1379,7 +1279,7 @@ class MusicCog(commands.Cog):
             return
         stale_suffix = ""
         age_seconds = time.monotonic() - record.timestamp
-        if age_seconds > 300:   # Fix #11: flag records older than 5 minutes
+        if age_seconds > 300:
             mins = int(age_seconds // 60)
             stale_suffix = f"\n> ⚠️ This breakdown is {mins}m old — run a new search for fresh data."
         embed = discord.Embed(
@@ -1504,8 +1404,6 @@ class MusicCog(commands.Cog):
         query  = self._normalize_query(query)
         is_url = query.startswith(("http://", "https://"))
 
-        # Fix #13 + Fix #16: send immediate feedback before the yt-dlp call so
-        # the user sees a response within one RTT instead of waiting 1-3 seconds.
         is_playlist = self._is_playlist_query(query)
         if is_playlist:
             fetch_msg: discord.Message | None = await context.send("⏳ Loading playlist…")
@@ -1556,7 +1454,6 @@ class MusicCog(commands.Cog):
         await self._require_dj(context)
         player = await self._join_for_context(context)
         query  = self._normalize_query(query)
-        # Fix #13: immediate feedback
         fetch_msg = await context.send("🔍 Searching…")
         async with context.typing():
             tracks, _ = await self._extract_tracks(
@@ -1915,8 +1812,8 @@ class MusicCog(commands.Cog):
         if not rows:
             await context.send("Playlist not found.")
             return
-        cap_rows       = list(rows[: self.bot.settings.max_playlist_size])
-        results: list[bool] = []
+        cap_rows = list(rows[: self.bot.settings.max_playlist_size])
+        added = 0
         async with context.typing():
             for row in cap_rows:
                 if len(player.queue) >= self.bot.settings.max_queue_size:
@@ -1924,16 +1821,14 @@ class MusicCog(commands.Cog):
                 query       = row["query"]
                 webpage_url = row["webpage_url"] or query
                 if not query or not webpage_url:
-                    results.append(False)
                     continue
                 await player.enqueue(Track(
                     title=row["title"], webpage_url=webpage_url,
                     stream_url="", uploader="Saved playlist",
                     duration=0, requester_id=context.author.id, query=query,
                 ))
-                results.append(True)
-        added   = sum(results)
-        skipped = len(results) - added
+                added += 1
+        skipped = len(cap_rows) - added
         self._persist_snapshot(context.guild.id)
         self._kick_pipeline(context.guild.id)
         suffix = f" Skipped `{skipped}` unavailable items." if skipped else ""

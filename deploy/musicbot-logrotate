@@ -1,4 +1,4 @@
-/home/ubuntu/apps/musicbot/logs/musicbot.log {
+/home/ubuntu/musicbot/logs/musicbot.log {
     su ubuntu ubuntu
     weekly
     rotate 4

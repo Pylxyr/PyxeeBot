@@ -38,10 +38,10 @@ class Settings:
     ytdlp_resolve_cache_size: int
     ytdlp_resolve_cache_ttl_seconds: int
     ytdlp_extract_timeout_seconds: int
-    np_auto_refresh: bool        # background NP progress-bar refresh
-    np_auto_refresh_interval: int  # seconds between auto-refresh edits
-    error_announce: bool         # post skip-error msgs to announce channel
-    lastfm_api_key: str | None   # Last.fm API key for CurationCog
+    np_auto_refresh: bool
+    np_auto_refresh_interval: int
+    error_announce: bool
+    lastfm_api_key: str | None
 
 
 def _parse_owner_ids(raw_value: str) -> tuple[int, ...]:
@@ -53,6 +53,16 @@ def _parse_owner_ids(raw_value: str) -> tuple[int, ...]:
         if chunk:
             owner_ids.append(int(chunk))
     return tuple(owner_ids)
+
+
+def _int_env(name: str, default: int) -> int:
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        raise RuntimeError(f"{name} must be an integer, got: {raw!r}") from None
 
 
 def load_settings() -> Settings:
@@ -80,25 +90,25 @@ def load_settings() -> Settings:
         bot_owners=_parse_owner_ids(os.getenv("BOT_OWNERS", "")),
         log_level=os.getenv("LOG_LEVEL", "INFO").upper(),
         db_path=DATA_DIR / "musicbot.sqlite3",
-        max_queue_size=max(1, int(os.getenv("MAX_QUEUE_SIZE", "100"))),
-        max_playlist_size=max(1, int(os.getenv("MAX_PLAYLIST_SIZE", "25"))),
-        idle_timeout_seconds=max(30, int(os.getenv("IDLE_TIMEOUT_SECONDS", "180"))),
-        empty_channel_timeout_seconds=max(15, int(os.getenv("EMPTY_CHANNEL_TIMEOUT_SECONDS", "60"))),
+        max_queue_size=max(1, _int_env("MAX_QUEUE_SIZE", 100)),
+        max_playlist_size=max(1, _int_env("MAX_PLAYLIST_SIZE", 25)),
+        idle_timeout_seconds=max(30, _int_env("IDLE_TIMEOUT_SECONDS", 180)),
+        empty_channel_timeout_seconds=max(15, _int_env("EMPTY_CHANNEL_TIMEOUT_SECONDS", 60)),
         log_to_file=os.getenv("LOG_TO_FILE", "true").strip().lower() in {"1", "true", "yes", "on"},
         log_dir=log_dir,
         ytdlp_cookies_file=ytdlp_cookies_file,
         ytdlp_js_runtime_path=ytdlp_js_runtime_path,
-        ytdlp_socket_timeout=max(5, int(os.getenv("YTDLP_SOCKET_TIMEOUT", "15"))),
-        ytdlp_prefetch_count=max(0, int(os.getenv("YTDLP_PREFETCH_COUNT", "1"))),
-        ytdlp_concurrent_extracts=max(1, int(os.getenv("YTDLP_CONCURRENT_EXTRACTS", "1"))),
-        near_end_prefetch_seconds=max(0, int(os.getenv("NEAR_END_PREFETCH_SECONDS", "30"))),
-        opus_bitrate_kbps=max(64, min(256, int(os.getenv("OPUS_BITRATE_KBPS", "96")))),
-        ytdlp_search_results=max(1, min(10, int(os.getenv("YTDLP_SEARCH_RESULTS", "5")))),
-        ytdlp_resolve_cache_size=max(16, int(os.getenv("YTDLP_RESOLVE_CACHE_SIZE", "128"))),
-        ytdlp_resolve_cache_ttl_seconds=max(60, int(os.getenv("YTDLP_RESOLVE_CACHE_TTL_SECONDS", "1800"))),
-        ytdlp_extract_timeout_seconds=max(5, int(os.getenv("YTDLP_EXTRACT_TIMEOUT_SECONDS", "45"))),
+        ytdlp_socket_timeout=max(5, _int_env("YTDLP_SOCKET_TIMEOUT", 15)),
+        ytdlp_prefetch_count=max(0, _int_env("YTDLP_PREFETCH_COUNT", 1)),
+        ytdlp_concurrent_extracts=max(1, _int_env("YTDLP_CONCURRENT_EXTRACTS", 1)),
+        near_end_prefetch_seconds=max(0, _int_env("NEAR_END_PREFETCH_SECONDS", 30)),
+        opus_bitrate_kbps=max(64, min(256, _int_env("OPUS_BITRATE_KBPS", 96))),
+        ytdlp_search_results=max(1, min(10, _int_env("YTDLP_SEARCH_RESULTS", 5))),
+        ytdlp_resolve_cache_size=max(16, _int_env("YTDLP_RESOLVE_CACHE_SIZE", 128)),
+        ytdlp_resolve_cache_ttl_seconds=max(60, _int_env("YTDLP_RESOLVE_CACHE_TTL_SECONDS", 1800)),
+        ytdlp_extract_timeout_seconds=max(5, _int_env("YTDLP_EXTRACT_TIMEOUT_SECONDS", 45)),
         np_auto_refresh=os.getenv("NP_AUTO_REFRESH", "false").strip().lower() in {"1", "true", "yes", "on"},
-        np_auto_refresh_interval=max(15, int(os.getenv("NP_AUTO_REFRESH_INTERVAL", "30"))),
+        np_auto_refresh_interval=max(15, _int_env("NP_AUTO_REFRESH_INTERVAL", 30)),
         error_announce=os.getenv("ERROR_ANNOUNCE", "true").strip().lower() in {"1", "true", "yes", "on"},
         lastfm_api_key=os.getenv("LASTFM_API_KEY", "").strip() or None,
     )

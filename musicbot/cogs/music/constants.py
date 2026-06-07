@@ -1,15 +1,8 @@
-"""constants.py — All static data for the music subsystem.
-
-Zero bot/discord dependencies except for EMBED_COLOUR.
-"""
+"""constants.py — Static data for the music subsystem."""
 from __future__ import annotations
 
 import re
 import discord
-
-# ---------------------------------------------------------------------------
-# FFmpeg
-# ---------------------------------------------------------------------------
 
 FFMPEG_BEFORE_OPTIONS = (
     "-nostdin "
@@ -20,20 +13,9 @@ FFMPEG_BEFORE_OPTIONS = (
     "-probesize 32M "
     "-analyzeduration 0"
 )
-# -application lowdelay + -frame_duration 20: forces exactly 20ms Opus frames,
-# matching AudioPlayer.DELAY precisely. Prevents the fast-forward/jitter caused
-# by FFmpeg pre-buffering packets at uneven intervals.
-# -flush_packets 1: prevents FFmpeg holding completed packets in its output buffer.
 FFMPEG_OPTIONS = "-vn -ar 48000 -ac 2 -application lowdelay -frame_duration 20 -flush_packets 1"
 
-# ---------------------------------------------------------------------------
-# yt-dlp base options (settings-dependent values added at runtime)
-# ---------------------------------------------------------------------------
-
 YTDL_OPTIONS: dict[str, object] = {
-    # Prefer Opus/WebM (already encoded, no transcode needed) then M4A, then
-    # any audio-only stream, and only fall back to a muxed video stream as a
-    # last resort capped at 480p to avoid pulling multi-megabit video data.
     "format": "bestaudio[ext=webm]/bestaudio[ext=m4a]/bestaudio/best[height<=480]",
     "quiet": True,
     "noplaylist": False,
@@ -43,10 +25,6 @@ YTDL_OPTIONS: dict[str, object] = {
     "extract_flat": False,
 }
 
-# ---------------------------------------------------------------------------
-# Timing / sizing
-# ---------------------------------------------------------------------------
-
 NOW_PLAYING_PREVIEW_LIMIT         = 5
 QUEUE_MESSAGE_LIMIT                = 20
 QUEUE_PAGE_SIZE                    = 8
@@ -54,12 +32,7 @@ QUEUE_VIEW_TIMEOUT_SECONDS         = 300
 NOW_PLAYING_TIMEOUT_SECONDS        = 1800
 SNAPSHOT_DEBOUNCE_SECONDS          = 0.5
 STREAM_URL_REFRESH_AGE_SECONDS     = 4 * 60 * 60
-# Pipeline: how many queue positions to keep warm at all times.
-# Position 0 (next-up) is always highest priority; 1 and 2 are resolved
-# sequentially in the background so they're ready well before they're needed.
 URL_PIPELINE_DEPTH                 = 3
-# Safety-net near-end trigger: if the next URL somehow isn't warm yet,
-# force-resolve it with this many seconds left on the current track.
 NEAR_END_SAFETY_SECONDS            = 20
 SEARCH_SELECTION_PAGE_SIZE         = 5
 SEARCH_SELECTION_LIMIT             = 10
@@ -68,23 +41,11 @@ VOICE_RECONNECT_ATTEMPTS           = 2
 NP_REFRESH_DEBOUNCE_SECONDS        = 0.8
 PRESENCE_DEBOUNCE_SECONDS          = 5.0
 
-# ---------------------------------------------------------------------------
-# Loop mode
-# ---------------------------------------------------------------------------
-
 LOOP_CYCLE: dict[str, str]  = {"off": "one", "one": "all", "all": "off"}
 LOOP_LABELS: dict[str, str] = {"off": "Off", "one": "Single track", "all": "Entire queue"}
 LOOP_ICONS: dict[str, str]  = {"off": "→", "one": "↻¹", "all": "↻"}
 
-# ---------------------------------------------------------------------------
-# Brand
-# ---------------------------------------------------------------------------
-
 EMBED_COLOUR = discord.Colour.from_rgb(255, 170, 64)
-
-# ---------------------------------------------------------------------------
-# Search scoring tables
-# ---------------------------------------------------------------------------
 
 SEARCH_GENERIC_TOKENS: frozenset[str] = frozenset({
     "audio", "full", "hd", "hq", "lyrics", "lyric",
@@ -135,10 +96,6 @@ SEARCH_PREFERRED_UPLOADER_TOKENS: dict[str, float] = {
     "universal": 0.14, "warner": 0.14, "atlantic": 0.14,
     "capitol": 0.14, "interscope": 0.12, "republic": 0.12,
 }
-
-# ---------------------------------------------------------------------------
-# Compiled regex (module-level so they are compiled once)
-# ---------------------------------------------------------------------------
 
 _ANIME_INTENT_RE = re.compile(
     r"\b(op|ed|ost|opening|ending|theme|insert\s*song|anime|season)\b",

@@ -1,17 +1,3 @@
-"""scoring.py — Pure search-scoring functions. No self, no bot, no discord.
-
-The single public entry point used by the cog is rank_entries().
-All helpers are module-level functions, making them trivially testable
-without spinning up a Discord bot or any async infrastructure.
-
-Fix #7: _derive_anchor_phrases_cached is @lru_cache'd on a normalised tuple,
-        so repeated searches for the same song are free after the first call.
-Fix #4: rapidfuzz replaces difflib.SequenceMatcher — 10-100× faster for the
-        ratio/quick_ratio calls that sit in the hot scoring path.
-Fix #5: breakdown dict is only allocated when guild_id is not None (i.e. when
-        the !why debug record is actually needed), eliminating the alloc+fill
-        on every regular !play / !search call.
-"""
 from __future__ import annotations
 
 import logging
@@ -47,23 +33,13 @@ from musicbot.cogs.music.models import (
 
 log = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Cached text helpers
-# ---------------------------------------------------------------------------
-
 @lru_cache(maxsize=4096)
 def normalize_text(value: str) -> str:
     return " ".join(re.findall(r"[a-z0-9]+", value.casefold()))
 
-
 @lru_cache(maxsize=4096)
 def tokenize_text(value: str) -> tuple[str, ...]:
     return tuple(re.findall(r"[a-z0-9]+", value.casefold()))
-
-
-# ---------------------------------------------------------------------------
-# Word-boundary helper (module-level — no per-call closure allocation)
-# ---------------------------------------------------------------------------
 
 def _wb(p: str, t: str) -> bool:
     return (
@@ -73,11 +49,6 @@ def _wb(p: str, t: str) -> bool:
         or (" " + p + " ") in t
     )
 
-
-# ---------------------------------------------------------------------------
-# Token helpers
-# ---------------------------------------------------------------------------
-
 def signal_tokens(query: str) -> list[str]:
     tokens = list(tokenize_text(query))
     filtered = [
@@ -86,7 +57,6 @@ def signal_tokens(query: str) -> list[str]:
     ]
     return filtered or tokens
 
-
 def detect_intent(query: str) -> dict[str, bool]:
     q = query.strip()
     return {
@@ -94,7 +64,6 @@ def detect_intent(query: str) -> dict[str, bool]:
         "dash_format": bool(_DASH_SEPARATED_RE.match(q)),
         "has_artist":  " " in q,
     }
-
 
 def token_overlap_ratio(
     query_tokens: list[str],
@@ -105,14 +74,8 @@ def token_overlap_ratio(
     cset = candidate if isinstance(candidate, set) else set(candidate)
     return sum(1 for t in query_tokens if t in cset) / len(query_tokens)
 
-
-# ---------------------------------------------------------------------------
-# Entry preparation
-# ---------------------------------------------------------------------------
-
 def _candidate_title_text(item: dict[str, Any]) -> str:
     return normalize_text(str(item.get("title") or ""))
-
 
 def _candidate_uploader_text(item: dict[str, Any]) -> str:
     parts = [item.get("channel"), item.get("uploader"), item.get("artist"), item.get("creator")]
@@ -121,7 +84,6 @@ def _candidate_uploader_text(item: dict[str, Any]) -> str:
         for p in dict.fromkeys(str(p) for p in parts if isinstance(p, str) and p.strip())
     )
     return normalize_text(uploader)
-
 
 def prepare_entry(item: dict[str, Any]) -> SearchEntryContext:
     normalized_title    = _candidate_title_text(item)
@@ -144,11 +106,6 @@ def prepare_entry(item: dict[str, Any]) -> SearchEntryContext:
         view_count=int(item.get("view_count") or 0),
         channel_is_verified=bool(item.get("channel_is_verified", False)),
     )
-
-
-# ---------------------------------------------------------------------------
-# Anchor phrase derivation — cached on normalised token tuple (Fix #7)
-# ---------------------------------------------------------------------------
 
 @lru_cache(maxsize=512)
 def _derive_anchor_phrases_cached(
@@ -194,18 +151,12 @@ def _derive_anchor_phrases_cached(
             return tuple(phrase for cnt, phrase in matches if cnt == best)[:4]
     return ()
 
-
 def derive_anchor_phrases(
     query_tokens: list[str],
     entries: list[SearchEntryContext],
 ) -> list[str]:
     uploader_texts = tuple(e.normalized_uploader for e in entries if e.normalized_uploader)
     return list(_derive_anchor_phrases_cached(tuple(query_tokens), uploader_texts))
-
-
-# ---------------------------------------------------------------------------
-# Query context builder
-# ---------------------------------------------------------------------------
 
 def build_query_context(
     search_text: str,
@@ -226,11 +177,6 @@ def build_query_context(
         intent=detect_intent(search_text),
     )
 
-
-# ---------------------------------------------------------------------------
-# Anchor match scorer
-# ---------------------------------------------------------------------------
-
 def score_anchor_match(
     entry: SearchEntryContext,
     anchor_phrases: list[str],
@@ -249,11 +195,6 @@ def score_anchor_match(
         longest = max(len(p.split()) for p in title_only)
         return 0.20 + ((longest - 1) * 0.10)
     return -0.30
-
-
-# ---------------------------------------------------------------------------
-# Main scorer
-# ---------------------------------------------------------------------------
 
 def score_entry(
     query: SearchQueryContext,
@@ -316,8 +257,6 @@ def score_entry(
     discouraged_penalty   = 0.0
     raw_query_token_set   = set(query.raw_query_tokens)
 
-    # In curation mode we heavily penalise live/concert content — the user
-    # wants studio versions, not festival recordings or TV sessions.
     _CURATION_EXTRA_TOKENS   = {"live", "concert", "festival", "session", "acoustic"}
     _CURATION_EXTRA_PHRASES  = {
         "live at", "live from", "live in", "live performance",
@@ -431,11 +370,6 @@ def score_entry(
             "final": final,
         })
     return final
-
-
-# ---------------------------------------------------------------------------
-# Public ranking entry point
-# ---------------------------------------------------------------------------
 
 def rank_entries(
     search_text: str,

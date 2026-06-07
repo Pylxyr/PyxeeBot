@@ -6,30 +6,16 @@ from typing import Any
 
 import aiosqlite
 
-
 class Database:
-    """Async SQLite wrapper backed by a single persistent aiosqlite connection.
-
-    Call ``await initialize()`` before any other method and ``await close()``
-    on shutdown.  Prefix and DJ-role lookups are served from in-memory dicts;
-    all writes keep both the cache and the DB in sync.  Because every operation
-    runs on the same event-loop thread, no threading.Lock is needed.
-    """
 
     def __init__(self, db_path: Path) -> None:
         self.db_path = db_path
         self._prefix_cache: dict[int, str | None] = {}
         self._dj_role_cache: dict[int, int | None] = {}
         self._conn: aiosqlite.Connection | None = None
-        # Per-guild hash of last persisted snapshot for dirty-detection (Fix #6).
         self._snapshot_hashes: dict[int, int] = {}
 
-    # ------------------------------------------------------------------
-    # Lifecycle
-    # ------------------------------------------------------------------
-
     async def initialize(self) -> None:
-        """Open the persistent connection, apply PRAGMAs, and create tables."""
         self._conn = await aiosqlite.connect(self.db_path)
         self._conn.row_factory = aiosqlite.Row
         await self._conn.execute("PRAGMA journal_mode = WAL")
@@ -39,7 +25,6 @@ class Database:
         await self._create_tables()
 
     async def close(self) -> None:
-        """Flush any pending writes and close the connection."""
         if self._conn is not None:
             await self._conn.close()
             self._conn = None
@@ -54,7 +39,8 @@ class Database:
         return self._conn
 
     async def _create_tables(self) -> None:
-        await self._conn.execute(
+        conn = self._require_conn()
+        await conn.execute(
             """
             CREATE TABLE IF NOT EXISTS guild_settings (
                 guild_id   INTEGER PRIMARY KEY,
@@ -63,15 +49,14 @@ class Database:
             )
             """
         )
-        # Schema migration: add dj_role_id if absent (pre-v2 databases).
-        async with self._conn.execute("PRAGMA table_info(guild_settings)") as cursor:
+        async with conn.execute("PRAGMA table_info(guild_settings)") as cursor:
             columns = {row["name"] async for row in cursor}
         if "dj_role_id" not in columns:
-            await self._conn.execute(
+            await conn.execute(
                 "ALTER TABLE guild_settings ADD COLUMN dj_role_id INTEGER"
             )
 
-        await self._conn.execute(
+        await conn.execute(
             """
             CREATE TABLE IF NOT EXISTS saved_playlists (
                 guild_id   INTEGER NOT NULL,
@@ -82,7 +67,7 @@ class Database:
             )
             """
         )
-        await self._conn.execute(
+        await conn.execute(
             """
             CREATE TABLE IF NOT EXISTS saved_playlist_items (
                 guild_id      INTEGER NOT NULL,
@@ -98,7 +83,7 @@ class Database:
             )
             """
         )
-        await self._conn.execute(
+        await conn.execute(
             """
             CREATE TABLE IF NOT EXISTS queue_snapshots (
                 guild_id     INTEGER NOT NULL,
@@ -111,11 +96,7 @@ class Database:
             )
             """
         )
-        await self._conn.commit()
-
-    # ------------------------------------------------------------------
-    # Prefix
-    # ------------------------------------------------------------------
+        await conn.commit()
 
     async def get_prefix(self, guild_id: int) -> str | None:
         if self._conn is None:
@@ -143,10 +124,6 @@ class Database:
         )
         await self._conn.commit()
         self._prefix_cache[guild_id] = prefix
-
-    # ------------------------------------------------------------------
-    # DJ role
-    # ------------------------------------------------------------------
 
     async def get_dj_role_id(self, guild_id: int) -> int | None:
         if self._conn is None:
@@ -194,10 +171,6 @@ class Database:
         self._dj_role_cache[guild_id] = role_id
         if not existing:
             self._prefix_cache[guild_id] = default_prefix
-
-    # ------------------------------------------------------------------
-    # Playlists
-    # ------------------------------------------------------------------
 
     async def save_playlist(
         self,
@@ -283,10 +256,6 @@ class Database:
         await self._conn.commit()
         return deleted > 0
 
-    # ------------------------------------------------------------------
-    # Queue snapshots
-    # ------------------------------------------------------------------
-
     def _snapshot_hash(self, guild_id: int, entries: list[dict[str, Any]]) -> int:
         """Cheap fingerprint of the snapshot payload for dirty-detection."""
         return hash((guild_id, tuple(
@@ -300,7 +269,6 @@ class Database:
     ) -> None:
         if self._conn is None:
             return
-        # Skip the write when the snapshot hasn't changed (Fix #6).
         new_hash = self._snapshot_hash(guild_id, entries)
         if self._snapshot_hashes.get(guild_id) == new_hash:
             return

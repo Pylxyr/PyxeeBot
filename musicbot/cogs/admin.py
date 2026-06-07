@@ -31,7 +31,6 @@ class AdminCog(commands.Cog):
         latency_ms = round(self.bot.latency * 1000)
         await context.send(f"Pong. `{latency_ms}ms`")
 
-
     @commands.command(name="commands", aliases=["cmds"])
     async def commands_list(self, context: commands.Context[Any]) -> None:
         """Open the styled command atlas."""

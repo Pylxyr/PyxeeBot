@@ -1,13 +1,4 @@
-"""player.py — GuildPlayer: per-guild audio state machine.
-
-Improvements vs the monolith:
-  Fix #1:  Dedicated ThreadPoolExecutor for yt-dlp (passed in at construction)
-           so yt-dlp threads never compete with other blocking work.
-  Fix #4:  validate_stream_url callable injected at construction — no more
-           get_cog("MusicCog") string lookup inside the hot path.
-  GuildPlayer.create() classmethod: explicit async construction so the player
-           task is started after the caller has had a chance to set up.
-"""
+"""player.py — GuildPlayer: per-guild audio state machine."""
 from __future__ import annotations
 
 import asyncio
@@ -29,7 +20,6 @@ from musicbot.cogs.music.models import Track
 if TYPE_CHECKING:
     from musicbot.bot import MusicBot
 
-
 class GuildPlayer:
     """Per-guild voice + queue state machine."""
 
@@ -45,7 +35,7 @@ class GuildPlayer:
         self.guild                = guild
         self.track_resolver       = track_resolver
         self.audio_source_factory = audio_source_factory
-        self.validate_stream_url  = validate_stream_url   # Fix #4: injected, no string lookup
+        self.validate_stream_url  = validate_stream_url
         self.logger               = logging.getLogger(f"musicbot.player.{guild.id}")
 
         self.voice_client: discord.VoiceClient | None = None
@@ -71,7 +61,6 @@ class GuildPlayer:
         self._total_paused:   float = 0.0
         self._resolve_fail_counts: dict[str, int] = {}
 
-        # Task is started by create() so the caller controls when the loop begins.
         self.player_task: asyncio.Task[None] | None = None
 
     @classmethod
@@ -89,10 +78,6 @@ class GuildPlayer:
             player._player_loop(), name=f"player-{guild.id}"
         )
         return player
-
-    # ------------------------------------------------------------------
-    # Playback control
-    # ------------------------------------------------------------------
 
     async def connect(
         self, channel: discord.VoiceChannel | discord.StageChannel
@@ -119,8 +104,6 @@ class GuildPlayer:
         self._total_duration = sum(t.duration for t in self.queue)
 
     async def enqueue(self, track: Track, *, front: bool = False) -> None:
-        # When a maxlen deque is full, Python drops from the opposite end to
-        # the insertion point: append() drops queue[0], appendleft() drops queue[-1].
         if len(self.queue) == self.queue.maxlen:
             evicted = self.queue[-1] if front else self.queue[0]
             self._total_duration = max(0, self._total_duration - evicted.duration)
@@ -238,10 +221,6 @@ class GuildPlayer:
             for track in entries
         ]
 
-    # ------------------------------------------------------------------
-    # Task helpers
-    # ------------------------------------------------------------------
-
     async def _cancel_near_end_task(self) -> None:
         if self.near_end_task is None:
             return
@@ -272,10 +251,6 @@ class GuildPlayer:
                 self.bot.dispatch("musicbot_np_auto_refresh", self.guild)
         except asyncio.CancelledError:
             pass
-
-    # ------------------------------------------------------------------
-    # Voice channel state
-    # ------------------------------------------------------------------
 
     def _has_human_listeners(self) -> bool:
         if not self.voice_client or not self.voice_client.channel:
@@ -311,10 +286,6 @@ class GuildPlayer:
             await self.disconnect()
             self.bot.dispatch("musicbot_queue_updated", self.guild)
 
-    # ------------------------------------------------------------------
-    # Player loop
-    # ------------------------------------------------------------------
-
     async def _player_loop(self) -> None:
         from musicbot.cogs.music.constants import LOOP_CYCLE  # local import avoids circularity
         try:
@@ -347,7 +318,6 @@ class GuildPlayer:
                     self._resolve_fail_counts.pop(key, None)
                     self.current = resolved_track
 
-                    # Fix #4: validate_stream_url injected — no get_cog() string lookup
                     _url_age = time.monotonic() - resolved_track.resolved_at
                     if (
                         resolved_track.stream_url
@@ -429,7 +399,6 @@ class GuildPlayer:
 
                     if played_track and not self.rewind_requested:
                         self.history.append(played_track)
-                    if played_track and not self.rewind_requested:
                         if self.loop_mode == "one":
                             age = time.monotonic() - played_track.resolved_at
                             if played_track.resolved_at > 0 and age >= STREAM_URL_REFRESH_AGE_SECONDS:
@@ -450,7 +419,8 @@ class GuildPlayer:
                     self.bot.dispatch("musicbot_playback_error", self.guild, exc)
                     self.current = None
                     await asyncio.sleep(1)
-        finally:
+
+        except asyncio.CancelledError:
             pass
 
     async def _wait_for_track(self) -> None:
