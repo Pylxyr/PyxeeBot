@@ -516,15 +516,22 @@ class CurationCog(commands.Cog, name="CurationCog"):
                 )
                 return 0, len(tracks)
 
-        queued  = 0
-        failed  = 0
-        total   = len(tracks)
+        queued         = 0
+        failed         = 0
+        total          = len(tracks)
         added:  list[str] = []
+        resolved_count = 0
+
+        # Concurrently resolve up to `ytdlp_curation_concurrency` tracks at a time.
+        # This reduces wall-clock wait from O(N) sequential yt-dlp calls to ~O(N/C)
+        # where C is the concurrency limit (default 3).
+        concurrency = max(1, getattr(self.bot.settings, "ytdlp_curation_concurrency", 3))
+        sem = asyncio.Semaphore(concurrency)
 
         async def _resolve_one(ct: CuratedTrack) -> None:
-            nonlocal queued, failed
-            # Append "official audio" to bias YouTube's own ranking toward
-            # studio uploads before the curation scorer even runs.
+            nonlocal queued, failed, resolved_count
+            # Append "official audio" to bias YouTube's ranking toward studio uploads
+            # before the curation scorer even runs.
             query = f"ytsearch5:{ct.artist} - {ct.title} official audio"
             try:
                 resolved, _ = await music._extract_tracks(
@@ -535,7 +542,10 @@ class CurationCog(commands.Cog, name="CurationCog"):
                 )
                 if resolved:
                     await player.enqueue(resolved[0])
-                    added.append(f"**{discord.utils.escape_markdown(ct.artist)}** — {discord.utils.escape_markdown(ct.title)}")
+                    added.append(
+                        f"**{discord.utils.escape_markdown(ct.artist)}** — "
+                        f"{discord.utils.escape_markdown(ct.title)}"
+                    )
                     if queued == 0:
                         self._refill_seeds[guild_id] = (ct.artist, ct.title)
                     queued += 1
@@ -545,25 +555,49 @@ class CurationCog(commands.Cog, name="CurationCog"):
             except Exception as exc:
                 log.warning("Failed to resolve %s - %s: %s", ct.artist, ct.title, exc)
                 failed += 1
+            finally:
+                resolved_count += 1
 
-        UPDATE_EVERY = 10
-        for i, ct in enumerate(tracks):
-            await _resolve_one(ct)
-            # Yield to the event loop between each resolve so the audio
-            # callback thread isn't starved while yt-dlp is working.
-            await asyncio.sleep(0)
-            is_last = (i == total - 1)
-            if is_last or ((i + 1) % UPDATE_EVERY == 0):
-                progress_lines = "\n".join(f"· {t}" for t in added[-10:])
-                pct    = int((i + 1) / total * 100) if total else 100
+        async def _resolve_bounded(ct: CuratedTrack) -> None:
+            async with sem:
+                await _resolve_one(ct)
+
+        async def _progress_reporter() -> None:
+            """Live progress bar updated every ~1.5 s while resolution is in flight."""
+            while True:
+                done   = resolved_count
+                pct    = int(done / total * 100) if total else 100
                 filled = round(pct / 100 * 16)
                 bar    = "▓" * filled + "░" * (16 - filled)
+                recent = "\n".join(f"· {t}" for t in added[-8:])
                 text   = (
-                    f"`{bar}` {queued}/{total} added\n\n"
-                    + (progress_lines or "*resolving…*")
+                    f"`{bar}` {done}/{total} resolved — **{queued}** queued"
+                    + (f"\n\n{recent}" if recent else "\n\n*resolving…*")
                 )
                 with contextlib.suppress(discord.HTTPException):
                     await interaction.edit_original_response(content=text)
+                if done >= total:
+                    break
+                await asyncio.sleep(1.5)
+
+        tasks    = [asyncio.create_task(_resolve_bounded(ct)) for ct in tracks]
+        reporter = asyncio.create_task(_progress_reporter())
+
+        try:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        finally:
+            reporter.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await reporter
+            # Post a final accurate count after everything is settled.
+            bar  = "▓" * 16
+            recent = "\n".join(f"· {t}" for t in added[-8:])
+            text = (
+                f"`{bar}` {total}/{total} resolved — **{queued}** queued"
+                + (f"\n\n{recent}" if recent else "")
+            )
+            with contextlib.suppress(discord.HTTPException):
+                await interaction.edit_original_response(content=text)
 
         music._persist_snapshot(guild_id)
         return queued, failed
