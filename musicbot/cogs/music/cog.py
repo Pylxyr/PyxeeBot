@@ -744,7 +744,14 @@ class MusicCog(commands.Cog):
             return f"`{'─' * width}`  Live"
         ratio  = min(1.0, max(0.0, elapsed / duration))
         filled = round(ratio * width)
-        bar    = "▓" * filled + "░" * (width - filled)
+        # Place a playhead marker (▶) at the leading edge of progress.
+        # Guard the three cases so bar is always exactly `width` chars.
+        if filled == 0:
+            bar = "▶" + "░" * (width - 1)
+        elif filled >= width:
+            bar = "▓" * width
+        else:
+            bar = "▓" * (filled - 1) + "▶" + "░" * (width - filled)
         return f"`{bar}` {self._format_duration(elapsed)} / {self._format_duration(duration)}"
 
     def _queue_lines(
@@ -790,7 +797,7 @@ class MusicCog(commands.Cog):
         requester  = guild.get_member(track.requester_id)
         requester_label = requester.mention if requester else f"<@{track.requester_id}>"
 
-        embed.title = "Now Playing" if not is_paused else "Paused"
+        embed.title = "Now Playing" if not is_paused else "⏸ Paused"
         embed.add_field(
             name="Track",
             value=f"[{track.escaped_title}]({track.webpage_url})",
@@ -801,24 +808,38 @@ class MusicCog(commands.Cog):
             value=self._format_progress_bar(player.elapsed_seconds, track.duration),
             inline=False,
         )
-        embed.add_field(name="Uploader",
-                        value=track.escaped_uploader, inline=True)
-        embed.add_field(name="Duration",
-                        value=f"`{track.duration_label}`", inline=True)
-        embed.add_field(name="Requested by", value=requester_label, inline=True)
-        embed.add_field(name=f"Loop — {loop_icon}", value=f"`{loop_label}`", inline=True)
+        embed.add_field(name="Uploader",     value=track.escaped_uploader,        inline=True)
+        embed.add_field(name="Duration",     value=f"`{track.duration_label}`",   inline=True)
+        embed.add_field(name="Requested by", value=requester_label,               inline=True)
+
+        # Build the "Up Next" field with queue count and remaining time in the header.
+        queue_count   = len(player.queue)
+        queue_secs    = int(player._total_duration)
+        remaining_str = self._format_duration(queue_secs) if queue_secs > 0 else None
+        if queue_count and remaining_str:
+            up_next_name = f"Up Next  ·  {queue_count} track{'s' if queue_count != 1 else ''}  ·  {remaining_str} remaining"
+        elif queue_count:
+            up_next_name = f"Up Next  ·  {queue_count} track{'s' if queue_count != 1 else ''}"
+        else:
+            up_next_name = "Up Next"
 
         preview_lines = self._queue_lines(
             player, limit=NOW_PLAYING_PREVIEW_LIMIT, include_current=False
         )
         embed.add_field(
-            name="Up Next",
+            name=up_next_name,
             value="\n".join(preview_lines) if preview_lines else "Nothing queued.",
             inline=False,
         )
         if track.thumbnail_url:
             embed.set_thumbnail(url=track.thumbnail_url)
-        embed.set_footer(text=footer)
+
+        # Fold loop state into footer so we free up one embed field slot.
+        loop_footer = f"{loop_icon} {loop_label}"
+        full_footer = f"⏮ prev  ·  ⏭ skip  ·  ⏯ pause  ·  {loop_footer}  ·  ≡ queue"
+        if controller.status_text:
+            full_footer = f"{full_footer}  ·  {controller.status_text}"
+        embed.set_footer(text=full_footer)
         return embed
 
     async def _fetch_announce_channel(
@@ -883,12 +904,19 @@ class MusicCog(commands.Cog):
             return
         player = self.players.get(guild_id)
 
-        elapsed_bucket = int(player.elapsed_seconds // 4) if player else 0
-        queue_preview  = tuple(t.title for t in itertools.islice(player.queue, NOW_PLAYING_PREVIEW_LIMIT)) if player else ()
-        current_title  = player.current.title if player and player.current else ""
-        loop_mode      = player.loop_mode if player else "off"
-        is_paused      = bool(player and player.voice_client and player.voice_client.is_paused())
-        state_key      = (current_title, elapsed_bucket, queue_preview, loop_mode, is_paused, controller.status_text)
+        elapsed_bucket    = int(player.elapsed_seconds // 4) if player else 0
+        queue_preview     = tuple(t.title for t in itertools.islice(player.queue, NOW_PLAYING_PREVIEW_LIMIT)) if player else ()
+        current_title     = player.current.title if player and player.current else ""
+        loop_mode         = player.loop_mode if player else "off"
+        is_paused         = bool(player and player.voice_client and player.voice_client.is_paused())
+        queue_count       = len(player.queue) if player else 0
+        # Bucket queue duration to ~30 s so we re-render when tracks resolve durations
+        # (going from "pending" → known) without thrashing on every second tick.
+        queue_dur_bucket  = int(player._total_duration // 30) if player else 0
+        state_key         = (
+            current_title, elapsed_bucket, queue_preview, loop_mode,
+            is_paused, controller.status_text, queue_count, queue_dur_bucket,
+        )
         if getattr(controller, "_last_render_key", None) == state_key:
             return
         controller._last_render_key = state_key  # type: ignore[attr-defined]
