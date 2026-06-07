@@ -181,38 +181,43 @@ class Database:
     ) -> None:
         if self._conn is None:
             return
-        await self._conn.execute(
-            """
-            INSERT INTO saved_playlists (guild_id, name, created_by)
-            VALUES (?, ?, ?)
-            ON CONFLICT(guild_id, name) DO UPDATE SET created_by = excluded.created_by
-            """,
-            (guild_id, name, created_by),
-        )
-        await self._conn.execute(
-            "DELETE FROM saved_playlist_items WHERE guild_id = ? AND playlist_name = ?",
-            (guild_id, name),
-        )
-        await self._conn.executemany(
-            """
-            INSERT INTO saved_playlist_items (
-                guild_id, playlist_name, position, query, title, webpage_url
+        await self._conn.execute("BEGIN IMMEDIATE")
+        try:
+            await self._conn.execute(
+                """
+                INSERT INTO saved_playlists (guild_id, name, created_by)
+                VALUES (?, ?, ?)
+                ON CONFLICT(guild_id, name) DO UPDATE SET created_by = excluded.created_by
+                """,
+                (guild_id, name, created_by),
             )
-            VALUES (?, ?, ?, ?, ?, ?)
-            """,
-            [
-                (
-                    guild_id,
-                    name,
-                    position,
-                    entry["query"],
-                    entry["title"],
-                    entry["webpage_url"],
+            await self._conn.execute(
+                "DELETE FROM saved_playlist_items WHERE guild_id = ? AND playlist_name = ?",
+                (guild_id, name),
+            )
+            await self._conn.executemany(
+                """
+                INSERT INTO saved_playlist_items (
+                    guild_id, playlist_name, position, query, title, webpage_url
                 )
-                for position, entry in enumerate(entries)
-            ],
-        )
-        await self._conn.commit()
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    (
+                        guild_id,
+                        name,
+                        position,
+                        entry["query"],
+                        entry["title"],
+                        entry["webpage_url"],
+                    )
+                    for position, entry in enumerate(entries)
+                ],
+            )
+            await self._conn.commit()
+        except Exception:
+            await self._conn.rollback()
+            raise
 
     async def list_playlists(self, guild_id: int) -> list[sqlite3.Row]:
         if self._conn is None:
