@@ -122,3 +122,14 @@ _JP_COVER_BRACKET_RE = re.compile(
 _BRACKET_STRIP_RE = re.compile(r'[\(\[（【][^\)\]）】]*[\)\]）】]')
 _CJK_RE    = re.compile(r'[\u3040-\u30ff\u4e00-\u9fff]')
 _HANGUL_RE = re.compile(r'[\uAC00-\uD7AF\u3130-\u318F]')
+
+# Extra discouraged tokens/phrases applied only in curation mode.
+# Keeping these here (rather than inlining them in score_entry) avoids
+# reconstructing the sets on every function call.
+SEARCH_CURATION_EXTRA_TOKENS: frozenset[str] = frozenset({
+    "live", "concert", "stage", "festival", "session", "acoustic",
+})
+SEARCH_CURATION_EXTRA_PHRASES: frozenset[str] = frozenset({
+    "at the", "in concert", "tour", "unplugged",
+    "bbc session", "radio session", "tv performance",
+})

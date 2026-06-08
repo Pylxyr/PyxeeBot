@@ -298,15 +298,10 @@ class NowPlayingView(discord.ui.View):
         super().__init__(timeout=NOW_PLAYING_TIMEOUT_SECONDS)
         self.cog      = cog
         self.guild_id = guild_id
-        self._pause_btn: discord.ui.Button | None = next(
-            (
-                item for item in self.children
-                if isinstance(item, discord.ui.Button)
-                and getattr(item, "callback", None) is not None
-                and getattr(item.callback, "__name__", "") == "pause_resume"
-            ),
-            None,
-        )
+        # discord.py stores each @discord.ui.button item as an instance attribute
+        # under the same name as the decorated method, so we can grab it directly
+        # rather than walking self.children and matching by callback name.
+        self._pause_btn: discord.ui.Button | None = getattr(self, "pause_resume", None)  # type: ignore[assignment]
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         player = self.cog.players.get(self.guild_id)

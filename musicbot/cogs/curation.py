@@ -17,19 +17,14 @@ if TYPE_CHECKING:
     from musicbot.bot import MusicBot
     from musicbot.cogs.music.cog import MusicCog
 
+from musicbot.cogs.music.constants import EMBED_COLOUR
+
 log = logging.getLogger(__name__)
 
 LASTFM_API   = "https://ws.audioscrobbler.com/2.0/"
 MAX_PLAYLIST = 25
 REFILL_AT    = 10
 REFILL_MAX   = 15
-
-def _embed_colour() -> discord.Colour:
-    try:
-        from musicbot.cogs.music import EMBED_COLOUR  # noqa: PLC0415
-        return EMBED_COLOUR
-    except Exception:
-        return discord.Colour.from_rgb(255, 170, 64)
 
 
 def _artist_key(name: str) -> str:
@@ -234,11 +229,17 @@ class RefillView(discord.ui.View):
             max_values=len(options),
             options=options,
         )
-        select.callback = self._noop
+        select.callback = self._on_exclude_select
         self.add_item(select)
 
-    async def _noop(self, interaction: discord.Interaction) -> None:
-        await interaction.response.defer()
+    async def _on_exclude_select(self, interaction: discord.Interaction) -> None:
+        """Give immediate ephemeral feedback so the two-step UX is clear."""
+        count = len(interaction.data.get("values", []))  # type: ignore[union-attr]
+        if count:
+            msg = f"{count} track{'s' if count != 1 else ''} marked for exclusion — click **Add All** to confirm."
+        else:
+            msg = "No tracks excluded — all suggestions will be added."
+        await interaction.response.send_message(msg, ephemeral=True)
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if self.author_id == 0 or interaction.user.id == self.author_id:
@@ -455,7 +456,7 @@ class CurationCog(commands.Cog, name="CurationCog"):
         embed = discord.Embed(
             title=f"Curated Playlist — {discord.utils.escape_markdown(session.seed_query)}",
             description="\n".join(lines) if lines else "*No tracks remaining.*",
-            colour=_embed_colour(),
+            colour=EMBED_COLOUR,
         )
         embed.set_footer(
             text=f"{len(tracks)}/{MAX_PLAYLIST} tracks selected  ·  use the dropdown to remove tracks"
@@ -473,7 +474,7 @@ class CurationCog(commands.Cog, name="CurationCog"):
         embed = discord.Embed(
             title="Queue Refill",
             description="\n".join(lines) or "*No tracks found.*",
-            colour=_embed_colour(),
+            colour=EMBED_COLOUR,
         )
         embed.set_footer(
             text=f"Based on: {seed}"
@@ -743,7 +744,7 @@ class CurationCog(commands.Cog, name="CurationCog"):
         embed = discord.Embed(
             title="Saved Playlists",
             description="\n".join(lines),
-            colour=_embed_colour(),
+            colour=EMBED_COLOUR,
         )
         await context.send(embed=embed)
 

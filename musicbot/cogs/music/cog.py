@@ -9,6 +9,7 @@ import logging
 import math
 import random
 import re
+import threading
 import time
 from collections import OrderedDict, deque
 from concurrent.futures import ThreadPoolExecutor
@@ -73,6 +74,9 @@ class MusicCog(commands.Cog):
         self._ytdl_variants: dict[tuple[bool, bool], dict[str, Any]] | None = None
 
         self._ytdl_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="ytdlp")
+        # One YoutubeDL instance per (flat_playlist, flat_search) key per worker thread.
+        # Thread-local storage is required because YoutubeDL is not thread-safe.
+        self._ytdl_tlocal: threading.local = threading.local()
 
         self._http_session: aiohttp.ClientSession | None = None
 
@@ -96,8 +100,6 @@ class MusicCog(commands.Cog):
         self._last_search: OrderedDict[int, SearchDebugRecord] = OrderedDict()
         self._last_search_max = 50   # was 100; halved to reduce memory footprint
 
-        self._ytdl_instances: dict[tuple[bool, bool], YoutubeDL] = {}
-
     async def cog_load(self) -> None:
         """Called by discord.py after the cog is added to the bot."""
         self._http_session = aiohttp.ClientSession()
@@ -113,7 +115,6 @@ class MusicCog(commands.Cog):
             self._presence_task.cancel()
         if self._http_session and not self._http_session.closed:
             asyncio.create_task(self._http_session.close())
-        self._ytdl_instances.clear()
         self._ytdl_executor.shutdown(wait=False)
 
     async def shutdown(self) -> None:
@@ -157,7 +158,11 @@ class MusicCog(commands.Cog):
         return self._ytdl_variants[(flat_playlist, flat_search)]
 
     async def _validate_stream_url(self, track: Track) -> bool:
-        """Fix #2: uses shared session from cog_load — no per-call session creation."""
+        """HEAD-check a resolved stream URL; returns True when the server signals it is still valid.
+
+        Re-uses the shared aiohttp session created in cog_load; creates a new
+        one only if it has been closed (e.g. after a network reset).
+        """
         url = track.stream_url
         if not url or not url.startswith("http"):
             return False
@@ -211,16 +216,18 @@ class MusicCog(commands.Cog):
                 async with self.extract_semaphore:
                     try:
                         loop = asyncio.get_running_loop()
-                        ydl  = self._ytdl_instances.get(key)
-                        if ydl is None:
-                            ydl = YoutubeDL(options)
-                            self._ytdl_instances[key] = ydl
                         qry  = query
+                        def _run() -> dict[str, Any] | None:
+                            tlocal = self._ytdl_tlocal
+                            if not hasattr(tlocal, "instances"):
+                                tlocal.instances: dict[tuple[bool, bool], YoutubeDL] = {}
+                            ydl = tlocal.instances.get(key)
+                            if ydl is None:
+                                ydl = YoutubeDL(options)
+                                tlocal.instances[key] = ydl
+                            return ydl.extract_info(qry, download=False)
                         result = await asyncio.wait_for(
-                            loop.run_in_executor(
-                                self._ytdl_executor,
-                                lambda: ydl.extract_info(qry, download=False),
-                            ),
+                            loop.run_in_executor(self._ytdl_executor, _run),
                             timeout=self.bot.settings.ytdlp_extract_timeout_seconds,
                         )
                         if result is None:
@@ -671,19 +678,7 @@ class MusicCog(commands.Cog):
         player = self.players.get(guild_id)
         if player is None:
             return []
-        tracks: list[Track] = []
-        if player.current:
-            tracks.append(player.current)
-        tracks.extend(player.queue)
-        return [
-            {
-                "query":        t.query or t.webpage_url or t.title,
-                "title":        t.title,
-                "webpage_url":  t.webpage_url or "",
-                "requester_id": str(t.requester_id),
-            }
-            for t in tracks
-        ]
+        return player.snapshot()
 
     async def _write_snapshot(
         self, guild_id: int, *, entries: list[dict[str, Any]] | None = None
@@ -941,26 +936,29 @@ class MusicCog(commands.Cog):
                 if remaining > 0:
                     await asyncio.sleep(remaining)
                     continue
-                break
+                active = [
+                    p for p in self.players.values()
+                    if p.current and p.voice_client and p.voice_client.is_playing()
+                ]
+                with contextlib.suppress(Exception):
+                    if not active:
+                        await self.bot.change_presence(activity=discord.Activity(
+                            type=discord.ActivityType.watching, name="pylxyr.github.io/PyxeeBot-Page/",
+                        ))
+                    elif len(active) == 1:
+                        await self.bot.change_presence(activity=discord.Activity(
+                            type=discord.ActivityType.listening, name=active[0].current.title[:128],
+                        ))
+                    else:
+                        await self.bot.change_presence(activity=discord.Activity(
+                            type=discord.ActivityType.listening, name=f"music in {len(active)} servers",
+                        ))
+                # Re-check: a new deadline may have been written while we were
+                # awaiting change_presence, mirroring the snapshot/np_refresh pattern.
+                if self._presence_deadline <= time.monotonic():
+                    break
         except asyncio.CancelledError:
             return
-        active = [
-            p for p in self.players.values()
-            if p.current and p.voice_client and p.voice_client.is_playing()
-        ]
-        with contextlib.suppress(Exception):
-            if not active:
-                await self.bot.change_presence(activity=discord.Activity(
-                    type=discord.ActivityType.watching, name="pylxyr.github.io/PyxeeBot",
-                ))
-            elif len(active) == 1:
-                await self.bot.change_presence(activity=discord.Activity(
-                    type=discord.ActivityType.listening, name=active[0].current.title[:128],
-                ))
-            else:
-                await self.bot.change_presence(activity=discord.Activity(
-                    type=discord.ActivityType.listening, name=f"music in {len(active)} servers",
-                ))
 
     def _bg_task(self, coro: Any, *, name: str | None = None) -> asyncio.Task[Any]:
         task = asyncio.create_task(coro, name=name)
@@ -1692,7 +1690,7 @@ class MusicCog(commands.Cog):
             await context.send("Queue is already empty.")
             return
         self._remember_channel(player, context.channel)
-        player.queue.clear()
+        player.replace_queue([])
         self._persist_snapshot(context.guild.id)
         await context.send("Cleared the queue.")
         await self._refresh_now_playing_message(context.guild.id)
@@ -1840,7 +1838,8 @@ class MusicCog(commands.Cog):
         if not rows:
             await context.send("Playlist not found.")
             return
-        cap_rows = list(rows[: self.bot.settings.max_playlist_size])
+        cap_rows  = list(rows[: self.bot.settings.max_playlist_size])
+        truncated = len(rows) - len(cap_rows)   # rows silently cut by the size cap
         added = 0
         async with context.typing():
             for row in cap_rows:
@@ -1856,11 +1855,15 @@ class MusicCog(commands.Cog):
                     duration=0, requester_id=context.author.id, query=query,
                 ))
                 added += 1
-        skipped = len(cap_rows) - added
+        queue_skipped = len(cap_rows) - added   # rows dropped because queue was full
         self._persist_snapshot(context.guild.id)
         self._kick_pipeline(context.guild.id)
-        suffix = f" Skipped `{skipped}` unavailable items." if skipped else ""
-        await context.send(f"Loaded `{added}` tracks from playlist `{name.lower()}`.{suffix}")
+        parts: list[str] = [f"Loaded `{added}` tracks from playlist `{name.lower()}`."]
+        if queue_skipped:
+            parts.append(f"Skipped `{queue_skipped}` items (queue full).")
+        if truncated:
+            parts.append(f"`{truncated}` items were not loaded (playlist exceeds the `{self.bot.settings.max_playlist_size}`-track limit).")
+        await context.send(" ".join(parts))
         await self._refresh_now_playing_message(context.guild.id)
 
     @playlist.command(name="delete")

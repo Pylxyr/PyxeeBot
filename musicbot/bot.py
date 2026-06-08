@@ -259,7 +259,7 @@ class MusicBot(commands.Bot):
         self._prefix_cache.pop(guild_id, None)
 
     async def on_ready(self) -> None:
-        activity = discord.Activity(type=discord.ActivityType.watching, name="pylxyr.github.io/pyxeebot")
+        activity = discord.Activity(type=discord.ActivityType.watching, name="pylxyr.github.io/PyxeeBot-Page/")
         await self.change_presence(activity=activity)
         logging.getLogger(__name__).info("Logged in as %s (%s)", self.user, self.user.id if self.user else "unknown")
 

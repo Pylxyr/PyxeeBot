@@ -213,9 +213,11 @@ class GuildPlayer:
         entries.extend(self.queue)
         return [
             {
-                "query": track.query,
+                # Prefer the original search query; fall back to URL then title so
+                # restored tracks are re-fetchable even when query is empty.
+                "query": track.query or track.webpage_url or track.title,
                 "title": track.title,
-                "webpage_url": track.webpage_url,
+                "webpage_url": track.webpage_url or "",
                 "requester_id": track.requester_id,
             }
             for track in entries

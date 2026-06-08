@@ -56,7 +56,7 @@ Run `!why` after any search to see the full per-candidate score breakdown in Dis
 
 ### Vibe Curation (Last.fm)
 
-`!vibe <query>` discovers similar tracks using Last.fm's `track.getSimilar` API. Results are sorted by Last.fm match confidence (0.0–1.0) so the strongest recommendations appear first. A curation panel lets you deselect tracks before queuing. When the queue drops to ≤10 tracks, a refill prompt surfaces automatically.
+`!vibe <query>` discovers similar tracks using Last.fm's `track.getSimilar` API. Results are sorted by Last.fm match confidence (0.0–1.0) so the strongest recommendations appear first. A curation panel lets you deselect tracks before queuing. When the queue drops to ≤10 tracks, a refill prompt surfaces automatically. Selecting tracks in the dropdown sends an ephemeral confirmation so it is clear which items are marked for exclusion before you commit with **Add All**.
 
 Vibe searches use a strengthened version of the scoring engine — live/concert penalties are tripled, Topic channel bonus is raised, and queries are biased toward `official audio` to keep studio versions out of reach of festival recordings.
 
@@ -69,7 +69,7 @@ A background pipeline pre-resolves stream URLs for the top 3 queue positions as 
 ### Performance
 
 - **rapidfuzz** replaces difflib for all similarity scoring — 10–100× faster in the hot path
-- **Cached YoutubeDL instances** — construction cost (5–20ms) paid once per options variant
+- **Thread-local YoutubeDL instances** — construction cost (5–20ms) paid once per options variant per worker thread; each thread holds its own instance set so concurrent extractions never share a `YoutubeDL` object across threads
 - **Cached markdown escaping** on Track objects — `re.sub` runs once per track, not per render
 - **Embed hash comparison** — NP panel skips HTTP edits when visible state is unchanged
 - **Bounded queue deque** — enforced at the data structure level via `maxlen`
@@ -283,7 +283,7 @@ PyxeeBot/
 
 **Player loop** runs as a single long-lived `asyncio.Task` per guild. After each track finishes it re-evaluates loop mode, appends to history, and dispatches `musicbot_queue_updated` which triggers the snapshot debounce, NP refresh, and URL pipeline.
 
-**Debounce pattern** — snapshot writes and NP embed refreshes use a deadline-timestamp + single-long-lived-task approach instead of spawning a new task on every event, avoiding task churn on active queues.
+**Debounce pattern** — snapshot writes, NP embed refreshes, and presence updates all use a deadline-timestamp + single-long-lived-task approach instead of spawning a new task on every event. Each loop re-checks its deadline after the async operation completes, so a deadline extension written during a slow await is never silently dropped. This avoids task churn on active queues.
 
 **URL pipeline** keeps the top 3 queue positions pre-resolved at all times. Runs sequentially (never concurrently) and yields `asyncio.sleep(0)` between resolves so the audio thread isn't starved. The near-end task is a 20-second safety net only — in normal operation the next URL is already warm.
 

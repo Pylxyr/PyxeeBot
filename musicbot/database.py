@@ -150,27 +150,18 @@ class Database:
     ) -> None:
         if self._conn is None:
             return
-        async with self._conn.execute(
-            "SELECT prefix FROM guild_settings WHERE guild_id = ?", (guild_id,)
-        ) as cursor:
-            existing = await cursor.fetchone()
-        if existing:
-            await self._conn.execute(
-                "UPDATE guild_settings SET dj_role_id = ? WHERE guild_id = ?",
-                (role_id, guild_id),
-            )
-        else:
-            await self._conn.execute(
-                """
-                INSERT INTO guild_settings (guild_id, prefix, dj_role_id)
-                VALUES (?, ?, ?)
-                """,
-                (guild_id, default_prefix, role_id),
-            )
+        await self._conn.execute(
+            """
+            INSERT INTO guild_settings (guild_id, prefix, dj_role_id)
+            VALUES (?, ?, ?)
+            ON CONFLICT(guild_id) DO UPDATE SET dj_role_id = excluded.dj_role_id
+            """,
+            (guild_id, default_prefix, role_id),
+        )
         await self._conn.commit()
         self._dj_role_cache[guild_id] = role_id
-        if not existing:
-            self._prefix_cache[guild_id] = default_prefix
+        # Warm the prefix cache for new guilds; leave existing entries untouched.
+        self._prefix_cache.setdefault(guild_id, default_prefix)
 
     async def save_playlist(
         self,
@@ -278,30 +269,35 @@ class Database:
         if self._snapshot_hashes.get(guild_id) == new_hash:
             return
 
-        await self._conn.execute(
-            "DELETE FROM queue_snapshots WHERE guild_id = ?", (guild_id,)
-        )
-        if entries:
-            await self._conn.executemany(
-                """
-                INSERT INTO queue_snapshots (
-                    guild_id, position, query, title, webpage_url, requester_id
-                )
-                VALUES (?, ?, ?, ?, ?, ?)
-                """,
-                [
-                    (
-                        guild_id,
-                        position,
-                        entry["query"],
-                        entry["title"],
-                        entry["webpage_url"],
-                        entry["requester_id"],
-                    )
-                    for position, entry in enumerate(entries)
-                ],
+        await self._conn.execute("BEGIN IMMEDIATE")
+        try:
+            await self._conn.execute(
+                "DELETE FROM queue_snapshots WHERE guild_id = ?", (guild_id,)
             )
-        await self._conn.commit()
+            if entries:
+                await self._conn.executemany(
+                    """
+                    INSERT INTO queue_snapshots (
+                        guild_id, position, query, title, webpage_url, requester_id
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    [
+                        (
+                            guild_id,
+                            position,
+                            entry["query"],
+                            entry["title"],
+                            entry["webpage_url"],
+                            entry["requester_id"],
+                        )
+                        for position, entry in enumerate(entries)
+                    ],
+                )
+            await self._conn.commit()
+        except Exception:
+            await self._conn.rollback()
+            raise
         self._snapshot_hashes[guild_id] = new_hash
 
     async def load_queue_snapshot(self, guild_id: int) -> list[sqlite3.Row]:

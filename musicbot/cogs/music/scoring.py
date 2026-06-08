@@ -18,6 +18,8 @@ from musicbot.cogs.music.constants import (
     _HANGUL_RE,
     _JP_COVER_BRACKET_RE,
     SEARCH_ANIME_SIGNAL_TOKENS,
+    SEARCH_CURATION_EXTRA_PHRASES,
+    SEARCH_CURATION_EXTRA_TOKENS,
     SEARCH_DISCOURAGED_PHRASES,
     SEARCH_DISCOURAGED_TOKENS,
     SEARCH_GENERIC_TOKENS,
@@ -257,17 +259,11 @@ def score_entry(
     discouraged_penalty   = 0.0
     raw_query_token_set   = set(query.raw_query_tokens)
 
-    _CURATION_EXTRA_TOKENS   = {"live", "concert", "stage", "festival", "session", "acoustic"}
-    _CURATION_EXTRA_PHRASES  = {
-        "at the", "in concert", "tour", "unplugged",
-        "bbc session", "radio session", "tv performance",
-    }
-
     for token, weight in SEARCH_DISCOURAGED_TOKENS.items():
         if token not in raw_query_token_set and token in entry.metadata_token_set:
             if is_anime_query and token in {"live", "stage", "concert"}:
                 discouraged_penalty += weight * 0.3
-            elif curation_mode and token in _CURATION_EXTRA_TOKENS:
+            elif curation_mode and token in SEARCH_CURATION_EXTRA_TOKENS:
                 discouraged_penalty += weight * 3.0
             else:
                 discouraged_penalty += weight
@@ -279,7 +275,7 @@ def score_entry(
 
     if curation_mode:
         norm_meta = entry.normalized_metadata
-        for phrase in _CURATION_EXTRA_PHRASES:
+        for phrase in SEARCH_CURATION_EXTRA_PHRASES:
             if phrase not in query.normalized_query and phrase in norm_meta:
                 discouraged_penalty += 0.65
 
