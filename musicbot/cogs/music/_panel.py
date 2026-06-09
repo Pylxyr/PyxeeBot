@@ -41,41 +41,29 @@ class NPanelMixin:
         return f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"
 
     def _format_progress_bar(
-        self, elapsed: float, duration: float, *, width: int = 16
+        self, elapsed: float, duration: float, *, width: int = 22
     ) -> str:
         if duration <= 0:
             return f"`{'─' * width}`  Live"
         ratio  = min(1.0, max(0.0, elapsed / duration))
         filled = round(ratio * width)
         if filled == 0:
-            bar = "▶" + "░" * (width - 1)
+            bar = "⬤" + "─" * width
         elif filled >= width:
-            bar = "▓" * width
+            bar = "━" * width
         else:
-            bar = "▓" * (filled - 1) + "▶" + "░" * (width - filled)
-        return (
-            f"`{bar}` "
-            f"{self._format_duration(elapsed)} / {self._format_duration(duration)}"
-        )
+            bar = "━" * (filled - 1) + "⬤" + "─" * (width - filled)
+        e = self._format_duration(elapsed)
+        t = self._format_duration(duration)
+        return f"`{e}`  {bar}  `{t}`"
 
-    def _queue_lines(
-        self,
-        player: GuildPlayer,
-        *,
-        limit: int,
-        include_current: bool = True,
-    ) -> list[str]:
-        lines: list[str] = []
-        if include_current and player.current:
-            lines.append(
-                f"Now: `{player.current.escaped_title}` "
-                f"[{player.current.duration_label}]"
-            )
-        for index, track in enumerate(itertools.islice(player.queue, limit), start=1):
-            duration = track.duration_label if track.duration else "pending"
-            lines.append(f"{index}. `{track.escaped_title}` [{duration}]")
+    def _queue_lines(self, player: GuildPlayer, *, limit: int) -> list[str]:
+        lines = []
+        for i, track in enumerate(itertools.islice(player.queue, limit), 1):
+            dur = f"`{track.duration_label}`" if track.duration else "`…`"
+            lines.append(f"`{i}.`  {discord.utils.escape_markdown(track.title[:44])}  {dur}")
         if len(player.queue) > limit:
-            lines.append(f"...and {len(player.queue) - limit} more.")
+            lines.append(f"*…and {len(player.queue) - limit} more*")
         return lines
 
     # ── Embed renderer ──────────────────────────────────────────────────────
@@ -86,69 +74,46 @@ class NPanelMixin:
         player: GuildPlayer | None,
         controller: NowPlayingController,
     ) -> discord.Embed:
-        embed        = discord.Embed(colour=EMBED_COLOUR)
-        footer_parts = ["⏮ prev", "⏭ skip", "⏯ pause", "↻ loop", "≡ queue"]
-        footer       = "  ·  ".join(footer_parts)
-        if controller.status_text:
-            footer = f"{footer}  ·  {controller.status_text}"
+        embed = discord.Embed(colour=EMBED_COLOUR)
 
         if not player or not player.current:
-            embed.title       = "Now Playing"
-            embed.description = "Nothing is playing right now."
-            embed.set_footer(text=footer)
+            embed.set_author(name="♪  Now Playing")
+            embed.description = "*Nothing is playing right now.*"
+            embed.set_footer(text="⏮ prev  ·  ⏭ skip  ·  ⏯ pause  ·  ↺ loop  ·  ≡ queue")
             return embed
 
         track      = player.current
         is_paused  = bool(player.voice_client and player.voice_client.is_paused())
-        loop_label = LOOP_LABELS.get(player.loop_mode, "Off")
         loop_icon  = LOOP_ICONS.get(player.loop_mode, "→")
+        loop_label = LOOP_LABELS.get(player.loop_mode, "Off")
         requester  = guild.get_member(track.requester_id)
-        requester_label = requester.mention if requester else f"<@{track.requester_id}>"
+        req_label  = requester.display_name if requester else f"<@{track.requester_id}>"
 
-        embed.title = "Now Playing" if not is_paused else "⏸ Paused"
-        embed.add_field(
-            name="Track",
-            value=f"[{track.escaped_title}]({track.webpage_url})",
-            inline=False,
+        embed.set_author(name=f"♪  Now Playing  ·  {'⏸  paused' if is_paused else '▶  playing'}")
+        embed.description = (
+            f"**[{track.escaped_title}]({track.webpage_url})**\n"
+            f"{track.escaped_uploader}  ·  `{track.duration_label}`\n\n"
+            f"{self._format_progress_bar(player.elapsed_seconds, track.duration)}"
         )
-        embed.add_field(
-            name=f"Progress — {'Paused' if is_paused else 'Playing'}",
-            value=self._format_progress_bar(player.elapsed_seconds, track.duration),
-            inline=False,
-        )
-        embed.add_field(name="Uploader",     value=track.escaped_uploader,      inline=True)
-        embed.add_field(name="Duration",     value=f"`{track.duration_label}`", inline=True)
-        embed.add_field(name="Requested by", value=requester_label,             inline=True)
 
-        queue_count   = len(player.queue)
-        queue_secs    = int(player._total_duration)
-        remaining_str = self._format_duration(queue_secs) if queue_secs > 0 else None
-        if queue_count and remaining_str:
-            up_next_name = (
-                f"Up Next  ·  {queue_count} track{'s' if queue_count != 1 else ''}"
-                f"  ·  {remaining_str} remaining"
-            )
-        elif queue_count:
-            up_next_name = f"Up Next  ·  {queue_count} track{'s' if queue_count != 1 else ''}"
-        else:
-            up_next_name = "Up Next"
-
-        preview_lines = self._queue_lines(
-            player, limit=NOW_PLAYING_PREVIEW_LIMIT, include_current=False
-        )
-        embed.add_field(
-            name=up_next_name,
-            value="\n".join(preview_lines) if preview_lines else "Nothing queued.",
-            inline=False,
-        )
         if track.thumbnail_url:
             embed.set_thumbnail(url=track.thumbnail_url)
 
-        loop_footer = f"{loop_icon} {loop_label}"
-        full_footer = f"⏮ prev  ·  ⏭ skip  ·  ⏯ pause  ·  {loop_footer}  ·  ≡ queue"
+        queue_count = len(player.queue)
+        if queue_count:
+            queue_secs = int(player._total_duration)
+            remaining  = f"  ·  {self._format_duration(queue_secs)} remaining" if queue_secs else ""
+            embed.add_field(
+                name=f"Up Next  ·  {queue_count} track{'s' if queue_count != 1 else ''}{remaining}",
+                value="\n".join(self._queue_lines(player, limit=NOW_PLAYING_PREVIEW_LIMIT))
+                      or "Nothing queued.",
+                inline=False,
+            )
+
+        footer_parts = [f"{loop_icon} {loop_label}", f"req. {req_label}"]
         if controller.status_text:
-            full_footer = f"{full_footer}  ·  {controller.status_text}"
-        embed.set_footer(text=full_footer)
+            footer_parts.append(controller.status_text)
+        embed.set_footer(text="  ·  ".join(footer_parts))
         return embed
 
     # ── Channel / controller helpers ────────────────────────────────────────
