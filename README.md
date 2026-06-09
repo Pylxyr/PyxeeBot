@@ -258,6 +258,11 @@ All settings are read from `.env`. Every value has a default.
 ```
 PyxeeBot/
 ├── bot.py
+├── pyproject.toml       — pytest config
+├── tests/
+│   ├── conftest.py      — shared fixtures
+│   ├── test_scoring.py  — scoring engine unit tests
+│   └── test_player.py   — player state-transition tests
 └── musicbot/
     ├── bot.py           — MusicBot, help command, logging, shutdown
     ├── config.py        — Settings dataclass, .env loader
@@ -266,13 +271,16 @@ PyxeeBot/
         ├── admin.py     — Ping, DJ role management
         ├── curation.py  — Last.fm vibe/curation, auto-refill
         └── music/
-            ├── cog.py       — Commands, event handlers, URL pipeline
-            ├── player.py    — Per-guild audio state machine
-            ├── scoring.py   — Pure search scoring (no discord dependency)
-            ├── views.py     — Discord UI: NP panel, queue, search, debug
-            ├── models.py    — Pure dataclasses
-            ├── constants.py — FFmpeg options, scoring tables, timing
-            └── resolve.py   — Stream URL cache (TTL + task dedup)
+            ├── cog.py          — Commands, events, wiring (inherits mixins)
+            ├── _extraction.py  — ExtractionMixin: yt-dlp, audio source, search
+            ├── _resolver.py    — ResolverMixin: stream-URL cache and pipeline
+            ├── _panel.py       — NPanelMixin: NP embed rendering and refresh
+            ├── _context.py     — Shared ContextVar (avoids circular imports)
+            ├── player.py       — Per-guild audio state machine
+            ├── scoring.py      — Pure search scoring (no Discord dependency)
+            ├── views.py        — Discord UI: NP panel, queue, search, debug
+            ├── models.py       — Pure dataclasses
+            └── constants.py    — FFmpeg options, scoring tables, timing
 ```
 
 ---
@@ -281,13 +289,30 @@ PyxeeBot/
 
 **Search scoring** is fully pure — `scoring.py` has no Discord or bot imports and can be unit tested in isolation. Scores are logged at `DEBUG` level; `!why` surfaces them in Discord.
 
+**cog.py split** — the original 1877-line file is split into three private mixin classes (`ExtractionMixin`, `ResolverMixin`, `NPanelMixin`) that `MusicCog` inherits from. All instance state still lives in `MusicCog.__init__`; the mixins carry no state of their own. `_context.py` holds the shared `_CURRENT_GUILD_ID` ContextVar to avoid circular imports between the mixin files.
+
 **Player loop** runs as a single long-lived `asyncio.Task` per guild. After each track finishes it re-evaluates loop mode, appends to history, and dispatches `musicbot_queue_updated` which triggers the snapshot debounce, NP refresh, and URL pipeline.
 
 **Debounce pattern** — snapshot writes, NP embed refreshes, and presence updates all use a deadline-timestamp + single-long-lived-task approach instead of spawning a new task on every event. Each loop re-checks its deadline after the async operation completes, so a deadline extension written during a slow await is never silently dropped. This avoids task churn on active queues.
 
 **URL pipeline** keeps the top 3 queue positions pre-resolved at all times. Runs sequentially (never concurrently) and yields `asyncio.sleep(0)` between resolves so the audio thread isn't starved. The near-end task is a 20-second safety net only — in normal operation the next URL is already warm.
 
+**Stream URL validation** — `_validate_stream_url` distinguishes between a server explicitly rejecting a URL (HTTP 4xx/5xx → returns `False`, triggers re-resolve) and a network error during the HEAD check (timeout / connection error → returns `True`, keeps the cached URL). Network unavailability does not mean the URL is stale.
+
+**Last.fm error handling** — `_lastfm` retries once on transient failures (5xx, timeout, network error) with a short backoff. 429 backs off 5 seconds before the retry. 403 logs at `ERROR` and returns immediately. JSON decode failures and API-level error payloads are both caught and logged.
+
 **Audio timing** — FFmpeg is forced to `-frame_duration 20 -flush_packets 1` to produce exactly 20ms Opus frames matching `AudioPlayer.DELAY`. This eliminates the fast-forward and mid-track jitter caused by `codec=copy` passthrough sending raw container packets at whatever cadence FFmpeg pre-buffered them.
+
+---
+
+## Testing
+
+```bash
+pip install pytest pytest-asyncio
+pytest
+```
+
+Tests live in `tests/`. `test_scoring.py` covers the pure scoring engine (normalize, tokenize, signal tokens, overlap ratios, live/cover penalties, topic bonuses, anchor matching, rank ordering, debug record eviction). `test_player.py` covers `GuildPlayer` state transitions (enqueue duration tracking, replace_queue, snapshot fallback chain, pause/resume accounting, skip, play_previous).
 
 ---
 
