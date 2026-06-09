@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="https://github.com/Pylxyr/PyxeeBot-Page/blob/main/assets/logo.png" alt="PyxeeBot" width="120" />
+<img src="https://github.com/Pylxyr/PyxeeBot-Page/blob/main/public/assets/logo.png" alt="PyxeeBot" width="120" />
 
 # PyxeeBot
 
