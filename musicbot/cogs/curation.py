@@ -313,21 +313,62 @@ class CurationCog(commands.Cog, name="CurationCog"):
 
 
     async def _lastfm(self, method: str, **params: Any) -> dict[str, Any] | None:
-        """Call the Last.fm API and return the parsed JSON, or None on error."""
-        if not self._session or not self._key:
+        if not self._key:
             return None
-        try:
-            async with self._session.get(
-                LASTFM_API,
-                params={"method": method, "api_key": self._key,
-                        "format": "json", **params},
-                timeout=aiohttp.ClientTimeout(total=8),
-            ) as resp:
-                if resp.status != 200:
+        if self._session is None or self._session.closed:
+            self._session = aiohttp.ClientSession()
+            log.debug("Recreated Last.fm session (was closed)")
+        for attempt in range(2):
+            try:
+                async with self._session.get(
+                    LASTFM_API,
+                    params={"method": method, "api_key": self._key, "format": "json", **params},
+                    timeout=aiohttp.ClientTimeout(total=8),
+                ) as resp:
+                    if resp.status == 200:
+                        try:
+                            data = await resp.json(content_type=None)
+                        except Exception as exc:
+                            log.warning("Last.fm %s: JSON decode failed: %s", method, exc)
+                            return None
+                        if isinstance(data, dict) and "error" in data:
+                            log.debug("Last.fm API error %s for %s: %s",
+                                      data.get("error"), method, data.get("message"))
+                            return None
+                        return data
+                    if resp.status == 429:
+                        log.warning("Last.fm rate-limited (429) on %s — backing off 5 s", method)
+                        await asyncio.sleep(5)
+                        continue
+                    if resp.status == 403:
+                        log.error("Last.fm 403 on %s — check LASTFM_API_KEY", method)
+                        return None
+                    if resp.status >= 500:
+                        log.warning("Last.fm %s returned %d (server error), attempt %d/2",
+                                    method, resp.status, attempt + 1)
+                        if attempt == 0:
+                            await asyncio.sleep(1.0)
+                            continue
+                        return None
+                    log.debug("Last.fm %s returned HTTP %d", method, resp.status)
                     return None
-                return await resp.json(content_type=None)
-        except Exception:
-            return None
+            except asyncio.TimeoutError:
+                log.warning("Last.fm %s timed out (attempt %d/2)", method, attempt + 1)
+                if attempt == 0:
+                    await asyncio.sleep(0.5)
+                    continue
+                return None
+            except aiohttp.ClientError as exc:
+                log.warning("Last.fm %s network error (attempt %d/2): %s",
+                            method, attempt + 1, exc)
+                if attempt == 0:
+                    await asyncio.sleep(0.5)
+                    continue
+                return None
+            except Exception as exc:
+                log.warning("Last.fm %s unexpected error: %s", method, exc)
+                return None
+        return None
 
     async def _search_track(self, query: str) -> tuple[str, str] | None:
         """Return (artist, track) for a free-text query via Last.fm track.search.
@@ -400,6 +441,9 @@ class CurationCog(commands.Cog, name="CurationCog"):
                 responses = await asyncio.gather(*tasks, return_exceptions=True)
                 artist_counts: dict[str, int] = {}
                 for a, resp in zip(similar_artists, responses):
+                    if isinstance(resp, BaseException):
+                        log.debug("artist.gettoptracks failed for %r: %s", a, resp)
+                        continue
                     if not isinstance(resp, dict):
                         continue
                     akey = _artist_key(a)
