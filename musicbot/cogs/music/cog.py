@@ -101,6 +101,20 @@ class MusicCog(ExtractionMixin, ResolverMixin, NPanelMixin, commands.Cog):
             with contextlib.suppress(Exception):
                 await player.destroy()
 
+    async def cog_command_error(
+        self, context: commands.Context[Any], error: Exception
+    ) -> None:
+        if isinstance(error, commands.CommandOnCooldown):
+            await context.send(
+                f"Slow down — retry in `{error.retry_after:.1f}s`.", delete_after=6
+            )
+        elif isinstance(error, commands.CheckFailure):
+            await context.send(str(error), delete_after=8)
+        elif isinstance(error, commands.BadArgument):
+            await context.send(str(error), delete_after=8)
+        else:
+            raise error
+
     def _bg_task(self, coro: Any, *, name: str | None = None) -> asyncio.Task[Any]:
         task = asyncio.create_task(coro, name=name)
         def _on_done(t: asyncio.Task[Any]) -> None:
@@ -641,6 +655,7 @@ class MusicCog(ExtractionMixin, ResolverMixin, NPanelMixin, commands.Cog):
 
     @commands.hybrid_command(name="play", aliases=["p"])
     @commands.guild_only()
+    @commands.cooldown(2, 4, commands.BucketType.user)
     async def play(self, context: commands.Context[Any], *, query: str) -> None:
         """Queue a URL, playlist, or search query."""
         player = await self._join_for_context(context)
@@ -692,6 +707,7 @@ class MusicCog(ExtractionMixin, ResolverMixin, NPanelMixin, commands.Cog):
 
     @commands.hybrid_command(name="playnext", aliases=["pn"])
     @commands.guild_only()
+    @commands.cooldown(2, 4, commands.BucketType.user)
     async def playnext(self, context: commands.Context[Any], *, query: str) -> None:
         """Insert a track next in queue."""
         await self._require_dj(context)
@@ -731,6 +747,7 @@ class MusicCog(ExtractionMixin, ResolverMixin, NPanelMixin, commands.Cog):
 
     @commands.hybrid_command(name="search", aliases=["find", "s"])
     @commands.guild_only()
+    @commands.cooldown(1, 6, commands.BucketType.user)
     async def search(self, context: commands.Context[Any], *, query: str) -> None:
         """Browse search results and pick one to queue."""
         player = await self._join_for_context(context)
