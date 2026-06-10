@@ -43,6 +43,7 @@ class Settings:
     np_auto_refresh_interval: int
     error_announce: bool
     lastfm_api_key: str | None
+    restore_queue_on_restart: bool
 
 
 def _parse_owner_ids(raw_value: str) -> tuple[int, ...]:
@@ -113,4 +114,5 @@ def load_settings() -> Settings:
         np_auto_refresh_interval=max(15, _int_env("NP_AUTO_REFRESH_INTERVAL", 30)),
         error_announce=os.getenv("ERROR_ANNOUNCE", "true").strip().lower() in {"1", "true", "yes", "on"},
         lastfm_api_key=os.getenv("LASTFM_API_KEY", "").strip() or None,
+        restore_queue_on_restart=os.getenv("RESTORE_QUEUE_ON_RESTART", "true").strip().lower() in {"1", "true", "yes", "on"},
     )
