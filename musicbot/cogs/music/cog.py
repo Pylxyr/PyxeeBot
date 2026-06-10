@@ -71,6 +71,7 @@ class MusicCog(ExtractionMixin, ResolverMixin, NPanelMixin, commands.Cog):
 
         self._last_search:     OrderedDict[int, SearchDebugRecord] = OrderedDict()
         self._last_search_max: int = 50
+        self._restored_guilds: set[int] = set()
 
     async def cog_load(self) -> None:
         self._http_session = aiohttp.ClientSession()
@@ -123,6 +124,9 @@ class MusicCog(ExtractionMixin, ResolverMixin, NPanelMixin, commands.Cog):
         return player
 
     async def _restore_snapshot(self, player: GuildPlayer) -> None:
+        if not self.bot.settings.restore_queue_on_restart:
+            await self.bot.database.save_queue_snapshot(player.guild.id, [])
+            return
         rows = await self.bot.database.load_queue_snapshot(player.guild.id)
         if player.queue:
             return
@@ -136,6 +140,7 @@ class MusicCog(ExtractionMixin, ResolverMixin, NPanelMixin, commands.Cog):
         ]
         player.replace_queue(restored)
         if restored:
+            self._restored_guilds.add(player.guild.id)
             self._bg_task(
                 self._warmup_restore(list(restored[:2]), guild_id=player.guild.id),
                 name="warmup-restore",
@@ -675,6 +680,14 @@ class MusicCog(ExtractionMixin, ResolverMixin, NPanelMixin, commands.Cog):
             f"Queued [{tracks[0].escaped_title}]({tracks[0].webpage_url}).{suffix}"
             if added == 1 else f"Queued `{added}` tracks.{suffix}"
         )
+        if context.guild.id in self._restored_guilds:
+            restored_count = len(player.queue) - added
+            if restored_count > 0:
+                result += (
+                    f"\n> 📋 `{restored_count}` track{'s' if restored_count != 1 else ''} "
+                    f"from your last session are in the queue. Run `!clear` to start fresh."
+                )
+            self._restored_guilds.discard(context.guild.id)
         await (fetch_msg.edit(content=result) if fetch_msg else context.send(result))
 
     @commands.hybrid_command(name="playnext", aliases=["pn"])
