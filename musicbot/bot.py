@@ -125,7 +125,7 @@ class PyxeeHelpCommand(commands.HelpCommand):
             for command in commands_for_cog:
                 line = self._format_command_compact(command)
                 if chunk_lines and chunk_len + len(line) + 1 > FIELD_LIMIT:
-                    suffix = f" (cont.)" if chunk_index > 0 else ""
+                    suffix = " (cont.)" if chunk_index > 0 else ""
                     all_fields.append((f"{field_name}{suffix}", "\n".join(chunk_lines)))
                     chunk_lines = []
                     chunk_len = 0
@@ -134,7 +134,7 @@ class PyxeeHelpCommand(commands.HelpCommand):
                 chunk_len += len(line) + 1
 
             if chunk_lines:
-                suffix = f" (cont.)" if chunk_index > 0 else ""
+                suffix = " (cont.)" if chunk_index > 0 else ""
                 all_fields.append((f"{field_name}{suffix}", "\n".join(chunk_lines)))
 
         embeds: list[discord.Embed] = [base_embed]

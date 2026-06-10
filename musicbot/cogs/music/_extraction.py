@@ -58,9 +58,13 @@ class ExtractionMixin:
                     "node": {"path": self.bot.settings.ytdlp_js_runtime_path}  # type: ignore[attr-defined]
                 }
             self._ytdl_base_options = base  # type: ignore[attr-defined]
-            fp  = dict(base); fp["extract_flat"]  = "in_playlist"; fp["lazy_playlist"] = True
-            fs  = dict(base); fs["extract_flat"]  = True
-            fps = dict(fp);   fps["extract_flat"] = True
+            fp  = dict(base)
+            fp["extract_flat"]  = "in_playlist"
+            fp["lazy_playlist"] = True
+            fs  = dict(base)
+            fs["extract_flat"]  = True
+            fps = dict(fp)
+            fps["extract_flat"] = True
             self._ytdl_variants = {  # type: ignore[attr-defined]
                 (False, False): dict(base),
                 (True,  False): fp,

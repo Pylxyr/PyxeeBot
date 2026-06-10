@@ -30,7 +30,7 @@ def _item(title: str, uploader: str = "", duration: int = 210,
         "channel": channel or uploader or title,
         "duration": duration,
         "view_count": view_count,
-        "webpage_url": f"https://youtube.com/watch?v=x",
+        "webpage_url": "https://youtube.com/watch?v=x",
     }
 
 
