@@ -335,6 +335,13 @@ class MusicCog(ExtractionMixin, ResolverMixin, NPanelMixin, commands.Cog):
         view.message = prompt
         return await view.wait_for_selection()
 
+    def _user_queue_count(self, player: GuildPlayer, user_id: int) -> int:
+        return sum(1 for t in player.queue if t.requester_id == user_id)
+
+    def _check_per_user_limit(self, player: GuildPlayer, user_id: int) -> bool:
+        limit = self.bot.settings.max_queue_size_per_user
+        return limit > 0 and self._user_queue_count(player, user_id) >= limit
+
     async def _skip_for_member(self, player: GuildPlayer, member: discord.Member) -> str:
         if not player.current or not player.voice_client or not player.voice_client.channel:
             return "Nothing is playing."
@@ -685,6 +692,8 @@ class MusicCog(ExtractionMixin, ResolverMixin, NPanelMixin, commands.Cog):
         for track in tracks:
             if len(player.queue) >= self.bot.settings.max_queue_size:
                 break
+            if self._check_per_user_limit(player, context.author.id):
+                break
             await player.enqueue(track)
             added += 1
         self._persist_snapshot(context.guild.id)
@@ -721,6 +730,10 @@ class MusicCog(ExtractionMixin, ResolverMixin, NPanelMixin, commands.Cog):
         track = tracks[0] if tracks else None
         if track is None:
             await fetch_msg.edit(content="No playable result found.")
+            return
+        if self._check_per_user_limit(player, context.author.id):
+            limit = self.bot.settings.max_queue_size_per_user
+            await fetch_msg.edit(content=f"You already have `{limit}` tracks in the queue.")
             return
         await player.enqueue(track, front=True)
         self._persist_snapshot(context.guild.id)

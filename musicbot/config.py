@@ -22,6 +22,7 @@ class Settings:
     log_level: str
     db_path: Path
     max_queue_size: int
+    max_queue_size_per_user: int
     max_playlist_size: int
     idle_timeout_seconds: int
     empty_channel_timeout_seconds: int
@@ -93,6 +94,7 @@ def load_settings() -> Settings:
         log_level=os.getenv("LOG_LEVEL", "INFO").upper(),
         db_path=DATA_DIR / "musicbot.sqlite3",
         max_queue_size=max(1, _int_env("MAX_QUEUE_SIZE", 100)),
+        max_queue_size_per_user=max(0, _int_env("MAX_QUEUE_SIZE_PER_USER", 0)),
         max_playlist_size=max(1, _int_env("MAX_PLAYLIST_SIZE", 25)),
         idle_timeout_seconds=max(30, _int_env("IDLE_TIMEOUT_SECONDS", 180)),
         empty_channel_timeout_seconds=max(15, _int_env("EMPTY_CHANNEL_TIMEOUT_SECONDS", 60)),

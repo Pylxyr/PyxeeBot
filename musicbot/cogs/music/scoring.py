@@ -5,9 +5,9 @@ import math
 import re
 import time
 from collections import OrderedDict
+from datetime import date as _date
 from functools import lru_cache
 from typing import Any
-
 from rapidfuzz import fuzz as _fuzz
 
 from musicbot.cogs.music.constants import (
@@ -107,6 +107,7 @@ def prepare_entry(item: dict[str, Any]) -> SearchEntryContext:
         duration=int(item.get("duration") or 0),
         view_count=int(item.get("view_count") or 0),
         channel_is_verified=bool(item.get("channel_is_verified", False)),
+        upload_date=str(item.get("upload_date") or ""),
     )
 
 @lru_cache(maxsize=512)
@@ -310,6 +311,21 @@ def score_entry(
 
     verified_bonus = 0.15 if entry.channel_is_verified else 0.0
 
+    recency_bonus = 0.0
+    ud = entry.upload_date
+    if len(ud) == 8 and ud.isdigit() and discouraged_penalty < 0.50:
+        try:
+            uploaded = _date(int(ud[:4]), int(ud[4:6]), int(ud[6:8]))
+            days_old = (_date.today() - uploaded).days
+            if days_old <= 180:
+                recency_bonus = 0.20
+            elif days_old <= 365:
+                recency_bonus = 0.12
+            elif days_old <= 730:
+                recency_bonus = 0.06
+        except ValueError:
+            pass
+
     jp_original_bonus = 0.0
     title_core = _BRACKET_STRIP_RE.sub("", raw_title).strip()
     if discouraged_penalty < 0.50 and _CJK_RE.search(title_core):
@@ -345,6 +361,7 @@ def score_entry(
         + jp_original_bonus
         + view_bonus
         + verified_bonus
+        + recency_bonus
         - title_only_penalty
         - discouraged_penalty
     )
@@ -361,7 +378,7 @@ def score_entry(
             "preferred_bonus": preferred_bonus, "discouraged_penalty": discouraged_penalty,
             "duration_bonus": duration_bonus, "jp_original_bonus": jp_original_bonus,
             "view_bonus": view_bonus, "verified_bonus": verified_bonus,
-            "final": final,
+            "recency_bonus": recency_bonus, "final": final,
         })
     return final
 
