@@ -20,7 +20,7 @@ jobs:
           cache: pip
 
       - name: System dependencies
-        run: sudo apt-get install -y --no-install-recommends libsodium-dev libopus-dev ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends --fix-missing libsodium-dev
 
       - name: Install Python dependencies
         run: pip install -r requirements.txt pytest pytest-asyncio ruff pip-audit
