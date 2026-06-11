@@ -8,24 +8,19 @@ StartLimitBurst=5
 Type=simple
 User=ubuntu
 WorkingDirectory=/home/ubuntu/musicbot
-
-Environment="PATH=/home/ubuntu/musicbot/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin" "PYTHONMALLOC=malloc" "MALLOC_TRIM_THRESHOLD_=65536"
+Environment="PATH=/home/ubuntu/musicbot/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin"
+Environment="PYTHONMALLOC=malloc"
+Environment="MALLOC_TRIM_THRESHOLD_=65536"
 EnvironmentFile=/home/ubuntu/musicbot/.env
 ExecStart=/home/ubuntu/musicbot/.venv/bin/python bot.py
-
-
-CPUSchedulingPolicy=rr
-CPUSchedulingPriority=99
-Nice=-20
-
+Nice=-10
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=30
 SyslogIdentifier=musicbot
-
-
+MemoryHigh=600M
 MemoryMax=700M
-OOMScoreAdjust=-500  # Changed from 500 to -500 to protect it from the OOM Killer
+OOMScoreAdjust=-500
 LimitNOFILE=65536
 StandardOutput=journal
 StandardError=journal
