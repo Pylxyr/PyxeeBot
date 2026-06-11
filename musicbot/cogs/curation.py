@@ -586,6 +586,8 @@ class CurationCog(commands.Cog, name="CurationCog"):
                     curation_mode=True,
                 )
                 if resolved:
+                    if music._check_per_user_limit(player, requester_id):
+                        return
                     await player.enqueue(resolved[0])
                     added.append(
                         f"**{discord.utils.escape_markdown(ct.artist)}** — "
@@ -760,6 +762,9 @@ class CurationCog(commands.Cog, name="CurationCog"):
                     guild_id=context.guild.id,
                 )
                 if tracks:
+                    if music._check_per_user_limit(player, context.author.id):
+                        failed += 1
+                        continue
                     await player.enqueue(tracks[0])
                     queued += 1
                 else:

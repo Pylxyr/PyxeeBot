@@ -124,6 +124,7 @@ class ScoreBreakdown:
     jp_original_bonus:       float = 0.0
     view_bonus:              float = 0.0
     verified_bonus:          float = 0.0
+    recency_bonus:           float = 0.0
     selected:                bool  = False
 
 

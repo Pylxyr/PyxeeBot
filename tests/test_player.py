@@ -270,3 +270,30 @@ def test_play_previous_sets_rewind_requested():
     p.voice_client = _vc(playing=False)
     p.play_previous()
     assert p.rewind_requested is True
+
+
+# ── Per-user queue count ──────────────────────────────────────────────────────
+
+def test_user_queue_count_correct():
+    p = _player()
+    p.queue.extend([
+        make_track(title="A", requester_id=111),
+        make_track(title="B", requester_id=111),
+        make_track(title="C", requester_id=222),
+    ])
+    count_111 = sum(1 for t in p.queue if t.requester_id == 111)
+    count_222 = sum(1 for t in p.queue if t.requester_id == 222)
+    assert count_111 == 2
+    assert count_222 == 1
+
+
+def test_user_queue_count_zero_for_unknown_user():
+    p = _player()
+    p.queue.extend([make_track(requester_id=111)])
+    count = sum(1 for t in p.queue if t.requester_id == 999)
+    assert count == 0
+
+
+def test_user_queue_count_empty_queue():
+    p = _player()
+    assert sum(1 for t in p.queue if t.requester_id == 111) == 0

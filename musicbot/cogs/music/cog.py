@@ -689,10 +689,12 @@ class MusicCog(ExtractionMixin, ResolverMixin, NPanelMixin, commands.Cog):
             await (fetch_msg.edit(content=msg) if fetch_msg else context.send(msg))
             return
         added = 0
+        hit_user_limit = False
         for track in tracks:
             if len(player.queue) >= self.bot.settings.max_queue_size:
                 break
             if self._check_per_user_limit(player, context.author.id):
+                hit_user_limit = True
                 break
             await player.enqueue(track)
             added += 1
@@ -700,6 +702,9 @@ class MusicCog(ExtractionMixin, ResolverMixin, NPanelMixin, commands.Cog):
         self._kick_pipeline(context.guild.id)
         await self._refresh_now_playing_message(context.guild.id)
         suffix = f" Skipped `{skipped}` unavailable items." if skipped else ""
+        if hit_user_limit:
+            limit = self.bot.settings.max_queue_size_per_user
+            suffix += f" Stopped at your `{limit}`-track per-user limit."
         result = (
             f"Queued [{tracks[0].escaped_title}]({tracks[0].webpage_url}).{suffix}"
             if added == 1 else f"Queued `{added}` tracks.{suffix}"

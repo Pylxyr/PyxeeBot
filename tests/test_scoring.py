@@ -282,3 +282,29 @@ def test_rank_last_search_evicts_oldest_when_over_max():
         )
     assert len(last_search) == 3
     assert 0 not in last_search
+
+
+# ── Recency bonus ─────────────────────────────────────────────────────────────
+
+def test_recency_bonus_recent_upload_scores_higher():
+    from datetime import date, timedelta
+    recent = (date.today() - timedelta(days=60)).strftime("%Y%m%d")
+    new_item = {**_item("Track", "Artist"), "upload_date": recent}
+    old_item = _item("Track", "Artist")
+    assert _score("artist track", new_item) > _score("artist track", old_item)
+
+
+def test_recency_bonus_absent_beyond_two_years():
+    from datetime import date, timedelta
+    old = (date.today() - timedelta(days=800)).strftime("%Y%m%d")
+    with_old     = {**_item("Track", "Artist"), "upload_date": old}
+    without_date = _item("Track", "Artist")
+    assert abs(_score("artist track", with_old) - _score("artist track", without_date)) < 0.001
+
+
+def test_recency_bonus_suppressed_when_heavily_penalised():
+    from datetime import date, timedelta
+    recent = (date.today() - timedelta(days=30)).strftime("%Y%m%d")
+    live_new    = {**_item("Song Live at Festival", "Artist"), "upload_date": recent}
+    studio_old  = _item("Song", "Artist")
+    assert _score("artist song", studio_old) > _score("artist song", live_new)
