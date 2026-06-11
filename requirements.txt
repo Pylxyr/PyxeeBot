@@ -1,7 +1,6 @@
 discord.py[voice]==2.7.1
 # PyNaCl unpinned: discord.py[voice]==2.7.1 requires PyNaCl<1.6, blocking CVE-2025-69277 fix.
-yt-dlp[default,curl-cffi]==2026.03.17
-# curl-cffi unpinned: yt-dlp==2026.03.17 requires curl-cffi<0.15, blocking CVE-2026-33752 fix.
+yt-dlp[default,curl-cffi]==2026.06.09
 python-dotenv==1.2.2
 aiosqlite>=0.20.0
 RapidFuzz==3.14.5

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import signal
 from logging.handlers import RotatingFileHandler
 from typing import Any
 
@@ -88,7 +89,6 @@ class PyxeeHelpCommand(commands.HelpCommand):
         return f"`{self.get_command_signature(command)}`\n{self._blurb_for(command)}"
 
     def _format_command_compact(self, command: commands.Command[Any, ..., Any]) -> str:
-        """Single-line compact format for the full command atlas."""
         sig = self.get_command_signature(command)
         blurb = self._blurb_for(command)
         return f"`{sig}` — {blurb}"
@@ -208,6 +208,7 @@ class PyxeeHelpCommand(commands.HelpCommand):
         embed = self._base_embed("\N{WARNING SIGN} Help Error", error)
         await self.get_destination().send(embed=embed)
 
+
 class MusicBot(commands.Bot):
     def __init__(self, settings: Settings, database: Database) -> None:
         intents = discord.Intents.default()
@@ -255,7 +256,6 @@ class MusicBot(commands.Bot):
         return await self.database.get_prefix(guild.id) or self.settings.default_prefix
 
     def invalidate_prefix_cache(self, guild_id: int) -> None:
-        """Call after set_prefix so the next message picks up the new value."""
         self._prefix_cache.pop(guild_id, None)
 
     async def on_ready(self) -> None:
@@ -290,6 +290,7 @@ class MusicBot(commands.Bot):
         await self.database.close()
         await super().close()
 
+
 def configure_logging(settings: Settings) -> None:
     formatter = logging.Formatter("%(asctime)s | %(levelname)s | %(name)s | %(message)s")
     handlers: list[logging.Handler] = [logging.StreamHandler()]
@@ -315,9 +316,8 @@ def configure_logging(settings: Settings) -> None:
     logging.getLogger("discord.http").setLevel(logging.WARNING)
     logging.getLogger("yt_dlp").setLevel(logging.WARNING)
 
-async def _async_run() -> None:
-    import signal
 
+async def _async_run() -> None:
     settings = load_settings()
     configure_logging(settings)
     database = Database(settings.db_path)
@@ -333,6 +333,7 @@ async def _async_run() -> None:
             loop.add_signal_handler(signal.SIGTERM, _handle_sigterm)
 
         await bot.start(settings.token)
+
 
 def run() -> None:
     asyncio.run(_async_run())

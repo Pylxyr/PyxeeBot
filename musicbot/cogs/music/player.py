@@ -11,6 +11,7 @@ from typing import Any, Awaitable, Callable, TYPE_CHECKING
 import discord
 
 from musicbot.cogs.music.constants import (
+    LOOP_CYCLE,
     NEAR_END_SAFETY_SECONDS,
     STREAM_URL_REFRESH_AGE_SECONDS,
     VOICE_RECONNECT_ATTEMPTS,
@@ -289,7 +290,6 @@ class GuildPlayer:
             self.bot.dispatch("musicbot_queue_updated", self.guild)
 
     async def _player_loop(self) -> None:
-        from musicbot.cogs.music.constants import LOOP_CYCLE  # local import avoids circularity
         try:
             while True:
                 try:

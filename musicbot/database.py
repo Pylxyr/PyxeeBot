@@ -160,7 +160,6 @@ class Database:
         )
         await self._conn.commit()
         self._dj_role_cache[guild_id] = role_id
-        # Warm the prefix cache for new guilds; leave existing entries untouched.
         self._prefix_cache.setdefault(guild_id, default_prefix)
 
     async def save_playlist(
@@ -253,7 +252,6 @@ class Database:
         return deleted > 0
 
     def _snapshot_hash(self, guild_id: int, entries: list[dict[str, Any]]) -> int:
-        """Cheap fingerprint of the snapshot payload for dirty-detection."""
         return hash((guild_id, tuple(
             (e.get("query", ""), e.get("title", ""), e.get("webpage_url", ""),
              e.get("requester_id", ""))

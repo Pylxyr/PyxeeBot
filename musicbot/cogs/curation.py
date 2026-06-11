@@ -92,8 +92,6 @@ class CurationView(discord.ui.View):
         self.add_item(select)
 
     async def _on_remove_select(self, interaction: discord.Interaction) -> None:
-        # FIX #18: apply the removal immediately on dropdown confirm — no separate
-        # "Remove Selected" button press needed. The old two-step flow was confusing.
         to_remove = set(int(v) for v in interaction.data.get("values", []))  # type: ignore[arg-type]
         if not to_remove:
             await interaction.response.defer()
@@ -299,7 +297,6 @@ class CurationCog(commands.Cog, name="CurationCog"):
         self._refill_in_progress: set[int] = set()
 
     async def cog_load(self) -> None:
-        # handful of concurrent API calls and the default (100) is wasteful.
         connector = aiohttp.TCPConnector(limit=5, ttl_dns_cache=300)
         self._session = aiohttp.ClientSession(connector=connector)
         if not self._key:
@@ -567,16 +564,11 @@ class CurationCog(commands.Cog, name="CurationCog"):
         added:  list[str] = []
         resolved_count = 0
 
-        # Concurrently resolve up to `ytdlp_curation_concurrency` tracks at a time.
-        # This reduces wall-clock wait from O(N) sequential yt-dlp calls to ~O(N/C)
-        # where C is the concurrency limit (default 3).
         concurrency = max(1, getattr(self.bot.settings, "ytdlp_curation_concurrency", 3))
         sem = asyncio.Semaphore(concurrency)
 
         async def _resolve_one(ct: CuratedTrack) -> None:
             nonlocal queued, failed, resolved_count
-            # Append "official audio" to bias YouTube's ranking toward studio uploads
-            # before the curation scorer even runs.
             query = f"ytsearch5:{ct.artist} - {ct.title} official audio"
             try:
                 resolved, _ = await music._extract_tracks(
@@ -610,7 +602,6 @@ class CurationCog(commands.Cog, name="CurationCog"):
                 await _resolve_one(ct)
 
         async def _progress_reporter() -> None:
-            """Live progress bar updated every ~1.5 s while resolution is in flight."""
             while True:
                 done   = resolved_count
                 pct    = int(done / total * 100) if total else 100
@@ -636,7 +627,6 @@ class CurationCog(commands.Cog, name="CurationCog"):
             reporter.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await reporter
-            # Post a final accurate count after everything is settled.
             bar  = "▓" * 16
             recent = "\n".join(f"· {t}" for t in added[-8:])
             text = (
@@ -751,8 +741,6 @@ class CurationCog(commands.Cog, name="CurationCog"):
         queued = 0
         failed = 0
 
-        # (matching !vibe behaviour). Process sequentially to respect the guild
-        # semaphore instead of hammering it with a gather.
         for entry in entries:
             query = str(entry["query"])
             try:

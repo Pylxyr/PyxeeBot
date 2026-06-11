@@ -48,14 +48,7 @@ class Settings:
 
 
 def _parse_owner_ids(raw_value: str) -> tuple[int, ...]:
-    if not raw_value.strip():
-        return ()
-    owner_ids: list[int] = []
-    for chunk in raw_value.split(","):
-        chunk = chunk.strip()
-        if chunk:
-            owner_ids.append(int(chunk))
-    return tuple(owner_ids)
+    return tuple(int(c.strip()) for c in raw_value.split(",") if c.strip())
 
 
 def _int_env(name: str, default: int) -> int:

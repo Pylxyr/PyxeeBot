@@ -65,7 +65,7 @@ SEARCH_DISCOURAGED_TOKENS: dict[str, float] = {
     "amv": 0.60, "cast": 0.70, "cover": 0.60, "edit": 0.15,
     "instrumental": 0.60, "karaoke": 0.70, "nightcore": 0.70,
     "remix": 0.45, "reverb": 0.22, "seiyuu": 0.70, "slowed": 0.45,
-    "live": 0.50, "stage": 0.45, "concert": 0.50,        # raised live; added stage + concert
+    "live": 0.50, "stage": 0.45, "concert": 0.50,
     "guitar": 0.50, "piano": 0.50, "violin": 0.45,
     "acoustic": 0.35, "fingerstyle": 0.55, "ukulele": 0.55,
     "bass": 0.45, "drums": 0.45, "drum": 0.40,

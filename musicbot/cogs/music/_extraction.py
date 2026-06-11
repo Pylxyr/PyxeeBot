@@ -26,7 +26,7 @@ from musicbot.cogs.music.constants import (
     YTDL_OPTIONS,
 )
 from musicbot.cogs.music.models import Track
-from musicbot.cogs.music.scoring import rank_entries
+from musicbot.cogs.music.scoring import rank_entries, signal_tokens
 
 if TYPE_CHECKING:
     pass   # nothing needed at type-check time; callers annotate via MusicCog
@@ -369,7 +369,6 @@ class ExtractionMixin:
     # ── Search helpers ──────────────────────────────────────────────────────
 
     def _search_result_count(self, query: str) -> int:
-        from musicbot.cogs.music.scoring import signal_tokens  # local import — avoids circularity
         base   = max(self.bot.settings.ytdlp_search_results, SEARCH_SELECTION_LIMIT)  # type: ignore[attr-defined]
         tokens = signal_tokens(query)
         if len(tokens) >= 4:

@@ -43,7 +43,7 @@ def normalize_text(value: str) -> str:
 def tokenize_text(value: str) -> tuple[str, ...]:
     return tuple(re.findall(r"[a-z0-9]+", value.casefold()))
 
-def _wb(p: str, t: str) -> bool:
+def _word_boundary_match(p: str, t: str) -> bool:
     return (
         p == t
         or t.startswith(p + " ")
@@ -145,7 +145,7 @@ def _derive_anchor_phrases_cached(
             seen.add(phrase)
             if size == 1 and len(phrase) <= 2:
                 continue
-            count = sum(1 for text in uploader_texts if _wb(phrase, text))
+            count = sum(1 for text in uploader_texts if _word_boundary_match(phrase, text))
             if 0 < count < len(uploader_texts):
                 matches.append((count, phrase))
         if matches:
@@ -186,13 +186,13 @@ def score_anchor_match(
 ) -> float:
     if not anchor_phrases or not entry.normalized_metadata:
         return 0.0
-    uploader_matches = [p for p in anchor_phrases if _wb(p, entry.normalized_uploader)]
+    uploader_matches = [p for p in anchor_phrases if _word_boundary_match(p, entry.normalized_uploader)]
     if uploader_matches:
         longest = max(len(p.split()) for p in uploader_matches)
         return 1.05 + ((longest - 1) * 0.20)
     title_only = [
         p for p in anchor_phrases
-        if _wb(p, entry.normalized_metadata) and not _wb(p, entry.normalized_uploader)
+        if _word_boundary_match(p, entry.normalized_metadata) and not _word_boundary_match(p, entry.normalized_uploader)
     ]
     if title_only:
         longest = max(len(p.split()) for p in title_only)
