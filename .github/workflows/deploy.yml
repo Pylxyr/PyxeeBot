@@ -53,6 +53,8 @@ jobs:
             git fetch origin main
             git reset --hard origin/main
             pip install -r requirements.txt --break-system-packages -q
-            sudo systemctl restart musicbot
+            sudo systemctl stop musicbot
+            sudo systemctl daemon-reload
+            sudo systemctl start musicbot
             sleep 3
             systemctl is-active --quiet musicbot || { journalctl -u musicbot -n 20 --no-pager; exit 1; }
