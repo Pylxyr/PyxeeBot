@@ -11,6 +11,7 @@ FFMPEG_BEFORE_OPTIONS = (
     "-reconnect_streamed 1 "
     "-reconnect_delay_max 5 "
     "-reconnect_on_network_error 1 "
+    "-reconnect_on_http_error 429,500,502,503,504 "
     "-probesize 2M "
     "-analyzeduration 0 "
     "-fflags +nobuffer"

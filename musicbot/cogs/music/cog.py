@@ -156,7 +156,7 @@ class MusicCog(ExtractionMixin, ResolverMixin, NPanelMixin, commands.Cog):
         if restored:
             self._restored_guilds.add(player.guild.id)
             self._bg_task(
-                self._warmup_restore(list(restored[:2]), guild_id=player.guild.id),
+                self._warmup_restore(list(restored[:3]), guild_id=player.guild.id),
                 name="warmup-restore",
             )
 
@@ -166,6 +166,18 @@ class MusicCog(ExtractionMixin, ResolverMixin, NPanelMixin, commands.Cog):
             async with sem:
                 with contextlib.suppress(Exception):
                     await self._resolve_track(track)
+
+    async def _cleanup_guild(self, guild_id: int) -> None:
+        player = self.players.pop(guild_id, None)
+        if player:
+            await player.destroy()
+        await self._flush_snapshot(guild_id, entries=[])
+        for task_dict in (self._snapshot_tasks, self._np_refresh_tasks, self._pipeline_tasks):
+            task = task_dict.pop(guild_id, None)
+            if task and not task.done():
+                task.cancel()
+        self._guild_extract_semaphores.pop(guild_id, None)
+        self.now_playing_messages.pop(guild_id, None)
 
     # ── Snapshot persistence ────────────────────────────────────────────────
 
@@ -456,16 +468,7 @@ class MusicCog(ExtractionMixin, ResolverMixin, NPanelMixin, commands.Cog):
 
     @commands.Cog.listener()
     async def on_guild_remove(self, guild: discord.Guild) -> None:
-        player = self.players.pop(guild.id, None)
-        if player:
-            await player.destroy()
-        self._guild_extract_semaphores.pop(guild.id, None)
-        await self._flush_snapshot(guild.id, entries=[])
-        for task_dict in (self._snapshot_tasks, self._np_refresh_tasks, self._pipeline_tasks):
-            task = task_dict.pop(guild.id, None)
-            if task and not task.done():
-                task.cancel()
-        self.now_playing_messages.pop(guild.id, None)
+        await self._cleanup_guild(guild.id)
 
     @commands.Cog.listener()
     async def on_voice_state_update(
@@ -478,10 +481,7 @@ class MusicCog(ExtractionMixin, ResolverMixin, NPanelMixin, commands.Cog):
         tracked_channel = player.voice_client.channel
         if self.bot.user is not None and member.id == self.bot.user.id:
             if before.channel is not None and after.channel is None:
-                await player.destroy()
-                self.players.pop(member.guild.id, None)
-                self._guild_extract_semaphores.pop(member.guild.id, None)
-                await self._flush_snapshot(member.guild.id, entries=[])
+                await self._cleanup_guild(member.guild.id)
                 await self._refresh_now_playing_message(member.guild.id)
                 await self._update_bot_presence()
             elif after.channel is not None and after.channel != before.channel:
@@ -508,20 +508,11 @@ class MusicCog(ExtractionMixin, ResolverMixin, NPanelMixin, commands.Cog):
     async def leave(self, context: commands.Context[Any]) -> None:
         """Disconnect and wipe the active session."""
         await self._require_dj(context)
-        player = self.players.get(context.guild.id)
-        if not player:
+        if not self.players.get(context.guild.id):
             await context.send("I am not connected.")
             return
         gid = context.guild.id
-        await player.destroy()
-        self.players.pop(gid, None)
-        await self._flush_snapshot(gid, entries=[])
-        for task_dict in (self._snapshot_tasks, self._np_refresh_tasks, self._pipeline_tasks):
-            task = task_dict.pop(gid, None)
-            if task and not task.done():
-                task.cancel()
-        self._guild_extract_semaphores.pop(gid, None)
-        self.now_playing_messages.pop(gid, None)
+        await self._cleanup_guild(gid)
         await context.send("Disconnected and cleared the queue.")
         await self._refresh_now_playing_message(gid)
 
