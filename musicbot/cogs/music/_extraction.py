@@ -7,6 +7,7 @@ initialises before any method can be called.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import re
 import threading
 import time
@@ -165,53 +166,45 @@ class ExtractionMixin:
         flat_playlist: bool = False,
         flat_search: bool = False,
     ) -> dict[str, Any]:
-        key     = (flat_playlist, flat_search)
-        options = self._build_ytdl_options(flat_playlist=flat_playlist, flat_search=flat_search)
+        key       = (flat_playlist, flat_search)
+        options   = self._build_ytdl_options(flat_playlist=flat_playlist, flat_search=flat_search)
         guild_id  = _CURRENT_GUILD_ID.get()
         guild_sem = (
             self._guild_extract_semaphores.setdefault(guild_id, asyncio.Semaphore(1))  # type: ignore[attr-defined]
             if guild_id is not None else None
         )
 
-        async def _do() -> dict[str, Any]:
-            if guild_sem is not None:
-                await guild_sem.acquire()
-            try:
-                async with self.extract_semaphore:  # type: ignore[attr-defined]
-                    try:
-                        loop = asyncio.get_running_loop()
-                        qry  = query
+        sem_ctx = guild_sem if guild_sem is not None else contextlib.nullcontext()
+        async with sem_ctx:  # type: ignore[attr-defined]
+            async with self.extract_semaphore:  # type: ignore[attr-defined]
+                try:
+                    loop = asyncio.get_running_loop()
 
-                        def _run() -> dict[str, Any] | None:
-                            tlocal = self._ytdl_tlocal  # type: ignore[attr-defined]
-                            if not hasattr(tlocal, "instances"):
-                                tlocal.instances: dict[tuple[bool, bool], YoutubeDL] = {}
-                            ydl = tlocal.instances.get(key)
-                            if ydl is None:
-                                ydl = YoutubeDL(options)
-                                tlocal.instances[key] = ydl
-                            return ydl.extract_info(qry, download=False)
+                    def _run() -> dict[str, Any] | None:
+                        tlocal = self._ytdl_tlocal  # type: ignore[attr-defined]
+                        if not hasattr(tlocal, "instances"):
+                            tlocal.instances: dict[tuple[bool, bool], YoutubeDL] = {}
+                        ydl = tlocal.instances.get(key)
+                        if ydl is None:
+                            ydl = YoutubeDL(options)
+                            tlocal.instances[key] = ydl
+                        return ydl.extract_info(query, download=False)
 
-                        result = await asyncio.wait_for(
-                            loop.run_in_executor(self._ytdl_executor, _run),  # type: ignore[attr-defined]
-                            timeout=self.bot.settings.ytdlp_extract_timeout_seconds,  # type: ignore[attr-defined]
-                        )
-                        if result is None:
-                            raise commands.BadArgument(
-                                "No information could be extracted for the provided source."
-                            )
-                        return result
-                    except asyncio.TimeoutError as exc:
-                        self.logger.warning("yt-dlp timed out for query %r", query)  # type: ignore[attr-defined]
+                    result = await asyncio.wait_for(
+                        loop.run_in_executor(self._ytdl_executor, _run),  # type: ignore[attr-defined]
+                        timeout=self.bot.settings.ytdlp_extract_timeout_seconds,  # type: ignore[attr-defined]
+                    )
+                    if result is None:
                         raise commands.BadArgument(
-                            f"Source lookup timed out after "
-                            f"{self.bot.settings.ytdlp_extract_timeout_seconds} seconds."  # type: ignore[attr-defined]
-                        ) from exc
-            finally:
-                if guild_sem is not None:
-                    guild_sem.release()
-
-        return await _do()
+                            "No information could be extracted for the provided source."
+                        )
+                    return result
+                except asyncio.TimeoutError as exc:
+                    self.logger.warning("yt-dlp timed out for query %r", query)  # type: ignore[attr-defined]
+                    raise commands.BadArgument(
+                        f"Source lookup timed out after "
+                        f"{self.bot.settings.ytdlp_extract_timeout_seconds} seconds."  # type: ignore[attr-defined]
+                    ) from exc
 
     # ── URL / metadata helpers ──────────────────────────────────────────────
 

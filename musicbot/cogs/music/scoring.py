@@ -411,7 +411,8 @@ def rank_entries(
     if need_debug:
         records: list[ScoreBreakdown] = []
         for rank, (sc, _oi, item, ectx, bd) in enumerate(scored[:8], start=1):
-            assert bd is not None
+            if bd is None:
+                continue
             records.append(ScoreBreakdown(
                 rank=rank,
                 title=str(item.get("title") or ""),

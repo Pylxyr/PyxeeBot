@@ -6,7 +6,7 @@ import contextlib
 import logging
 import time
 from collections import deque
-from typing import Any, Awaitable, Callable, TYPE_CHECKING
+from typing import Any, Awaitable, Callable, Literal, TYPE_CHECKING
 
 import discord
 
@@ -46,7 +46,7 @@ class GuildPlayer:
         self._total_duration: int = 0   # sum of durations of queued tracks (not current)
 
         self.announce_channel_id: int | None = None
-        self.loop_mode: str  = "off"
+        self.loop_mode: Literal["off", "one", "all"] = "off"
         self.rewind_requested = False
         self._connected_at: float = 0.0
 
@@ -224,20 +224,19 @@ class GuildPlayer:
             for track in entries
         ]
 
-    async def _cancel_near_end_task(self) -> None:
-        if self.near_end_task is None:
+    async def _cancel_task(self, task: asyncio.Task[None] | None) -> None:
+        if task is None:
             return
-        self.near_end_task.cancel()
+        task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
-            await self.near_end_task
+            await task
+
+    async def _cancel_near_end_task(self) -> None:
+        await self._cancel_task(self.near_end_task)
         self.near_end_task = None
 
     async def _cancel_np_refresh_task(self) -> None:
-        if self.np_refresh_task is None:
-            return
-        self.np_refresh_task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await self.np_refresh_task
+        await self._cancel_task(self.np_refresh_task)
         self.np_refresh_task = None
 
     async def _trigger_near_end_preload(self, delay_seconds: float) -> None:
