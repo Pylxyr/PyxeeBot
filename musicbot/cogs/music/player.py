@@ -135,9 +135,10 @@ class GuildPlayer:
     def elapsed_seconds(self) -> float:
         if self.started_at <= 0:
             return 0.0
-        elapsed = time.monotonic() - self.started_at - self._total_paused
+        now     = time.monotonic()
+        elapsed = now - self.started_at - self._total_paused
         if self._pause_started > 0:
-            elapsed -= time.monotonic() - self._pause_started
+            elapsed -= now - self._pause_started
         return max(0.0, elapsed)
 
     def set_announce_channel(self, channel_id: int) -> None:
