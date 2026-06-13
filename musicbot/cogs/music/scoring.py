@@ -35,6 +35,97 @@ from musicbot.cogs.music.models import (
 
 log = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# Scoring formula weights (multiplied against [0, 1] signal values)
+# ---------------------------------------------------------------------------
+_W_FUZZY_RATIO         = 0.32
+_W_METADATA_RATIO      = 0.20
+_W_TITLE_OVERLAP       = 0.44
+_W_UPLOADER_OVERLAP    = 0.50
+_W_METADATA_OVERLAP    = 0.36
+_W_EXACT_METADATA      = 0.18
+_W_PREFIX_MATCH        = 0.10
+_W_ALL_TITLE_TOKENS    = 0.16
+_W_ALL_METADATA_TOKENS = 0.24
+
+# ---------------------------------------------------------------------------
+# Thresholds used in conditional logic
+# ---------------------------------------------------------------------------
+_THR_UPLOADER_STRONG  = 0.45  # uploader_overlap → strong_uploader_bonus
+_THR_UPLOADER_WEAK    = 0.20  # uploader_overlap → synergy / weak completion bonus
+_THR_UPLOADER_FULL    = 0.99  # missing tokens fully covered by uploader
+_THR_UPLOADER_PARTIAL = 0.50  # partial uploader coverage of missing tokens
+_THR_TITLE_MIN        = 0.45  # minimum title_overlap to trigger completion logic
+_THR_TITLE_HIGH       = 0.75  # high title_overlap for penalty / partial synergy
+_THR_TITLE_SYNERGY    = 0.55  # title_overlap required for full synergy bonus
+_THR_DASH_RATIO       = 0.70  # fuzzy ratio required for dash-format bonus
+_THR_PENALTY_GATE     = 0.50  # discouraged_penalty cap: above this, skip recency/JP
+_THR_JP_LATIN_RATIO   = 0.35  # max latin-char ratio to qualify as JP original
+_THR_JP_CJK_HANGUL    = 1.5   # CJK must exceed hangul by this multiple for JP
+
+# ---------------------------------------------------------------------------
+# Duration windows (seconds)
+# ---------------------------------------------------------------------------
+_DUR_OK_MIN    =  60
+_DUR_IDEAL_MIN =  90
+_DUR_IDEAL_MAX = 600
+_DUR_OK_MAX    = 660
+_DUR_LONG      = 900
+
+# ---------------------------------------------------------------------------
+# View-count bonus scaling
+# ---------------------------------------------------------------------------
+_VIEW_MIN           = 1_000
+_VIEW_BONUS_MAX     = 0.35
+_VIEW_BONUS_LOG_REF = 3.0   # log10(_VIEW_MIN) — zero point of the log scale
+_VIEW_BONUS_LOG_RNG = 6.0   # log-scale range over which the bonus grows
+_VIEW_BONUS_TOPIC   = 0.05  # floor bonus for low-view topic channels
+
+# ---------------------------------------------------------------------------
+# Recency windows (days) and bonuses
+# ---------------------------------------------------------------------------
+_RECENCY_DAYS_NEW     = 180
+_RECENCY_DAYS_RECENT  = 365
+_RECENCY_DAYS_OLDER   = 730
+_RECENCY_BONUS_NEW    = 0.20
+_RECENCY_BONUS_RECENT = 0.12
+_RECENCY_BONUS_OLDER  = 0.06
+
+# ---------------------------------------------------------------------------
+# Anchor-match scores
+# ---------------------------------------------------------------------------
+_ANCHOR_UPLOADER_BASE     = 1.05
+_ANCHOR_UPLOADER_PER_WORD = 0.20
+_ANCHOR_TITLE_BASE        = 0.20
+_ANCHOR_TITLE_PER_WORD    = 0.10
+_ANCHOR_NO_MATCH          = -0.30
+
+# ---------------------------------------------------------------------------
+# Signal bonuses and penalties
+# ---------------------------------------------------------------------------
+_ARTIST_BONUS_MULTI       = 0.28  # ≥2 artist tokens match
+_ARTIST_BONUS_SINGLE      = 0.12  # exactly 1 artist token matches
+_STRONG_UPLOADER_BONUS    = 0.18
+_TOPIC_BONUS_NORMAL       = 0.30
+_TOPIC_BONUS_CURATION     = 0.55
+_COMPLETION_SCALE         = 0.90  # continuous scale for missing-token uploader coverage
+_COMPLETION_BONUS_FULL    = 0.45  # all missing tokens covered by uploader
+_COMPLETION_BONUS_PARTIAL = 0.20  # partial uploader coverage of missing tokens
+_COMPLETION_BONUS_WEAK    = 0.12  # no missing tokens but uploader present
+_SYNERGY_BONUS_FULL       = 0.36  # strong title + uploader overlap
+_SYNERGY_BONUS_PARTIAL    = 0.24  # high title overlap with partial uploader coverage
+_DASH_FORMAT_BONUS        = 0.18
+_VERIFIED_BONUS           = 0.15
+_JP_ORIGINAL_BONUS        = 0.55
+_DURATION_BONUS_IDEAL     = 0.10
+_DURATION_BONUS_OK        = 0.05
+_DURATION_PENALTY_LONG    = -0.12
+_TITLE_ONLY_PENALTY       = 0.40
+_JP_COVER_PENALTY         = 0.75
+_CURATION_PHRASE_PENALTY  = 0.65
+_CURATION_PENALTY_SCALE   = 3.0   # token-penalty multiplier in curation mode
+_ANIME_LIVE_PENALTY_SCALE = 0.3   # reduced penalty for live/concert in anime queries
+
 @lru_cache(maxsize=4096)
 def normalize_text(value: str) -> str:
     return " ".join(re.findall(r"[a-z0-9]+", value.casefold()))
@@ -189,15 +280,15 @@ def score_anchor_match(
     uploader_matches = [p for p in anchor_phrases if _word_boundary_match(p, entry.normalized_uploader)]
     if uploader_matches:
         longest = max(len(p.split()) for p in uploader_matches)
-        return 1.05 + ((longest - 1) * 0.20)
+        return _ANCHOR_UPLOADER_BASE + ((longest - 1) * _ANCHOR_UPLOADER_PER_WORD)
     title_only = [
         p for p in anchor_phrases
         if _word_boundary_match(p, entry.normalized_metadata) and not _word_boundary_match(p, entry.normalized_uploader)
     ]
     if title_only:
         longest = max(len(p.split()) for p in title_only)
-        return 0.20 + ((longest - 1) * 0.10)
-    return -0.30
+        return _ANCHOR_TITLE_BASE + ((longest - 1) * _ANCHOR_TITLE_PER_WORD)
+    return _ANCHOR_NO_MATCH
 
 def score_entry(
     query: SearchQueryContext,
@@ -229,33 +320,33 @@ def score_entry(
     all_metadata_tokens_match = 1.0 if query.query_token_set and query.query_token_set.issubset(entry.metadata_token_set) else 0.0
 
     artist_token_matches  = len(query.query_token_set & entry.uploader_token_set)
-    artist_match_bonus    = 0.28 if artist_token_matches >= 2 else (0.12 if artist_token_matches == 1 else 0.0)
-    strong_uploader_bonus = 0.18 if uploader_overlap >= 0.45 else 0.0
-    topic_bonus = (0.55 if curation_mode else 0.30) if "topic" in entry.uploader_token_set else 0.0
+    artist_match_bonus    = _ARTIST_BONUS_MULTI if artist_token_matches >= 2 else (_ARTIST_BONUS_SINGLE if artist_token_matches == 1 else 0.0)
+    strong_uploader_bonus = _STRONG_UPLOADER_BONUS if uploader_overlap >= _THR_UPLOADER_STRONG else 0.0
+    topic_bonus = (_TOPIC_BONUS_CURATION if curation_mode else _TOPIC_BONUS_NORMAL) if "topic" in entry.uploader_token_set else 0.0
     uploader_preference_bonus = sum(
         w for tok, w in SEARCH_PREFERRED_UPLOADER_TOKENS.items() if tok in entry.uploader_token_set
     )
 
     artist_completion_bonus = 0.0
     title_only_penalty      = 0.0
-    if missing_title_tokens and title_overlap >= 0.45:
-        artist_completion_bonus += missing_title_uploader_overlap * 0.90
-        if missing_title_uploader_overlap >= 0.99:
-            artist_completion_bonus += 0.45
-        elif missing_title_uploader_overlap >= 0.50:
-            artist_completion_bonus += 0.20
-        elif title_overlap >= 0.75:
-            title_only_penalty = 0.40
-    elif not missing_title_tokens and uploader_overlap >= 0.20:
-        artist_completion_bonus += 0.12
+    if missing_title_tokens and title_overlap >= _THR_TITLE_MIN:
+        artist_completion_bonus += missing_title_uploader_overlap * _COMPLETION_SCALE
+        if missing_title_uploader_overlap >= _THR_UPLOADER_FULL:
+            artist_completion_bonus += _COMPLETION_BONUS_FULL
+        elif missing_title_uploader_overlap >= _THR_UPLOADER_PARTIAL:
+            artist_completion_bonus += _COMPLETION_BONUS_PARTIAL
+        elif title_overlap >= _THR_TITLE_HIGH:
+            title_only_penalty = _TITLE_ONLY_PENALTY
+    elif not missing_title_tokens and uploader_overlap >= _THR_UPLOADER_WEAK:
+        artist_completion_bonus += _COMPLETION_BONUS_WEAK
 
     title_uploader_synergy = 0.0
-    if title_overlap >= 0.55 and uploader_overlap >= 0.20:
-        title_uploader_synergy = 0.36
-    elif title_overlap >= 0.75 and missing_title_tokens and missing_title_uploader_overlap >= 0.50:
-        title_uploader_synergy = 0.24
+    if title_overlap >= _THR_TITLE_SYNERGY and uploader_overlap >= _THR_UPLOADER_WEAK:
+        title_uploader_synergy = _SYNERGY_BONUS_FULL
+    elif title_overlap >= _THR_TITLE_HIGH and missing_title_tokens and missing_title_uploader_overlap >= _THR_UPLOADER_PARTIAL:
+        title_uploader_synergy = _SYNERGY_BONUS_PARTIAL
 
-    dash_format_bonus = 0.18 if is_dash_query and ratio >= 0.70 else 0.0
+    dash_format_bonus = _DASH_FORMAT_BONUS if is_dash_query and ratio >= _THR_DASH_RATIO else 0.0
     preferred_bonus   = sum(w for phrase, w in SEARCH_PREFERRED_PHRASES.items() if phrase in entry.normalized_metadata)
 
     discouraged_penalty   = 0.0
@@ -264,9 +355,9 @@ def score_entry(
     for token, weight in SEARCH_DISCOURAGED_TOKENS.items():
         if token not in raw_query_token_set and token in entry.metadata_token_set:
             if is_anime_query and token in {"live", "stage", "concert"}:
-                discouraged_penalty += weight * 0.3
+                discouraged_penalty += weight * _ANIME_LIVE_PENALTY_SCALE
             elif curation_mode and token in SEARCH_CURATION_EXTRA_TOKENS:
-                discouraged_penalty += weight * 3.0
+                discouraged_penalty += weight * _CURATION_PENALTY_SCALE
             else:
                 discouraged_penalty += weight
     for phrase, weight in SEARCH_DISCOURAGED_PHRASES.items():
@@ -279,7 +370,7 @@ def score_entry(
         norm_meta = entry.normalized_metadata
         for phrase in SEARCH_CURATION_EXTRA_PHRASES:
             if phrase not in query.normalized_query and phrase in norm_meta:
-                discouraged_penalty += 0.65
+                discouraged_penalty += _CURATION_PHRASE_PENALTY
 
     raw_title = str(entry.item.get("title") or "")
     if _JP_COVER_BRACKET_RE.search(raw_title):
@@ -288,14 +379,14 @@ def score_entry(
             for tok in ("guitar", "piano", "violin", "bass", "acoustic", "cover", "fingerstyle", "ukulele")
         )
         if not query_asks_cover:
-            discouraged_penalty += 0.75
+            discouraged_penalty += _JP_COVER_PENALTY
 
-    if 90 <= entry.duration <= 600:
-        duration_bonus = 0.10
-    elif 60 <= entry.duration <= 660:
-        duration_bonus = 0.05
-    elif entry.duration > 900:
-        duration_bonus = -0.12
+    if _DUR_IDEAL_MIN <= entry.duration <= _DUR_IDEAL_MAX:
+        duration_bonus = _DURATION_BONUS_IDEAL
+    elif _DUR_OK_MIN <= entry.duration <= _DUR_OK_MAX:
+        duration_bonus = _DURATION_BONUS_OK
+    elif entry.duration > _DUR_LONG:
+        duration_bonus = _DURATION_PENALTY_LONG
     else:
         duration_bonus = 0.0
 
@@ -303,52 +394,52 @@ def score_entry(
 
     vc = entry.view_count
     _is_topic = "topic" in entry.uploader_token_set
-    if vc >= 1000:
-        view_bonus = min(0.35, (math.log10(vc) - 3.0) / 6.0 * 0.35)
+    if vc >= _VIEW_MIN:
+        view_bonus = min(_VIEW_BONUS_MAX, (math.log10(vc) - _VIEW_BONUS_LOG_REF) / _VIEW_BONUS_LOG_RNG * _VIEW_BONUS_MAX)
     elif _is_topic:
-        view_bonus = 0.05
+        view_bonus = _VIEW_BONUS_TOPIC
     else:
         view_bonus = 0.0
 
-    verified_bonus = 0.15 if entry.channel_is_verified else 0.0
+    verified_bonus = _VERIFIED_BONUS if entry.channel_is_verified else 0.0
 
     recency_bonus = 0.0
     ud = entry.upload_date
-    if len(ud) == 8 and ud.isdigit() and discouraged_penalty < 0.50:
+    if len(ud) == 8 and ud.isdigit() and discouraged_penalty < _THR_PENALTY_GATE:
         try:
             uploaded = _date(int(ud[:4]), int(ud[4:6]), int(ud[6:8]))
             days_old = ((_today or _date.today()) - uploaded).days
-            if days_old <= 180:
-                recency_bonus = 0.20
-            elif days_old <= 365:
-                recency_bonus = 0.12
-            elif days_old <= 730:
-                recency_bonus = 0.06
+            if days_old <= _RECENCY_DAYS_NEW:
+                recency_bonus = _RECENCY_BONUS_NEW
+            elif days_old <= _RECENCY_DAYS_RECENT:
+                recency_bonus = _RECENCY_BONUS_RECENT
+            elif days_old <= _RECENCY_DAYS_OLDER:
+                recency_bonus = _RECENCY_BONUS_OLDER
         except ValueError:
             pass
 
     jp_original_bonus = 0.0
     title_core = _BRACKET_STRIP_RE.sub("", raw_title).strip()
-    if discouraged_penalty < 0.50 and _CJK_RE.search(title_core):
+    if discouraged_penalty < _THR_PENALTY_GATE and _CJK_RE.search(title_core):
         latin_chars  = len(re.findall(r"[a-zA-Z]", title_core))
         total_chars  = len(title_core.replace(" ", ""))
         hangul_count = len(_HANGUL_RE.findall(title_core))
         cjk_count    = len(re.findall(r'[\u3040-\u30ff\u4e00-\u9fff]', title_core))
         latin_ratio  = latin_chars / total_chars if total_chars else 1.0
-        is_jp = latin_ratio < 0.35 and (hangul_count == 0 or cjk_count > hangul_count * 1.5)
+        is_jp = latin_ratio < _THR_JP_LATIN_RATIO and (hangul_count == 0 or cjk_count > hangul_count * _THR_JP_CJK_HANGUL)
         if is_jp:
-            jp_original_bonus = 0.55
+            jp_original_bonus = _JP_ORIGINAL_BONUS
 
     final = (
-          (ratio          * 0.32)
-        + (metadata_ratio * 0.20)
-        + (title_overlap  * 0.44)
-        + (uploader_overlap * 0.50)
-        + (metadata_overlap * 0.36)
-        + (exact_metadata_match     * 0.18)
-        + (metadata_prefix_match    * 0.10)
-        + (all_title_tokens_match   * 0.16)
-        + (all_metadata_tokens_match * 0.24)
+          (ratio               * _W_FUZZY_RATIO)
+        + (metadata_ratio      * _W_METADATA_RATIO)
+        + (title_overlap       * _W_TITLE_OVERLAP)
+        + (uploader_overlap    * _W_UPLOADER_OVERLAP)
+        + (metadata_overlap    * _W_METADATA_OVERLAP)
+        + (exact_metadata_match      * _W_EXACT_METADATA)
+        + (metadata_prefix_match     * _W_PREFIX_MATCH)
+        + (all_title_tokens_match    * _W_ALL_TITLE_TOKENS)
+        + (all_metadata_tokens_match * _W_ALL_METADATA_TOKENS)
         + artist_match_bonus
         + strong_uploader_bonus
         + topic_bonus
