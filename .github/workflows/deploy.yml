@@ -50,11 +50,21 @@ jobs:
           script: |
             set -e
             cd ~/musicbot
+          
             git fetch origin main
+          
+            # Clean Git index only - NEVER delete live data/
+            git rm -r --cached data/ 2>/dev/null || true
+          
             git reset --hard origin/main
+          
             pip install -r requirements.txt --break-system-packages -q
+          
             sudo systemctl stop musicbot
             sudo systemctl daemon-reload
             sudo systemctl start musicbot
+          
             sleep 3
             systemctl is-active --quiet musicbot || { journalctl -u musicbot -n 20 --no-pager; exit 1; }
+          
+            echo "Deployed successfully (data preserved)"
