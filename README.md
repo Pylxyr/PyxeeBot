@@ -31,7 +31,7 @@ The search engine doesn't just take the top YouTube result. It runs every candid
 
 ### Playback
 
-Streams audio from YouTube URLs, playlists, or plain search queries. Supports vote-skip, force-skip, loop modes (off / single track / full queue), previous track, pause/resume, and idle/empty-channel auto-disconnect. The queue survives a bot restart via SQLite snapshot persistence.
+Streams audio from YouTube URLs, playlists, or plain search queries. Supports vote-skip, force-skip, loop modes (off / single track / full queue), previous track, pause/resume, and idle/empty-channel auto-disconnect. The queue survives a bot restart via SQLite snapshot persistence — `!clear` and `!leave` both flush the snapshot immediately so the queue does not reappear after a restart. Set `RESTORE_QUEUE_ON_RESTART=false` to disable restoration entirely.
 
 A live now-playing panel shows a real-time progress bar and inline controls — skip, pause, loop, queue — without leaving the channel. The panel auto-refreshes on queue mutations and skips redundant HTTP edits when nothing visible has changed.
 
@@ -135,16 +135,31 @@ Create `/etc/systemd/system/musicbot.service`:
 
 ```ini
 [Unit]
-Description=PyxeeBot Discord Music Bot
+Description=Discord MusicBot
 After=network.target
+StartLimitIntervalSec=120
+StartLimitBurst=5
 
 [Service]
 Type=simple
 User=ubuntu
 WorkingDirectory=/home/ubuntu/musicbot
+Environment="PATH=/home/ubuntu/musicbot/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin"
+Environment="PYTHONMALLOC=malloc"
+Environment="MALLOC_TRIM_THRESHOLD_=65536"
+EnvironmentFile=/home/ubuntu/musicbot/.env
 ExecStart=/home/ubuntu/musicbot/.venv/bin/python bot.py
+Nice=-10
 Restart=on-failure
 RestartSec=5
+TimeoutStopSec=30
+SyslogIdentifier=musicbot
+MemoryHigh=600M
+MemoryMax=700M
+OOMScoreAdjust=-500
+LimitNOFILE=65536
+StandardOutput=journal
+StandardError=journal
 
 [Install]
 WantedBy=multi-user.target
@@ -181,6 +196,8 @@ All settings are read from `.env`. Every value has a default.
 | `YTDLP_RESOLVE_CACHE_SIZE` | `128` | Stream URL cache size |
 | `YTDLP_RESOLVE_CACHE_TTL_SECONDS` | `1800` | Stream URL cache TTL |
 | `YTDLP_EXTRACT_TIMEOUT_SECONDS` | `45` | Abort yt-dlp after this long |
+| `RESTORE_QUEUE_ON_RESTART` | `true` | Restore queue from DB snapshot on startup |
+| `YTDLP_CONCURRENT_EXTRACTS` | `1` | Max simultaneous yt-dlp extractions — keep at `1` on single-core hosts |
 | `OPUS_BITRATE_KBPS` | `96` | Opus encoding bitrate |
 | `NP_AUTO_REFRESH` | `false` | Auto-refresh NP embed on a timer |
 | `NP_AUTO_REFRESH_INTERVAL` | `30` | Seconds between auto-refresh edits |
