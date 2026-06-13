@@ -205,6 +205,7 @@ def score_entry(
     *,
     breakdown: dict[str, float] | None = None,
     curation_mode: bool = False,
+    _today: _date | None = None,
 ) -> float:
     if not query.normalized_query or not entry.normalized_metadata:
         return 0.0
@@ -316,7 +317,7 @@ def score_entry(
     if len(ud) == 8 and ud.isdigit() and discouraged_penalty < 0.50:
         try:
             uploaded = _date(int(ud[:4]), int(ud[4:6]), int(ud[6:8]))
-            days_old = (_date.today() - uploaded).days
+            days_old = ((_today or _date.today()) - uploaded).days
             if days_old <= 180:
                 recency_bonus = 0.20
             elif days_old <= 365:
@@ -402,9 +403,10 @@ def rank_entries(
 
     scored: list[tuple[float, int, dict[str, Any], SearchEntryContext, dict[str, float] | None]] = []
     need_debug = guild_id is not None
+    today = _date.today()
     for orig_i, item, ectx in prepared:
         bd: dict[str, float] | None = {} if need_debug else None
-        sc = score_entry(ctx, ectx, breakdown=bd, curation_mode=curation_mode)
+        sc = score_entry(ctx, ectx, breakdown=bd, curation_mode=curation_mode, _today=today)
         scored.append((sc, orig_i, item, ectx, bd))
     scored.sort(key=lambda t: (t[0], -t[1]), reverse=True)
 
