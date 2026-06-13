@@ -223,7 +223,7 @@ class MusicCog(ExtractionMixin, ResolverMixin, NPanelMixin, commands.Cog):
     async def _write_snapshot(
         self, guild_id: int, *, entries: list[dict[str, Any]] | None = None
     ) -> None:
-        if not self.bot.database.is_open or getattr(self.bot, "_shutting_down", False):
+        if not self.bot.database.is_open:
             return
         snapshot = self._snapshot_entries(guild_id) if entries is None else entries
         await self.bot.database.save_queue_snapshot(guild_id, snapshot)
@@ -932,7 +932,7 @@ class MusicCog(ExtractionMixin, ResolverMixin, NPanelMixin, commands.Cog):
             return
         self._remember_channel(player, context.channel)
         player.replace_queue([])
-        self._persist_snapshot(context.guild.id)
+        await self._flush_snapshot(context.guild.id, entries=[])
         await context.send("Cleared the queue.")
         await self._refresh_now_playing_message(context.guild.id)
 

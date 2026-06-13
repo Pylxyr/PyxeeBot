@@ -7,14 +7,14 @@ import discord
 FFMPEG_BEFORE_OPTIONS = (
     "-nostdin "
     "-threads 1 "
+    "-thread_queue_size 512 "
     "-reconnect 1 "
     "-reconnect_streamed 1 "
     "-reconnect_delay_max 5 "
     "-reconnect_on_network_error 1 "
     "-reconnect_on_http_error 429,500,502,503,504 "
     "-probesize 2M "
-    "-analyzeduration 0 "
-    "-fflags +nobuffer"
+    "-analyzeduration 0"
 )
 FFMPEG_OPTIONS = (
     "-vn -ar 48000 -ac 2 "
