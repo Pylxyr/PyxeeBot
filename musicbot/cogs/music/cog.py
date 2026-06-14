@@ -406,7 +406,6 @@ class MusicCog(ExtractionMixin, ResolverMixin, NPanelMixin, commands.Cog):
 
     @commands.Cog.listener()
     async def on_musicbot_queue_updated(self, guild: discord.Guild) -> None:
-        player = self.players.get(guild.id)
         self._persist_snapshot(guild.id)
         self._kick_pipeline(guild.id)
         self._schedule_np_refresh(guild.id)
