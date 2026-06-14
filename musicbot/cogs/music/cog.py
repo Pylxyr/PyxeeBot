@@ -23,7 +23,7 @@ from musicbot.cogs.music._panel import NPanelMixin
 from musicbot.cogs.music._resolver import ResolverMixin
 from musicbot.cogs.music.constants import (
     EMBED_COLOUR, LOOP_CYCLE, LOOP_ICONS, LOOP_LABELS,
-    NOW_PLAYING_TIMEOUT_SECONDS, PRESENCE_DEBOUNCE_SECONDS, SNAPSHOT_DEBOUNCE_SECONDS,
+    NOW_PLAYING_TIMEOUT_SECONDS, SNAPSHOT_DEBOUNCE_SECONDS,
 )
 from musicbot.cogs.music.models import (
     NowPlayingController, ResolvedTrackData, SearchDebugRecord, Track,
@@ -63,9 +63,6 @@ class MusicCog(ExtractionMixin, ResolverMixin, NPanelMixin, commands.Cog):
         self._np_refresh_deadlines: dict[int, float] = {}
         self._np_refresh_tasks:    dict[int, asyncio.Task[None]] = {}
 
-        self._presence_task:     asyncio.Task[None] | None = None
-        self._presence_deadline: float = 0.0
-
         self._guild_extract_semaphores: dict[int, asyncio.Semaphore] = {}
         self.extract_semaphore = asyncio.Semaphore(self.bot.settings.ytdlp_concurrent_extracts)
 
@@ -83,8 +80,6 @@ class MusicCog(ExtractionMixin, ResolverMixin, NPanelMixin, commands.Cog):
         for task_dict in (self._pipeline_tasks, self._snapshot_tasks, self._np_refresh_tasks):
             for task in task_dict.values():
                 task.cancel()
-        if self._presence_task and not self._presence_task.done():
-            self._presence_task.cancel()
         if self._http_session and not self._http_session.closed:
             asyncio.create_task(self._http_session.close())
         self._ytdl_executor.shutdown(wait=False)
@@ -227,46 +222,6 @@ class MusicCog(ExtractionMixin, ResolverMixin, NPanelMixin, commands.Cog):
             return
         snapshot = self._snapshot_entries(guild_id) if entries is None else entries
         await self.bot.database.save_queue_snapshot(guild_id, snapshot)
-
-    # ── Bot presence ────────────────────────────────────────────────────────
-
-    async def _update_bot_presence(self) -> None:
-        self._presence_deadline = time.monotonic() + PRESENCE_DEBOUNCE_SECONDS
-        if self._presence_task and not self._presence_task.done():
-            return
-        self._presence_task = self._bg_task(self._presence_loop(), name="presence-update")
-
-    async def _presence_loop(self) -> None:
-        try:
-            while True:
-                remaining = self._presence_deadline - time.monotonic()
-                if remaining > 0:
-                    await asyncio.sleep(remaining)
-                    continue
-                active = [
-                    p for p in self.players.values()
-                    if p.current and p.voice_client and p.voice_client.is_playing()
-                ]
-                with contextlib.suppress(Exception):
-                    if not active:
-                        await self.bot.change_presence(activity=discord.Activity(
-                            type=discord.ActivityType.watching,
-                            name="pylxyr.github.io/PyxeeBot-Page/",
-                        ))
-                    elif len(active) == 1:
-                        await self.bot.change_presence(activity=discord.Activity(
-                            type=discord.ActivityType.listening,
-                            name=active[0].current.title[:128],
-                        ))
-                    else:
-                        await self.bot.change_presence(activity=discord.Activity(
-                            type=discord.ActivityType.listening,
-                            name=f"music in {len(active)} servers",
-                        ))
-                if self._presence_deadline <= time.monotonic():
-                    break
-        except asyncio.CancelledError:
-            return
 
     # ── Permission helpers ──────────────────────────────────────────────────
 
@@ -445,7 +400,6 @@ class MusicCog(ExtractionMixin, ResolverMixin, NPanelMixin, commands.Cog):
         player = self.players.get(guild.id)
         if player is None or player.current is None:
             return
-        await self._update_bot_presence()
         await self._send_now_playing_panel(
             guild, player, replace_existing=True, status_text="Track changed."
         )
@@ -453,8 +407,6 @@ class MusicCog(ExtractionMixin, ResolverMixin, NPanelMixin, commands.Cog):
     @commands.Cog.listener()
     async def on_musicbot_queue_updated(self, guild: discord.Guild) -> None:
         player = self.players.get(guild.id)
-        if player and not player.current and not player.queue:
-            await self._update_bot_presence()
         self._persist_snapshot(guild.id)
         self._kick_pipeline(guild.id)
         self._schedule_np_refresh(guild.id)
@@ -483,7 +435,6 @@ class MusicCog(ExtractionMixin, ResolverMixin, NPanelMixin, commands.Cog):
             if before.channel is not None and after.channel is None:
                 await self._cleanup_guild(member.guild.id)
                 await self._refresh_now_playing_message(member.guild.id)
-                await self._update_bot_presence()
             elif after.channel is not None and after.channel != before.channel:
                 player.voice_client = member.guild.voice_client  # type: ignore[assignment]
                 await player.refresh_empty_channel_state()
