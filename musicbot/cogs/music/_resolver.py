@@ -10,6 +10,8 @@ import itertools
 import time
 from typing import Any
 
+from discord.ext import commands
+
 from musicbot.cogs.music._context import _CURRENT_GUILD_ID
 from musicbot.cogs.music.constants import (
     SNAPSHOT_DEBOUNCE_SECONDS,
