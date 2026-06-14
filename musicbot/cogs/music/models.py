@@ -5,7 +5,6 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
-# Precompiled pattern for escape_markdown — avoids repeated re.compile calls.
 _MD_ESCAPE_RE = re.compile(r"([\\*_`|~<>{}[\]()+#\-!])")
 
 

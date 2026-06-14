@@ -63,7 +63,7 @@ async def test_enqueue_front_places_track_first():
 
 
 @pytest.mark.asyncio
-async def test_enqueue_at_capacity_evicts_last_when_appending():
+async def test_enqueue_at_capacity_evicts_oldest_when_appending():
     p  = _player(max_queue_size=2)
     t1 = make_track(title="A", duration=10)
     t2 = make_track(title="B", duration=20)

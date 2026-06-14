@@ -45,6 +45,8 @@ SEARCH_SELECTION_LIMIT             = 10
 SEARCH_SELECTION_TIMEOUT_SECONDS   = 120
 VOICE_RECONNECT_ATTEMPTS           = 2
 NP_REFRESH_DEBOUNCE_SECONDS        = 0.8
+_SEARCH_RESULT_COUNT_LONG          = 8   # floor for ≥4 signal tokens
+_SEARCH_RESULT_COUNT_MED           = 6   # floor for ≥3 signal tokens
 
 LOOP_CYCLE: dict[str, str]  = {"off": "one", "one": "all", "all": "off"}
 LOOP_LABELS: dict[str, str] = {"off": "Off", "one": "Single track", "all": "Entire queue"}

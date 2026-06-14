@@ -11,7 +11,7 @@ import contextlib
 import re
 import threading
 import time
-from typing import Any, TYPE_CHECKING
+from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 import aiohttp
@@ -24,13 +24,12 @@ from musicbot.cogs.music.constants import (
     FFMPEG_BEFORE_OPTIONS,
     FFMPEG_OPTIONS,
     SEARCH_SELECTION_LIMIT,
+    _SEARCH_RESULT_COUNT_LONG,
+    _SEARCH_RESULT_COUNT_MED,
     YTDL_OPTIONS,
 )
 from musicbot.cogs.music.models import Track
 from musicbot.cogs.music.scoring import rank_entries, signal_tokens
-
-if TYPE_CHECKING:
-    pass   # nothing needed at type-check time; callers annotate via MusicCog
 
 
 class ExtractionMixin:
@@ -376,9 +375,9 @@ class ExtractionMixin:
         base   = max(self.bot.settings.ytdlp_search_results, SEARCH_SELECTION_LIMIT)  # type: ignore[attr-defined]
         tokens = signal_tokens(query)
         if len(tokens) >= 4:
-            return max(base, 8)
+            return max(base, _SEARCH_RESULT_COUNT_LONG)
         if len(tokens) >= 3:
-            return max(base, 6)
+            return max(base, _SEARCH_RESULT_COUNT_MED)
         return base
 
     def _search_text(self, query: str) -> str:

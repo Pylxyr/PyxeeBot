@@ -344,16 +344,14 @@ class GuildPlayer:
 
                     source = await self.audio_source_factory(self.current)
                     finished = asyncio.Event()
+                    _loop = asyncio.get_running_loop()
 
                     def after_playback(error: Exception | None) -> None:
                         if error:
-                            self.bot.loop.call_soon_threadsafe(
-                                self.bot.dispatch,
-                                "musicbot_playback_error",
-                                self.guild,
-                                error,
+                            _loop.call_soon_threadsafe(
+                                self.bot.dispatch, "musicbot_playback_error", self.guild, error,
                             )
-                        self.bot.loop.call_soon_threadsafe(finished.set)
+                        _loop.call_soon_threadsafe(finished.set)
 
                     if not self.voice_client or not self.voice_client.is_connected():
                         reconnected = await self._try_reconnect()

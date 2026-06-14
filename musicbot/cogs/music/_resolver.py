@@ -8,9 +8,7 @@ import asyncio
 import contextlib
 import itertools
 import time
-from typing import Any, TYPE_CHECKING
-
-from discord.ext import commands
+from typing import Any
 
 from musicbot.cogs.music._context import _CURRENT_GUILD_ID
 from musicbot.cogs.music.constants import (
@@ -18,9 +16,6 @@ from musicbot.cogs.music.constants import (
     STREAM_URL_REFRESH_AGE_SECONDS,
 )
 from musicbot.cogs.music.models import ResolvedTrackData, Track
-
-if TYPE_CHECKING:
-    pass
 
 
 class ResolverMixin:
@@ -125,6 +120,8 @@ class ResolverMixin:
         try:
             return await asyncio.shield(pending)
         except (asyncio.CancelledError, Exception):
+            # CancelledError is BaseException in 3.8+; catch it so caller
+            # cancellation doesn't destroy the shared pending resolve task.
             return None
 
     async def _resolve_track(self, track: Track) -> Track | None:
@@ -183,7 +180,7 @@ class ResolverMixin:
                         await self._resolve_track(track)
                         resolved_count += 1
                         await asyncio.sleep(0)   # yield between resolves
-                    except (commands.BadArgument, Exception) as exc:
+                    except Exception as exc:
                         self.logger.debug(  # type: ignore[attr-defined]
                             "Pipeline resolve failed for %s (%s): %s",
                             track.webpage_url or track.title,

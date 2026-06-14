@@ -236,8 +236,12 @@ def test_rank_topic_channel_preferred():
         _item("Levitating", "SomeVEVO"),
         _item("Levitating", "Dua Lipa - Topic"),
     ]
-    assert _rank("dua lipa levitating", items)[0] == "Levitating"
-    assert items[_rank("dua lipa levitating", items).index("Levitating")]["channel"] or True
+    ranked = rank_entries(
+        "dua lipa levitating", items,
+        guild_id=None, last_search=OrderedDict(), last_search_max=50,
+        playlist_entry_url=lambda i: i.get("webpage_url", ""),
+    )
+    assert ranked[0]["uploader"] == "Dua Lipa - Topic"
 
 
 def test_rank_stores_debug_record_when_guild_id_given():

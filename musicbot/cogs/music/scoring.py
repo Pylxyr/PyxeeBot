@@ -529,6 +529,7 @@ def rank_entries(
                 jp_original_bonus=       round(bd.get("jp_original_bonus", 0.0), 3),
                 view_bonus=              round(bd.get("view_bonus", 0.0), 3),
                 verified_bonus=          round(bd.get("verified_bonus", 0.0), 3),
+                recency_bonus=           round(bd.get("recency_bonus", 0.0), 3),
             ))
         if records:
             records[0].selected = True
