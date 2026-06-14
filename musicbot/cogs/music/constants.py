@@ -13,7 +13,7 @@ FFMPEG_BEFORE_OPTIONS = (
     "-reconnect_delay_max 5 "
     "-reconnect_on_network_error 1 "
     "-reconnect_on_http_error 429,500,502,503,504 "
-    "-probesize 2M "
+    "-probesize 128k "
     "-analyzeduration 0"
 )
 FFMPEG_OPTIONS = (
@@ -64,6 +64,7 @@ SEARCH_ANIME_SIGNAL_TOKENS: frozenset[str] = frozenset({
 SEARCH_DISCOURAGED_TOKENS: dict[str, float] = {
     "amv": 0.60, "cast": 0.70, "cover": 0.60, "edit": 0.15,
     "instrumental": 0.60, "karaoke": 0.70, "nightcore": 0.70,
+    "reaction": 0.65, "reacts": 0.65,
     "remix": 0.45, "reverb": 0.22, "seiyuu": 0.70, "slowed": 0.45,
     "live": 0.50, "stage": 0.45, "concert": 0.50,
     "guitar": 0.50, "piano": 0.50, "violin": 0.45,
@@ -132,6 +133,7 @@ _JP_EVENT_FROM_RE = re.compile(r'[\(（]from\s', re.IGNORECASE)
 # reconstructing the sets on every function call.
 SEARCH_CURATION_EXTRA_TOKENS: frozenset[str] = frozenset({
     "live", "concert", "stage", "festival", "session", "acoustic",
+    "reaction", "reacts",
 })
 SEARCH_CURATION_EXTRA_PHRASES: frozenset[str] = frozenset({
     "at the", "in concert", "tour", "unplugged",

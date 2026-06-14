@@ -70,6 +70,7 @@ class ResolverMixin:
         track.duration    = data.duration
         track.query       = data.query
         track.resolved_at = data.resolved_at
+        track.acodec      = data.acodec
         if data.thumbnail_url:
             track.thumbnail_url = data.thumbnail_url
         if data.tags:
@@ -103,6 +104,7 @@ class ResolverMixin:
                     resolved_at=resolved.resolved_at or time.monotonic(),
                     thumbnail_url=resolved.thumbnail_url,
                     tags=resolved.tags,
+                    acodec=resolved.acodec,
                 )
                 self._store_cached_track_data(data)
                 return data

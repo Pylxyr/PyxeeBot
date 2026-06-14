@@ -129,6 +129,16 @@ class ExtractionMixin:
     # ── FFmpeg audio-source construction ───────────────────────────────────
 
     async def _build_audio_source(self, track: Track) -> discord.AudioSource:
+        # yt-dlp reports acodec="opus" for WebM/Opus streams (the common YouTube
+        # high-quality format).  Skip ffprobe entirely and use direct passthrough —
+        # saves one subprocess invocation and avoids re-encoding on 1 OCPU.
+        if track.acodec == "opus":
+            return discord.FFmpegOpusAudio(
+                track.stream_url,
+                codec="copy",
+                before_options=FFMPEG_BEFORE_OPTIONS,
+                options=FFMPEG_OPTIONS,
+            )
         try:
             source: discord.AudioSource = await discord.FFmpegOpusAudio.from_probe(
                 track.stream_url,
@@ -328,6 +338,7 @@ class ExtractionMixin:
             thumbnail_url=self._item_thumbnail_url(item),
             resolved_at=time.monotonic(),
             tags=list(item.get("tags") or []) + list(item.get("categories") or []),
+            acodec=item.get("acodec") or "",
         )
 
     async def _extract_full_tracks(

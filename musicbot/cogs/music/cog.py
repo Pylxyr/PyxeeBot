@@ -49,7 +49,7 @@ class MusicCog(ExtractionMixin, ResolverMixin, NPanelMixin, commands.Cog):
         self._ytdl_base_options: dict[str, Any] | None = None
         self._ytdl_variants: dict[tuple[bool, bool], dict[str, Any]] | None = None
 
-        self._ytdl_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="ytdlp")
+        self._ytdl_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="ytdlp")
         self._ytdl_tlocal: threading.local = threading.local()
 
         self._http_session: aiohttp.ClientSession | None = None

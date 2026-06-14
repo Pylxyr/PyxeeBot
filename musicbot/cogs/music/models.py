@@ -26,6 +26,7 @@ class Track:
     thumbnail_url: str       = ""
     resolved_at:   float     = 0.0
     tags:          list[str] = field(default_factory=list)
+    acodec:        str       = ""   # e.g. "opus", "aac" — set by yt-dlp on full extract
 
     _escaped_title:    str | None = field(default=None, init=False, repr=False, compare=False)
     _escaped_uploader: str | None = field(default=None, init=False, repr=False, compare=False)
@@ -62,6 +63,7 @@ class ResolvedTrackData:
     resolved_at:   float
     thumbnail_url: str       = ""
     tags:          list[str] = field(default_factory=list)
+    acodec:        str       = ""
 
 
 @dataclass(slots=True)
