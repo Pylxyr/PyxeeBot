@@ -47,7 +47,6 @@ SEARCH_SELECTION_LIMIT             = 10
 SEARCH_SELECTION_TIMEOUT_SECONDS   = 120
 VOICE_RECONNECT_ATTEMPTS           = 2
 NP_REFRESH_DEBOUNCE_SECONDS        = 0.8
-PRESENCE_DEBOUNCE_SECONDS          = 5.0
 
 LOOP_CYCLE: dict[str, str]  = {"off": "one", "one": "all", "all": "off"}
 LOOP_LABELS: dict[str, str] = {"off": "Off", "one": "Single track", "all": "Entire queue"}
@@ -123,6 +122,10 @@ _JP_COVER_BRACKET_RE = re.compile(
 _BRACKET_STRIP_RE = re.compile(r'[\(\[（【][^\)\]）】]*[\)\]）】]')
 _CJK_RE    = re.compile(r'[\u3040-\u30ff\u4e00-\u9fff]')
 _HANGUL_RE = re.compile(r'[\uAC00-\uD7AF\u3130-\u318F]')
+# Matches "(from <event>)" / "（from <event>）" in raw titles — indicates the
+# video is sourced from a concert, cafe-event, or other live context rather
+# than being a standalone original release.
+_JP_EVENT_FROM_RE = re.compile(r'[\(（]from\s', re.IGNORECASE)
 
 # Extra discouraged tokens/phrases applied only in curation mode.
 # Keeping these here (rather than inlining them in score_entry) avoids

@@ -17,6 +17,7 @@ from musicbot.cogs.music.constants import (
     _DASH_SEPARATED_RE,
     _HANGUL_RE,
     _JP_COVER_BRACKET_RE,
+    _JP_EVENT_FROM_RE,
     SEARCH_ANIME_SIGNAL_TOKENS,
     SEARCH_CURATION_EXTRA_PHRASES,
     SEARCH_CURATION_EXTRA_TOKENS,
@@ -427,7 +428,7 @@ def score_entry(
         cjk_count    = len(re.findall(r'[\u3040-\u30ff\u4e00-\u9fff]', title_core))
         latin_ratio  = latin_chars / total_chars if total_chars else 1.0
         is_jp = latin_ratio < _THR_JP_LATIN_RATIO and (hangul_count == 0 or cjk_count > hangul_count * _THR_JP_CJK_HANGUL)
-        if is_jp:
+        if is_jp and not _JP_EVENT_FROM_RE.search(raw_title):
             jp_original_bonus = _JP_ORIGINAL_BONUS
 
     final = (
