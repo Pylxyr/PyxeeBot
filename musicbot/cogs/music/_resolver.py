@@ -16,7 +16,6 @@ from musicbot.cogs.music._context import _CURRENT_GUILD_ID
 from musicbot.cogs.music.constants import (
     SNAPSHOT_DEBOUNCE_SECONDS,
     STREAM_URL_REFRESH_AGE_SECONDS,
-    URL_PIPELINE_DEPTH,
 )
 from musicbot.cogs.music.models import ResolvedTrackData, Track
 
@@ -157,7 +156,7 @@ class ResolverMixin:
         )
 
     async def _url_pipeline(self, guild_id: int) -> None:
-        """Sequentially pre-resolve the top URL_PIPELINE_DEPTH unresolved tracks.
+        """Sequentially pre-resolve the top ytdlp_prefetch_count unresolved tracks.
 
         Runs to completion then exits — _kick_pipeline reschedules on demand.
         Skips tracks whose stream URL is still fresh.
@@ -169,10 +168,9 @@ class ResolverMixin:
             token = _CURRENT_GUILD_ID.set(guild_id)
             try:
                 resolved_count = 0
-                # Snapshot the queue before iterating — the player loop can
-                # popleft() the deque concurrently.
-                for track in list(itertools.islice(player.queue, URL_PIPELINE_DEPTH)):
-                    if resolved_count >= URL_PIPELINE_DEPTH:
+                prefetch_depth = self.bot.settings.ytdlp_prefetch_count  # type: ignore[attr-defined]
+                for track in list(itertools.islice(player.queue, prefetch_depth)):
+                    if resolved_count >= prefetch_depth:
                         break
                     if track.stream_url:
                         age = time.monotonic() - track.resolved_at

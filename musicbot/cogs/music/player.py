@@ -12,7 +12,6 @@ import discord
 
 from musicbot.cogs.music.constants import (
     LOOP_CYCLE,
-    NEAR_END_SAFETY_SECONDS,
     STREAM_URL_REFRESH_AGE_SECONDS,
     VOICE_RECONNECT_ATTEMPTS,
 )
@@ -377,12 +376,12 @@ class GuildPlayer:
 
                     # Safety-net only: the URL pipeline (in cog.py) keeps the
                     # top-3 queue positions warm eagerly. This task is a last
-                    # resort — it fires NEAR_END_SAFETY_SECONDS before the end
+                    # resort — it fires near_end_prefetch_seconds before the end
                     # and force-refreshes position 0 only if its URL is stale.
-                    if self.current.duration > NEAR_END_SAFETY_SECONDS and (self.queue or self.loop_mode != "off"):
+                    if self.current.duration > self.bot.settings.near_end_prefetch_seconds and (self.queue or self.loop_mode != "off"):
                         self.near_end_task = asyncio.create_task(
                             self._trigger_near_end_preload(
-                                max(self.current.duration - NEAR_END_SAFETY_SECONDS, 0)
+                                max(self.current.duration - self.bot.settings.near_end_prefetch_seconds, 0)
                             )
                         )
                     if self.bot.settings.np_auto_refresh:
