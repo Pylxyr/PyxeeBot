@@ -2,6 +2,7 @@
 
 Mixed into MusicCog.  Depends on ExtractionMixin methods being available on self.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -49,24 +50,22 @@ class ResolverMixin:
         return data
 
     def _store_cached_track_data(self, data: ResolvedTrackData) -> None:
-        key        = self._cache_key_for_data(data)
+        key = self._cache_key_for_data(data)
         expires_at = time.monotonic() + self.bot.settings.ytdlp_resolve_cache_ttl_seconds  # type: ignore[attr-defined]
         self.resolve_cache[key] = (expires_at, data)  # type: ignore[attr-defined]
         self.resolve_cache.move_to_end(key)  # type: ignore[attr-defined]
         while len(self.resolve_cache) > self.bot.settings.ytdlp_resolve_cache_size:  # type: ignore[attr-defined]
             self.resolve_cache.popitem(last=False)  # type: ignore[attr-defined]
 
-    def _apply_resolved_track_data(
-        self, track: Track, data: ResolvedTrackData
-    ) -> Track:
-        track.title       = data.title
+    def _apply_resolved_track_data(self, track: Track, data: ResolvedTrackData) -> Track:
+        track.title = data.title
         track.webpage_url = data.webpage_url
-        track.stream_url  = data.stream_url
-        track.uploader    = data.uploader
-        track.duration    = data.duration
-        track.query       = data.query
+        track.stream_url = data.stream_url
+        track.uploader = data.uploader
+        track.duration = data.duration
+        track.query = data.query
         track.resolved_at = data.resolved_at
-        track.acodec      = data.acodec
+        track.acodec = data.acodec
         if data.thumbnail_url:
             track.thumbnail_url = data.thumbnail_url
         if data.tags:
@@ -77,12 +76,13 @@ class ResolverMixin:
 
     async def _resolve_track_data(self, track: Track) -> ResolvedTrackData | None:
         cache_key = self._cache_key(track)
-        cached    = self._get_cached_track_data(cache_key)
+        cached = self._get_cached_track_data(cache_key)
         if cached is not None:
             return cached
 
         pending = self.resolve_tasks.get(cache_key)  # type: ignore[attr-defined]
         if pending is None:
+
             async def runner() -> ResolvedTrackData | None:
                 tracks, _ = await self._extract_full_tracks(  # type: ignore[attr-defined]
                     track.webpage_url or track.query, track.requester_id
@@ -117,6 +117,7 @@ class ResolverMixin:
                         track.title,
                         t.exception(),
                     )
+
             pending.add_done_callback(_on_done)
 
         try:
@@ -134,9 +135,7 @@ class ResolverMixin:
             return None
         return self._apply_resolved_track_data(track, data)
 
-    async def _materialize_track(
-        self, query: str, requester_id: int
-    ) -> Track | None:
+    async def _materialize_track(self, query: str, requester_id: int) -> Track | None:
         tracks, _ = await self._extract_tracks(query, requester_id=requester_id)  # type: ignore[attr-defined]
         if not tracks:
             return None
@@ -176,12 +175,12 @@ class ResolverMixin:
                         if age < STREAM_URL_REFRESH_AGE_SECONDS:
                             resolved_count += 1
                             continue
-                        track.stream_url  = ""
+                        track.stream_url = ""
                         track.resolved_at = 0.0
                     try:
                         await self._resolve_track(track)
                         resolved_count += 1
-                        await asyncio.sleep(0)   # yield between resolves
+                        await asyncio.sleep(0)  # yield between resolves
                     except Exception as exc:
                         self.logger.debug(  # type: ignore[attr-defined]
                             "Pipeline resolve failed for %s (%s): %s",
@@ -206,7 +205,7 @@ class ResolverMixin:
             age = time.monotonic() - next_track.resolved_at
             if age < STREAM_URL_REFRESH_AGE_SECONDS:
                 return
-            next_track.stream_url  = ""
+            next_track.stream_url = ""
             next_track.resolved_at = 0.0
         try:
             token = _CURRENT_GUILD_ID.set(guild_id)

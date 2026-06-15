@@ -1,4 +1,5 @@
 """test_scoring.py — unit tests for musicbot.cogs.music.scoring."""
+
 from __future__ import annotations
 
 from collections import OrderedDict
@@ -22,8 +23,10 @@ from musicbot.cogs.music.scoring import (
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-def _item(title: str, uploader: str = "", duration: int = 210,
-          view_count: int = 500_000, channel: str = "") -> dict:
+
+def _item(
+    title: str, uploader: str = "", duration: int = 210, view_count: int = 500_000, channel: str = ""
+) -> dict:
     return {
         "title": title,
         "uploader": uploader or title,
@@ -36,7 +39,7 @@ def _item(title: str, uploader: str = "", duration: int = 210,
 
 def _score(query_text: str, item: dict, *, curation_mode: bool = False) -> float:
     entry = prepare_entry(item)
-    ctx   = build_query_context(query_text, [entry])
+    ctx = build_query_context(query_text, [entry])
     if ctx is None:
         return 0.0
     return score_entry(ctx, entry, curation_mode=curation_mode)
@@ -44,14 +47,18 @@ def _score(query_text: str, item: dict, *, curation_mode: bool = False) -> float
 
 def _rank(query_text: str, items: list[dict]) -> list[str]:
     ranked = rank_entries(
-        query_text, items, guild_id=None,
-        last_search=OrderedDict(), last_search_max=50,
+        query_text,
+        items,
+        guild_id=None,
+        last_search=OrderedDict(),
+        last_search_max=50,
         playlist_entry_url=lambda i: i.get("webpage_url", ""),
     )
     return [i["title"] for i in ranked]
 
 
 # ── normalize_text / tokenize_text ───────────────────────────────────────────
+
 
 def test_normalize_text_lowercases_and_strips_symbols():
     assert normalize_text("The Weeknd — Blinding Lights") == "the weeknd blinding lights"
@@ -73,6 +80,7 @@ def test_tokenize_text_strips_punctuation():
 
 # ── signal_tokens ─────────────────────────────────────────────────────────────
 
+
 def test_signal_tokens_removes_generic_words():
     tokens = signal_tokens("the weeknd official video")
     assert "official" not in tokens
@@ -86,6 +94,7 @@ def test_signal_tokens_fallback_when_all_generic():
 
 
 # ── detect_intent ─────────────────────────────────────────────────────────────
+
 
 def test_detect_intent_anime_keyword_ost():
     intent = detect_intent("attack on titan ost")
@@ -103,6 +112,7 @@ def test_detect_intent_single_word_no_artist():
 
 
 # ── token_overlap_ratio ───────────────────────────────────────────────────────
+
 
 def test_token_overlap_full_match():
     assert token_overlap_ratio(["a", "b"], {"a", "b", "c"}) == 1.0
@@ -127,22 +137,23 @@ def test_token_overlap_empty_candidate():
 
 # ── score_entry: live / cover penalties ──────────────────────────────────────
 
+
 def test_live_in_title_penalises():
     studio = _item("Blinding Lights", "The Weeknd")
-    live   = _item("Blinding Lights (Live at Glastonbury)", "The Weeknd")
+    live = _item("Blinding Lights (Live at Glastonbury)", "The Weeknd")
     s_studio = _score("the weeknd blinding lights", studio)
-    s_live   = _score("the weeknd blinding lights", live)
+    s_live = _score("the weeknd blinding lights", live)
     assert s_studio > s_live
 
 
 def test_cover_in_title_penalises():
     original = _item("As It Was", "Harry Styles")
-    cover    = _item("As It Was - Piano Cover", "SomePianist")
+    cover = _item("As It Was - Piano Cover", "SomePianist")
     assert _score("harry styles as it was", original) > _score("harry styles as it was", cover)
 
 
 def test_curation_mode_amplifies_live_penalty():
-    live   = _item("Song (Live at Festival)", "Artist")
+    live = _item("Song (Live at Festival)", "Artist")
     normal = _score("artist song", live, curation_mode=False)
     curate = _score("artist song", live, curation_mode=True)
     assert normal > curate
@@ -150,8 +161,9 @@ def test_curation_mode_amplifies_live_penalty():
 
 # ── score_entry: topic / label boosts ────────────────────────────────────────
 
+
 def test_topic_channel_boosts_score():
-    topic  = _item("Levitating", "Dua Lipa - Topic")
+    topic = _item("Levitating", "Dua Lipa - Topic")
     normal = _item("Levitating", "Dua Lipa")
     assert _score("dua lipa levitating", topic) > _score("dua lipa levitating", normal)
 
@@ -164,19 +176,24 @@ def test_uploader_pref_bonus_for_known_label():
 
 # ── score_entry: CJK / JP original bonus ────────────────────────────────────
 
+
 def test_jp_original_bonus_for_cjk_title():
     # The jp_original_bonus fires when the raw title is mostly CJK
     # but the uploader is ASCII (so normalized_metadata is non-empty).
     jp_item = {
         "title": "だから僕は音楽を辞めた MV",  # mostly CJK, "MV" keeps metadata non-empty
-        "channel": "Yorushika", "uploader": "Yorushika",
-        "duration": 240, "view_count": 1_000_000,
+        "channel": "Yorushika",
+        "uploader": "Yorushika",
+        "duration": 240,
+        "view_count": 1_000_000,
         "webpage_url": "https://youtube.com/watch?v=jp",
     }
     non_jp = {
         "title": "Dakara Boku wa Ongaku wo Yameta (AMV)",
-        "channel": "SomeFan", "uploader": "SomeFan",
-        "duration": 240, "view_count": 50_000,
+        "channel": "SomeFan",
+        "uploader": "SomeFan",
+        "duration": 240,
+        "view_count": 50_000,
         "webpage_url": "https://youtube.com/watch?v=nj",
     }
     query = "yorushika dakara boku wa ongaku wo yameta"
@@ -184,6 +201,7 @@ def test_jp_original_bonus_for_cjk_title():
 
 
 # ── score_anchor_match ────────────────────────────────────────────────────────
+
 
 def test_anchor_uploader_exact_match_gives_strong_bonus():
     entry = prepare_entry(_item("Blinding Lights", "The Weeknd"))
@@ -205,10 +223,11 @@ def test_anchor_title_only_partial_bonus():
 
 # ── rank_entries ──────────────────────────────────────────────────────────────
 
+
 def test_rank_studio_beats_live():
     items = [
         _item("Blinding Lights (Live at Coachella)", "The Weeknd"),
-        _item("Blinding Lights",                     "The Weeknd"),
+        _item("Blinding Lights", "The Weeknd"),
     ]
     ranked = _rank("the weeknd blinding lights", items)
     assert ranked[0] == "Blinding Lights"
@@ -217,7 +236,7 @@ def test_rank_studio_beats_live():
 def test_rank_original_beats_cover():
     items = [
         _item("Heat Waves - Guitar Cover", "GuitarGuy"),
-        _item("Heat Waves",                "Glass Animals"),
+        _item("Heat Waves", "Glass Animals"),
     ]
     assert _rank("glass animals heat waves", items)[0] == "Heat Waves"
 
@@ -237,8 +256,11 @@ def test_rank_topic_channel_preferred():
         _item("Levitating", "Dua Lipa - Topic"),
     ]
     ranked = rank_entries(
-        "dua lipa levitating", items,
-        guild_id=None, last_search=OrderedDict(), last_search_max=50,
+        "dua lipa levitating",
+        items,
+        guild_id=None,
+        last_search=OrderedDict(),
+        last_search_max=50,
         playlist_entry_url=lambda i: i.get("webpage_url", ""),
     )
     assert ranked[0]["uploader"] == "Dua Lipa - Topic"
@@ -246,7 +268,7 @@ def test_rank_topic_channel_preferred():
 
 def test_rank_stores_debug_record_when_guild_id_given():
     last_search = OrderedDict()
-    items       = [_item("Track A", "Artist"), _item("Track B", "Artist")]
+    items = [_item("Track A", "Artist"), _item("Track B", "Artist")]
     rank_entries(
         "artist track",
         items,
@@ -290,8 +312,10 @@ def test_rank_last_search_evicts_oldest_when_over_max():
 
 # ── Recency bonus ─────────────────────────────────────────────────────────────
 
+
 def test_recency_bonus_recent_upload_scores_higher():
     from datetime import date, timedelta
+
     recent = (date.today() - timedelta(days=60)).strftime("%Y%m%d")
     new_item = {**_item("Track", "Artist"), "upload_date": recent}
     old_item = _item("Track", "Artist")
@@ -300,15 +324,17 @@ def test_recency_bonus_recent_upload_scores_higher():
 
 def test_recency_bonus_absent_beyond_two_years():
     from datetime import date, timedelta
+
     old = (date.today() - timedelta(days=800)).strftime("%Y%m%d")
-    with_old     = {**_item("Track", "Artist"), "upload_date": old}
+    with_old = {**_item("Track", "Artist"), "upload_date": old}
     without_date = _item("Track", "Artist")
     assert abs(_score("artist track", with_old) - _score("artist track", without_date)) < 0.001
 
 
 def test_recency_bonus_suppressed_when_heavily_penalised():
     from datetime import date, timedelta
+
     recent = (date.today() - timedelta(days=30)).strftime("%Y%m%d")
-    live_new    = {**_item("Song Live at Festival", "Artist"), "upload_date": recent}
-    studio_old  = _item("Song", "Artist")
+    live_new = {**_item("Song Live at Festival", "Artist"), "upload_date": recent}
+    studio_old = _item("Song", "Artist")
     assert _score("artist song", studio_old) > _score("artist song", live_new)

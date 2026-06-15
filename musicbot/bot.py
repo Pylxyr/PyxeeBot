@@ -16,10 +16,11 @@ from musicbot.cogs.curation import CurationCog
 from musicbot.config import Settings, load_settings
 from musicbot.database import Database
 
+
 class PyxeeHelpCommand(commands.HelpCommand):
     CATEGORY_STYLES = {
-        "MusicCog":    ("\N{MUSICAL NOTE}", "Playback Deck"),
-        "AdminCog":    ("\N{SATELLITE ANTENNA}", "Control Room"),
+        "MusicCog": ("\N{MUSICAL NOTE}", "Playback Deck"),
+        "AdminCog": ("\N{SATELLITE ANTENNA}", "Control Room"),
         "CurationCog": ("\N{SPARKLES}", "Playlist Curator"),
         None: ("\N{SPARKLES}", "Extras"),
     }
@@ -93,7 +94,9 @@ class PyxeeHelpCommand(commands.HelpCommand):
         blurb = self._blurb_for(command)
         return f"`{sig}` — {blurb}"
 
-    async def send_bot_help(self, mapping: dict[commands.Cog | None, list[commands.Command[Any, ..., Any]]]) -> None:
+    async def send_bot_help(
+        self, mapping: dict[commands.Cog | None, list[commands.Command[Any, ..., Any]]]
+    ) -> None:
         prefix = self.context.clean_prefix
         description = (
             "Full command list. Use `help <command>` for details.\n"
@@ -111,9 +114,7 @@ class PyxeeHelpCommand(commands.HelpCommand):
             ordered_cogs.append(None)
 
         for cog in ordered_cogs:
-            commands_for_cog = await self.filter_commands(
-                mapping.get(cog, []), sort=True
-            )
+            commands_for_cog = await self.filter_commands(mapping.get(cog, []), sort=True)
             if not commands_for_cog:
                 continue
             icon, title = self._style_for_cog(cog)
@@ -259,9 +260,13 @@ class MusicBot(commands.Bot):
         self._prefix_cache.pop(guild_id, None)
 
     async def on_ready(self) -> None:
-        activity = discord.Activity(type=discord.ActivityType.watching, name="pylxyr.github.io/PyxeeBot-Page/")
+        activity = discord.Activity(
+            type=discord.ActivityType.watching, name="pylxyr.github.io/PyxeeBot-Page/"
+        )
         await self.change_presence(activity=activity)
-        logging.getLogger(__name__).info("Logged in as %s (%s)", self.user, self.user.id if self.user else "unknown")
+        logging.getLogger(__name__).info(
+            "Logged in as %s (%s)", self.user, self.user.id if self.user else "unknown"
+        )
 
     async def on_command_error(self, context: commands.Context[Any], error: commands.CommandError) -> None:
         if hasattr(context.command, "on_error"):

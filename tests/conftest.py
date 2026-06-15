@@ -1,4 +1,5 @@
 """conftest.py — shared fixtures."""
+
 from __future__ import annotations
 
 from collections import deque
@@ -31,25 +32,25 @@ def make_track(
 
 def make_settings(**overrides) -> MagicMock:
     s = MagicMock()
-    s.max_queue_size             = overrides.get("max_queue_size", 100)
-    s.idle_timeout_seconds       = overrides.get("idle_timeout_seconds", 180)
+    s.max_queue_size = overrides.get("max_queue_size", 100)
+    s.idle_timeout_seconds = overrides.get("idle_timeout_seconds", 180)
     s.empty_channel_timeout_seconds = overrides.get("empty_channel_timeout_seconds", 60)
-    s.np_auto_refresh            = False
-    s.np_auto_refresh_interval   = 30
+    s.np_auto_refresh = False
+    s.np_auto_refresh_interval = 30
     s.near_end_threshold_seconds = 20
     return s
 
 
 def make_bot(**settings_overrides) -> MagicMock:
-    bot       = MagicMock()
+    bot = MagicMock()
     bot.settings = make_settings(**settings_overrides)
     bot.dispatch = MagicMock()
-    bot.loop     = None
+    bot.loop = None
     return bot
 
 
 def make_guild(guild_id: int = 99999) -> MagicMock:
-    guild    = MagicMock()
+    guild = MagicMock()
     guild.id = guild_id
     return MagicMock(id=guild_id)
 
@@ -61,21 +62,22 @@ def track():
 
 @pytest.fixture
 def player():
-    bot             = make_bot()
-    guild           = make_guild()
-    resolver        = AsyncMock(side_effect=lambda t: t)
-    audio_factory   = AsyncMock(return_value=MagicMock())
-    validator       = AsyncMock(return_value=True)
-    p               = GuildPlayer(bot, guild, resolver, audio_factory, validator)
+    bot = make_bot()
+    guild = make_guild()
+    resolver = AsyncMock(side_effect=lambda t: t)
+    audio_factory = AsyncMock(return_value=MagicMock())
+    validator = AsyncMock(return_value=True)
+    p = GuildPlayer(bot, guild, resolver, audio_factory, validator)
     return p
 
 
 @pytest.fixture
 def player_small():
-    bot   = make_bot(max_queue_size=3)
+    bot = make_bot(max_queue_size=3)
     guild = make_guild()
-    p     = GuildPlayer(
-        bot, guild,
+    p = GuildPlayer(
+        bot,
+        guild,
         AsyncMock(side_effect=lambda t: t),
         AsyncMock(return_value=MagicMock()),
         AsyncMock(return_value=True),

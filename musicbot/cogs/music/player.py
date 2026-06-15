@@ -1,4 +1,5 @@
 """player.py — GuildPlayer: per-guild audio state machine."""
+
 from __future__ import annotations
 
 import asyncio
@@ -20,6 +21,7 @@ from musicbot.cogs.music.models import Track
 if TYPE_CHECKING:
     from musicbot.bot import MusicBot
 
+
 class GuildPlayer:
     """Per-guild voice + queue state machine."""
 
@@ -31,18 +33,18 @@ class GuildPlayer:
         audio_source_factory: Callable[[Track], Awaitable[discord.AudioSource]],
         validate_stream_url: Callable[[Track], Awaitable[bool]],
     ) -> None:
-        self.bot                  = bot
-        self.guild                = guild
-        self.track_resolver       = track_resolver
+        self.bot = bot
+        self.guild = guild
+        self.track_resolver = track_resolver
         self.audio_source_factory = audio_source_factory
-        self.validate_stream_url  = validate_stream_url
-        self.logger               = logging.getLogger(f"musicbot.player.{guild.id}")
+        self.validate_stream_url = validate_stream_url
+        self.logger = logging.getLogger(f"musicbot.player.{guild.id}")
 
         self.voice_client: discord.VoiceClient | None = None
-        self.queue:   deque[Track] = deque(maxlen=bot.settings.max_queue_size)
+        self.queue: deque[Track] = deque(maxlen=bot.settings.max_queue_size)
         self.history: deque[Track] = deque(maxlen=20)
         self.current: Track | None = None
-        self._total_duration: int = 0   # sum of durations of queued tracks (not current)
+        self._total_duration: int = 0  # sum of durations of queued tracks (not current)
 
         self.announce_channel_id: int | None = None
         self.loop_mode: Literal["off", "one", "all"] = "off"
@@ -50,15 +52,15 @@ class GuildPlayer:
         self._connected_at: float = 0.0
 
         self.next_event = asyncio.Event()
-        self.idle_task:          asyncio.Task[None] | None = None
+        self.idle_task: asyncio.Task[None] | None = None
         self.empty_channel_task: asyncio.Task[None] | None = None
-        self.near_end_task:      asyncio.Task[None] | None = None
-        self.np_refresh_task:    asyncio.Task[None] | None = None
+        self.near_end_task: asyncio.Task[None] | None = None
+        self.np_refresh_task: asyncio.Task[None] | None = None
 
         self.skip_votes: set[int] = set()
-        self.started_at:      float = 0.0
-        self._pause_started:  float = 0.0
-        self._total_paused:   float = 0.0
+        self.started_at: float = 0.0
+        self._pause_started: float = 0.0
+        self._total_paused: float = 0.0
         self._resolve_fail_counts: dict[str, int] = {}
 
         self.player_task: asyncio.Task[None] | None = None
@@ -74,14 +76,10 @@ class GuildPlayer:
     ) -> "GuildPlayer":
         """Preferred constructor — creates the player and starts its loop task."""
         player = cls(bot, guild, track_resolver, audio_source_factory, validate_stream_url)
-        player.player_task = asyncio.create_task(
-            player._player_loop(), name=f"player-{guild.id}"
-        )
+        player.player_task = asyncio.create_task(player._player_loop(), name=f"player-{guild.id}")
         return player
 
-    async def connect(
-        self, channel: discord.VoiceChannel | discord.StageChannel
-    ) -> discord.VoiceClient:
+    async def connect(self, channel: discord.VoiceChannel | discord.StageChannel) -> discord.VoiceClient:
         if self.voice_client and self.voice_client.is_connected():
             if self.voice_client.channel != channel:
                 await self.voice_client.move_to(channel)
@@ -134,7 +132,7 @@ class GuildPlayer:
     def elapsed_seconds(self) -> float:
         if self.started_at <= 0:
             return 0.0
-        now     = time.monotonic()
+        now = time.monotonic()
         elapsed = now - self.started_at - self._total_paused
         if self._pause_started > 0:
             elapsed -= now - self._pause_started
@@ -194,9 +192,7 @@ class GuildPlayer:
         await self._cancel_np_refresh_task()
 
     def skip(self) -> bool:
-        if self.voice_client and (
-            self.voice_client.is_playing() or self.voice_client.is_paused()
-        ):
+        if self.voice_client and (self.voice_client.is_playing() or self.voice_client.is_paused()):
             self.voice_client.stop()
             return True
         return False
@@ -281,11 +277,7 @@ class GuildPlayer:
 
     async def _disconnect_when_empty(self) -> None:
         await asyncio.sleep(self.bot.settings.empty_channel_timeout_seconds)
-        if (
-            self.voice_client
-            and self.voice_client.is_connected()
-            and not self._has_human_listeners()
-        ):
+        if self.voice_client and self.voice_client.is_connected() and not self._has_human_listeners():
             await self.stop()
             await self.disconnect()
             self.bot.dispatch("musicbot_queue_updated", self.guild)
@@ -300,16 +292,19 @@ class GuildPlayer:
 
                     resolved_track = await self.track_resolver(self.current)
                     if resolved_track is None:
-                        key   = self.current.query or self.current.webpage_url
+                        key = self.current.query or self.current.webpage_url
                         fails = self._resolve_fail_counts.get(key, 0) + 1
                         if len(self._resolve_fail_counts) > 200:
                             self._resolve_fail_counts.clear()
                         self._resolve_fail_counts[key] = fails
                         backoff = min(30.0, 1.0 * (2 ** (fails - 1)))
                         self.bot.dispatch(
-                            "musicbot_track_skipped_error", self.guild, self.current,
+                            "musicbot_track_skipped_error",
+                            self.guild,
+                            self.current,
                             f"Could not resolve stream (attempt {fails}). Retrying in {backoff:.0f}s."
-                            if fails < 4 else "Track is unavailable, skipping.",
+                            if fails < 4
+                            else "Track is unavailable, skipping.",
                         )
                         self.current = None
                         if fails < 4:
@@ -336,7 +331,9 @@ class GuildPlayer:
                         re_resolved = await self.track_resolver(self.current)
                         if re_resolved is None:
                             self.bot.dispatch(
-                                "musicbot_track_skipped_error", self.guild, self.current,
+                                "musicbot_track_skipped_error",
+                                self.guild,
+                                self.current,
                                 "Stream URL expired and could not be refreshed, skipping.",
                             )
                             self.current = None
@@ -351,7 +348,10 @@ class GuildPlayer:
                     def after_playback(error: Exception | None) -> None:
                         if error:
                             _loop.call_soon_threadsafe(
-                                self.bot.dispatch, "musicbot_playback_error", self.guild, error,
+                                self.bot.dispatch,
+                                "musicbot_playback_error",
+                                self.guild,
+                                error,
                             )
                         _loop.call_soon_threadsafe(finished.set)
 
@@ -378,7 +378,9 @@ class GuildPlayer:
                     # top-3 queue positions warm eagerly. This task is a last
                     # resort — it fires near_end_prefetch_seconds before the end
                     # and force-refreshes position 0 only if its URL is stale.
-                    if self.current.duration > self.bot.settings.near_end_prefetch_seconds and (self.queue or self.loop_mode != "off"):
+                    if self.current.duration > self.bot.settings.near_end_prefetch_seconds and (
+                        self.queue or self.loop_mode != "off"
+                    ):
                         self.near_end_task = asyncio.create_task(
                             self._trigger_near_end_preload(
                                 max(self.current.duration - self.bot.settings.near_end_prefetch_seconds, 0)
@@ -455,7 +457,9 @@ class GuildPlayer:
             try:
                 self.logger.warning(
                     "Voice client disconnected for guild %s, reconnect attempt %d/%d",
-                    self.guild.id, attempt, VOICE_RECONNECT_ATTEMPTS,
+                    self.guild.id,
+                    attempt,
+                    VOICE_RECONNECT_ATTEMPTS,
                 )
                 self.voice_client = await channel.connect(self_deaf=True)
                 return True

@@ -6,8 +6,8 @@ from typing import Any
 
 import aiosqlite
 
-class Database:
 
+class Database:
     def __init__(self, db_path: Path) -> None:
         self.db_path = db_path
         self._prefix_cache: dict[int, str | None] = {}
@@ -52,9 +52,7 @@ class Database:
         async with conn.execute("PRAGMA table_info(guild_settings)") as cursor:
             columns = {row["name"] async for row in cursor}
         if "dj_role_id" not in columns:
-            await conn.execute(
-                "ALTER TABLE guild_settings ADD COLUMN dj_role_id INTEGER"
-            )
+            await conn.execute("ALTER TABLE guild_settings ADD COLUMN dj_role_id INTEGER")
 
         await conn.execute(
             """
@@ -134,11 +132,7 @@ class Database:
             "SELECT dj_role_id FROM guild_settings WHERE guild_id = ?", (guild_id,)
         ) as cursor:
             row = await cursor.fetchone()
-        role_id = (
-            int(row["dj_role_id"])
-            if row and row["dj_role_id"] is not None
-            else None
-        )
+        role_id = int(row["dj_role_id"]) if row and row["dj_role_id"] is not None else None
         self._dj_role_cache[guild_id] = role_id
         return role_id
 
@@ -252,15 +246,22 @@ class Database:
         return deleted > 0
 
     def _snapshot_hash(self, guild_id: int, entries: list[dict[str, Any]]) -> int:
-        return hash((guild_id, tuple(
-            (e.get("query", ""), e.get("title", ""), e.get("webpage_url", ""),
-             e.get("requester_id", ""))
-            for e in entries
-        )))
+        return hash(
+            (
+                guild_id,
+                tuple(
+                    (
+                        e.get("query", ""),
+                        e.get("title", ""),
+                        e.get("webpage_url", ""),
+                        e.get("requester_id", ""),
+                    )
+                    for e in entries
+                ),
+            )
+        )
 
-    async def save_queue_snapshot(
-        self, guild_id: int, entries: list[dict[str, Any]]
-    ) -> None:
+    async def save_queue_snapshot(self, guild_id: int, entries: list[dict[str, Any]]) -> None:
         if self._conn is None:
             return
         new_hash = self._snapshot_hash(guild_id, entries)
@@ -269,9 +270,7 @@ class Database:
 
         await self._conn.execute("BEGIN IMMEDIATE")
         try:
-            await self._conn.execute(
-                "DELETE FROM queue_snapshots WHERE guild_id = ?", (guild_id,)
-            )
+            await self._conn.execute("DELETE FROM queue_snapshots WHERE guild_id = ?", (guild_id,))
             if entries:
                 await self._conn.executemany(
                     """

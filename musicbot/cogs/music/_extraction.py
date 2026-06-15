@@ -4,6 +4,7 @@ Mixed into MusicCog.  All methods access shared state through ``self``
 (bot, logger, _ytdl_tlocal, _http_session, etc.) which MusicCog.__init__
 initialises before any method can be called.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -43,7 +44,7 @@ class ExtractionMixin:
         if self._ytdl_base_options is None:  # type: ignore[attr-defined]
             base = dict(YTDL_OPTIONS)
             base["socket_timeout"] = self.bot.settings.ytdlp_socket_timeout  # type: ignore[attr-defined]
-            base["playlistend"]    = self.bot.settings.max_playlist_size  # type: ignore[attr-defined]
+            base["playlistend"] = self.bot.settings.max_playlist_size  # type: ignore[attr-defined]
             if self.bot.settings.ytdlp_cookies_file:  # type: ignore[attr-defined]
                 if self.bot.settings.ytdlp_cookies_file.exists():  # type: ignore[attr-defined]
                     base["cookiefile"] = str(self.bot.settings.ytdlp_cookies_file)  # type: ignore[attr-defined]
@@ -58,18 +59,18 @@ class ExtractionMixin:
                     "node": {"path": self.bot.settings.ytdlp_js_runtime_path}  # type: ignore[attr-defined]
                 }
             self._ytdl_base_options = base  # type: ignore[attr-defined]
-            fp  = dict(base)
-            fp["extract_flat"]  = "in_playlist"
+            fp = dict(base)
+            fp["extract_flat"] = "in_playlist"
             fp["lazy_playlist"] = True
-            fs  = dict(base)
-            fs["extract_flat"]  = True
+            fs = dict(base)
+            fs["extract_flat"] = True
             fps = dict(fp)
             fps["extract_flat"] = True
             self._ytdl_variants = {  # type: ignore[attr-defined]
                 (False, False): dict(base),
-                (True,  False): fp,
-                (False, True):  fs,
-                (True,  True):  fps,
+                (True, False): fp,
+                (False, True): fs,
+                (True, True): fps,
             }
         return self._ytdl_variants[(flat_playlist, flat_search)]  # type: ignore[attr-defined]
 
@@ -175,12 +176,13 @@ class ExtractionMixin:
         flat_playlist: bool = False,
         flat_search: bool = False,
     ) -> dict[str, Any]:
-        key       = (flat_playlist, flat_search)
-        options   = self._build_ytdl_options(flat_playlist=flat_playlist, flat_search=flat_search)
-        guild_id  = _CURRENT_GUILD_ID.get()
+        key = (flat_playlist, flat_search)
+        options = self._build_ytdl_options(flat_playlist=flat_playlist, flat_search=flat_search)
+        guild_id = _CURRENT_GUILD_ID.get()
         guild_sem = (
             self._guild_extract_semaphores.setdefault(guild_id, asyncio.Semaphore(1))  # type: ignore[attr-defined]
-            if guild_id is not None else None
+            if guild_id is not None
+            else None
         )
 
         sem_ctx = guild_sem if guild_sem is not None else contextlib.nullcontext()
@@ -253,9 +255,7 @@ class ExtractionMixin:
                     return url
         return ""
 
-    def _search_result_track(
-        self, item: dict[str, Any], requester_id: int
-    ) -> Track | None:
+    def _search_result_track(self, item: dict[str, Any], requester_id: int) -> Track | None:
         webpage_url = self._playlist_entry_url(item)
         if not webpage_url:
             return None
@@ -272,9 +272,7 @@ class ExtractionMixin:
 
     # ── Multi-track extractors ──────────────────────────────────────────────
 
-    async def _extract_playlist_tracks(
-        self, query: str, requester_id: int
-    ) -> tuple[list[Track], int]:
+    async def _extract_playlist_tracks(self, query: str, requester_id: int) -> tuple[list[Track], int]:
         try:
             info = await self._extract_info(query, flat_playlist=True)
         except commands.BadArgument:
@@ -299,15 +297,17 @@ class ExtractionMixin:
             if not webpage_url:
                 skipped += 1
                 continue
-            tracks.append(Track(
-                title=item.get("title", "Unknown title"),
-                webpage_url=webpage_url,
-                stream_url="",
-                uploader=item.get("channel") or item.get("uploader") or "Playlist item",
-                duration=int(item.get("duration") or 0),
-                requester_id=requester_id,
-                query=webpage_url,
-            ))
+            tracks.append(
+                Track(
+                    title=item.get("title", "Unknown title"),
+                    webpage_url=webpage_url,
+                    stream_url="",
+                    uploader=item.get("channel") or item.get("uploader") or "Playlist item",
+                    duration=int(item.get("duration") or 0),
+                    requester_id=requester_id,
+                    query=webpage_url,
+                )
+            )
         return tracks, skipped
 
     async def _extract_single_track(
@@ -322,7 +322,7 @@ class ExtractionMixin:
                 )
                 return None
 
-        stream_url  = item.get("url")
+        stream_url = item.get("url")
         webpage_url = item.get("webpage_url") or query
         if not stream_url:
             return None
@@ -340,9 +340,7 @@ class ExtractionMixin:
             acodec=item.get("acodec") or "",
         )
 
-    async def _extract_full_tracks(
-        self, query: str, requester_id: int
-    ) -> tuple[list[Track], int]:
+    async def _extract_full_tracks(self, query: str, requester_id: int) -> tuple[list[Track], int]:
         try:
             info = await self._extract_info(query)
         except commands.BadArgument:
@@ -372,7 +370,7 @@ class ExtractionMixin:
     # ── Search helpers ──────────────────────────────────────────────────────
 
     def _search_result_count(self, query: str) -> int:
-        base   = max(self.bot.settings.ytdlp_search_results, SEARCH_SELECTION_LIMIT)  # type: ignore[attr-defined]
+        base = max(self.bot.settings.ytdlp_search_results, SEARCH_SELECTION_LIMIT)  # type: ignore[attr-defined]
         tokens = signal_tokens(query)
         if len(tokens) >= 4:
             return max(base, _SEARCH_RESULT_COUNT_LONG)
@@ -384,7 +382,7 @@ class ExtractionMixin:
         match = re.match(r"^ytsearch(?:all|\d+)?:", query, flags=re.IGNORECASE)
         if not match:
             return query.strip()
-        return query[match.end():].strip()
+        return query[match.end() :].strip()
 
     def _preprocess_query(self, raw_query: str) -> str:
         if raw_query.startswith(("http://", "https://")) or raw_query.startswith("ytsearch"):
@@ -417,7 +415,7 @@ class ExtractionMixin:
         if not entries:
             return [], 0
 
-        guild_id    = _CURRENT_GUILD_ID.get()
+        guild_id = _CURRENT_GUILD_ID.get()
         search_text = self._search_text(query)
         ranked_items = rank_entries(
             search_text,
@@ -441,9 +439,7 @@ class ExtractionMixin:
                 break
         return tracks, skipped
 
-    async def _extract_search_tracks(
-        self, query: str, requester_id: int
-    ) -> tuple[list[Track], int]:
+    async def _extract_search_tracks(self, query: str, requester_id: int) -> tuple[list[Track], int]:
         return await self._extract_search_candidates(query, requester_id, limit=1)
 
     async def _extract_tracks(

@@ -1,4 +1,5 @@
 """views.py — SearchSelectionView, QueueView, NowPlayingView, ScoreDebugView."""
+
 from __future__ import annotations
 
 import asyncio
@@ -26,16 +27,20 @@ if TYPE_CHECKING:
     from musicbot.cogs.music.cog import MusicCog
     from musicbot.cogs.music.player import GuildPlayer
 
+
 def _disable_view_items(view: discord.ui.View) -> None:
     for item in view.children:
         if hasattr(item, "disabled"):
             item.disabled = True
 
+
 class SearchSelectionMenu(discord.ui.Select):
     def __init__(self) -> None:
         super().__init__(
             placeholder="Choose the exact track to queue...",
-            min_values=1, max_values=1, row=0,
+            min_values=1,
+            max_values=1,
+            row=0,
             options=[discord.SelectOption(label="Loading...", value="0")],
         )
 
@@ -58,6 +63,7 @@ class SearchSelectionMenu(discord.ui.Select):
             return
         await self.view.handle_selection(interaction, int(self.values[0]))
 
+
 class SearchSelectionView(discord.ui.View):
     def __init__(
         self,
@@ -71,11 +77,11 @@ class SearchSelectionView(discord.ui.View):
         guild_icon_url: str | None = None,
     ) -> None:
         super().__init__(timeout=SEARCH_SELECTION_TIMEOUT_SECONDS)
-        self.author_id      = author_id
-        self.candidates     = candidates
-        self.mode           = mode
-        self.query_text     = query_text
-        self.prefix         = prefix
+        self.author_id = author_id
+        self.candidates = candidates
+        self.mode = mode
+        self.query_text = query_text
+        self.prefix = prefix
         self.bot_avatar_url = bot_avatar_url
         self.guild_icon_url = guild_icon_url
         self.message: discord.Message | None = None
@@ -88,12 +94,12 @@ class SearchSelectionView(discord.ui.View):
 
     def current_page_candidates(self) -> list[Track]:
         start = self.page_index * SEARCH_SELECTION_PAGE_SIZE
-        return self.candidates[start: start + SEARCH_SELECTION_PAGE_SIZE]
+        return self.candidates[start : start + SEARCH_SELECTION_PAGE_SIZE]
 
     def _sync_controls(self) -> None:
         self.menu.refresh_options(self)
         self.previous_page.disabled = self.page_index <= 0
-        self.next_page.disabled     = self.page_index >= self.page_count - 1
+        self.next_page.disabled = self.page_index >= self.page_count - 1
 
     def build_embed(self) -> discord.Embed:
         action = "Queue next" if self.mode == "playnext" else "Queue"
@@ -117,19 +123,13 @@ class SearchSelectionView(discord.ui.View):
         lines: list[str] = []
         for offset, track in enumerate(page_candidates, start=start + 1):
             duration = track.duration_label if track.duration else "pending"
-            lines.append(
-                f"`{offset}.` **{track.escaped_title}**"
-                f" by {track.escaped_uploader}"
-                f" `[{duration}]`"
-            )
+            lines.append(f"`{offset}.` **{track.escaped_title}** by {track.escaped_uploader} `[{duration}]`")
         embed.add_field(
             name=f"Results (page {self.page_index + 1}/{self.page_count})",
             value="\n".join(lines) or "No results.",
             inline=False,
         )
-        thumbnail = next(
-            (t.thumbnail_url for t in page_candidates if t.thumbnail_url), self.guild_icon_url
-        )
+        thumbnail = next((t.thumbnail_url for t in page_candidates if t.thumbnail_url), self.guild_icon_url)
         if thumbnail:
             embed.set_thumbnail(url=thumbnail)
         return embed
@@ -143,7 +143,7 @@ class SearchSelectionView(discord.ui.View):
         else:
             self.selection.set_result(None)
         self.stop()
-        self.candidates = []   # release Track refs; the selection future holds the chosen one
+        self.candidates = []  # release Track refs; the selection future holds the chosen one
         _disable_view_items(self)
         with contextlib.suppress(discord.HTTPException):
             await interaction.response.edit_message(view=self)
@@ -179,11 +179,12 @@ class SearchSelectionView(discord.ui.View):
     async def on_timeout(self) -> None:
         if not self.selection.done():
             self.selection.set_result(None)
-        self.candidates = []   # release Track refs
+        self.candidates = []  # release Track refs
         _disable_view_items(self)
         if self.message:
             with contextlib.suppress(discord.HTTPException, discord.NotFound):
                 await self.message.edit(view=self)
+
 
 class QueueView(discord.ui.View):
     def __init__(
@@ -196,10 +197,10 @@ class QueueView(discord.ui.View):
         page_index: int = 0,
     ) -> None:
         super().__init__(timeout=QUEUE_VIEW_TIMEOUT_SECONDS)
-        self.cog        = cog
-        self.guild_id   = guild_id
-        self.player     = player
-        self.author_id  = author_id
+        self.cog = cog
+        self.guild_id = guild_id
+        self.player = player
+        self.author_id = author_id
         self.page_index = page_index
         self.message: discord.Message | None = None
         self._sync_controls()
@@ -210,7 +211,7 @@ class QueueView(discord.ui.View):
 
     def _sync_controls(self) -> None:
         self.previous_page.disabled = self.page_index <= 0
-        self.next_page.disabled     = self.page_index >= self._page_count() - 1
+        self.next_page.disabled = self.page_index >= self._page_count() - 1
 
     def build_embed(self) -> discord.Embed:
         embed = discord.Embed(title="Queue", colour=EMBED_COLOUR)
@@ -220,12 +221,12 @@ class QueueView(discord.ui.View):
         tracks.extend(self.player.queue)
 
         start = self.page_index * QUEUE_PAGE_SIZE
-        page  = tracks[start: start + QUEUE_PAGE_SIZE]
+        page = tracks[start : start + QUEUE_PAGE_SIZE]
 
         lines: list[str] = []
         for i, track in enumerate(page, start=start):
             duration = track.duration_label if track.duration else "pending"
-            prefix   = "▶" if i == 0 and self.player.current else f"{i}."
+            prefix = "▶" if i == 0 and self.player.current else f"{i}."
             lines.append(
                 f"`{prefix}` [{track.escaped_title}]"
                 f"({track.webpage_url}) `[{duration}]` — <@{track.requester_id}>"
@@ -236,10 +237,12 @@ class QueueView(discord.ui.View):
         if self._page_count() > 1:
             summary.append(f"Page {self.page_index + 1}/{self._page_count()}")
         # Use the running total from GuildPlayer rather than iterating the whole queue.
-        total_secs = self.player._total_duration + (self.player.current.duration if self.player.current else 0)
+        total_secs = self.player._total_duration + (
+            self.player.current.duration if self.player.current else 0
+        )
         if total_secs > 0:
             h, rem = divmod(int(total_secs), 3600)
-            m, s   = divmod(rem, 60)
+            m, s = divmod(rem, 60)
             summary.append(f"Total: `{h}:{m:02d}:{s:02d}`" if h else f"Total: `{m}:{s:02d}`")
         embed.add_field(name="Summary", value=" • ".join(summary), inline=False)
         embed.set_footer(text="Use the buttons below to browse the queue.")
@@ -251,9 +254,7 @@ class QueueView(discord.ui.View):
             return True
         if interaction.user and interaction.user.id == self.author_id:
             return True
-        await interaction.response.send_message(
-            "Join my voice channel to browse the queue.", ephemeral=True
-        )
+        await interaction.response.send_message("Join my voice channel to browse the queue.", ephemeral=True)
         return False
 
     @discord.ui.button(label="Previous", style=discord.ButtonStyle.secondary)
@@ -293,10 +294,11 @@ class QueueView(discord.ui.View):
                     "That queue interaction failed. Run the command again.", ephemeral=True
                 )
 
+
 class NowPlayingView(discord.ui.View):
     def __init__(self, cog: "MusicCog", guild_id: int) -> None:
         super().__init__(timeout=NOW_PLAYING_TIMEOUT_SECONDS)
-        self.cog      = cog
+        self.cog = cog
         self.guild_id = guild_id
         self._pause_btn: discord.ui.Button | None = getattr(self, "pause_resume", None)  # type: ignore[assignment]
 
@@ -304,9 +306,7 @@ class NowPlayingView(discord.ui.View):
         player = self.cog.players.get(self.guild_id)
         if player and self.cog._is_in_player_voice(player, interaction.user):
             return True
-        await interaction.response.send_message(
-            "Join my voice channel to use the controls.", ephemeral=True
-        )
+        await interaction.response.send_message("Join my voice channel to use the controls.", ephemeral=True)
         return False
 
     def _sync_pause_emoji(self, player: "GuildPlayer | None") -> None:
@@ -321,8 +321,8 @@ class NowPlayingView(discord.ui.View):
             await interaction.response.defer()
             return
         controller.status_text = status_text
-        controller.expires_at  = time.monotonic() + NOW_PLAYING_TIMEOUT_SECONDS
-        guild  = self.cog.bot.get_guild(self.guild_id)
+        controller.expires_at = time.monotonic() + NOW_PLAYING_TIMEOUT_SECONDS
+        guild = self.cog.bot.get_guild(self.guild_id)
         player = self.cog.players.get(self.guild_id)
         if guild is None:
             await interaction.response.defer()
@@ -332,7 +332,9 @@ class NowPlayingView(discord.ui.View):
         with contextlib.suppress(discord.HTTPException):
             await interaction.response.edit_message(embed=embed, view=self)
 
-    @discord.ui.button(emoji="\N{BLACK LEFT-POINTING DOUBLE TRIANGLE WITH VERTICAL BAR}", style=discord.ButtonStyle.secondary)
+    @discord.ui.button(
+        emoji="\N{BLACK LEFT-POINTING DOUBLE TRIANGLE WITH VERTICAL BAR}", style=discord.ButtonStyle.secondary
+    )
     async def previous(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
         player = self.cog.players.get(self.guild_id)
         if player is None:
@@ -341,7 +343,10 @@ class NowPlayingView(discord.ui.View):
         msg = await self.cog._previous_for_member(player, interaction.user)
         await self._respond(interaction, msg)
 
-    @discord.ui.button(emoji="\N{BLACK RIGHT-POINTING DOUBLE TRIANGLE WITH VERTICAL BAR}", style=discord.ButtonStyle.secondary)
+    @discord.ui.button(
+        emoji="\N{BLACK RIGHT-POINTING DOUBLE TRIANGLE WITH VERTICAL BAR}",
+        style=discord.ButtonStyle.secondary,
+    )
     async def skip(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
         player = self.cog.players.get(self.guild_id)
         if player is None:
@@ -350,7 +355,10 @@ class NowPlayingView(discord.ui.View):
         msg = await self.cog._skip_for_member(player, interaction.user)
         await self._respond(interaction, msg)
 
-    @discord.ui.button(emoji="\N{BLACK RIGHT-POINTING TRIANGLE WITH DOUBLE VERTICAL BAR}", style=discord.ButtonStyle.secondary)
+    @discord.ui.button(
+        emoji="\N{BLACK RIGHT-POINTING TRIANGLE WITH DOUBLE VERTICAL BAR}",
+        style=discord.ButtonStyle.secondary,
+    )
     async def pause_resume(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         player = self.cog.players.get(self.guild_id)
         if player is None:
@@ -359,7 +367,9 @@ class NowPlayingView(discord.ui.View):
         msg = await self.cog._toggle_pause_for_member(player, interaction.user)
         await self._respond(interaction, msg)
 
-    @discord.ui.button(emoji="\N{CLOCKWISE RIGHTWARDS AND LEFTWARDS OPEN CIRCLE ARROWS}", style=discord.ButtonStyle.secondary)
+    @discord.ui.button(
+        emoji="\N{CLOCKWISE RIGHTWARDS AND LEFTWARDS OPEN CIRCLE ARROWS}", style=discord.ButtonStyle.secondary
+    )
     async def loop(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
         player = self.cog.players.get(self.guild_id)
         if player is None:
@@ -402,11 +412,12 @@ class NowPlayingView(discord.ui.View):
                     "That control failed. Try the command again.", ephemeral=True
                 )
 
+
 class ScoreDebugView(discord.ui.View):
     def __init__(self, author_id: int, record: SearchDebugRecord) -> None:
         super().__init__(timeout=120)
         self.author_id = author_id
-        self.record    = record
+        self.record = record
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user and interaction.user.id == self.author_id:
@@ -423,7 +434,7 @@ class ScoreDebugView(discord.ui.View):
             f"**Search score breakdown** — `{discord.utils.escape_markdown(self.record.query_text)}`\n"
         ]
         for c in self.record.candidates:
-            sel       = " ← **queued**" if c.selected else ""
+            sel = " ← **queued**" if c.selected else ""
             dur_m, dur_s = divmod(c.duration, 60)
             dur_label = f"{dur_m}:{dur_s:02d}" if c.duration else "?"
             lines.append(

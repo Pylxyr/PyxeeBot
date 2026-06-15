@@ -3,6 +3,7 @@
 Kept in its own module so that _extraction.py, _resolver.py, and cog.py
 can all import it without creating circular dependencies.
 """
+
 from __future__ import annotations
 
 from contextvars import ContextVar

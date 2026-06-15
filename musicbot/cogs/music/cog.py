@@ -1,4 +1,5 @@
 """cog.py — MusicCog: commands and event handlers."""
+
 from __future__ import annotations
 
 import asyncio
@@ -22,15 +23,25 @@ from musicbot.cogs.music._extraction import ExtractionMixin
 from musicbot.cogs.music._panel import NPanelMixin
 from musicbot.cogs.music._resolver import ResolverMixin
 from musicbot.cogs.music.constants import (
-    EMBED_COLOUR, LOOP_CYCLE, LOOP_ICONS, LOOP_LABELS,
-    NOW_PLAYING_TIMEOUT_SECONDS, SNAPSHOT_DEBOUNCE_SECONDS,
+    EMBED_COLOUR,
+    LOOP_CYCLE,
+    LOOP_ICONS,
+    LOOP_LABELS,
+    NOW_PLAYING_TIMEOUT_SECONDS,
+    SNAPSHOT_DEBOUNCE_SECONDS,
 )
 from musicbot.cogs.music.models import (
-    NowPlayingController, ResolvedTrackData, SearchDebugRecord, Track,
+    NowPlayingController,
+    ResolvedTrackData,
+    SearchDebugRecord,
+    Track,
 )
 from musicbot.cogs.music.player import GuildPlayer
 from musicbot.cogs.music.views import (
-    NowPlayingView, QueueView, ScoreDebugView, SearchSelectionView,
+    NowPlayingView,
+    QueueView,
+    ScoreDebugView,
+    SearchSelectionView,
 )
 
 if TYPE_CHECKING:
@@ -39,7 +50,7 @@ if TYPE_CHECKING:
 
 class MusicCog(ExtractionMixin, ResolverMixin, NPanelMixin, commands.Cog):
     def __init__(self, bot: "MusicBot") -> None:
-        self.bot    = bot
+        self.bot = bot
         self.logger = logging.getLogger(__name__)
 
         self.players: dict[int, GuildPlayer] = {}
@@ -57,16 +68,16 @@ class MusicCog(ExtractionMixin, ResolverMixin, NPanelMixin, commands.Cog):
         self.resolve_tasks: dict[str, asyncio.Task[ResolvedTrackData | None]] = {}
         self.resolve_cache: OrderedDict[str, tuple[float, ResolvedTrackData]] = OrderedDict()
 
-        self._pipeline_tasks:      dict[int, asyncio.Task[None]] = {}
-        self._snapshot_deadlines:  dict[int, float] = {}
-        self._snapshot_tasks:      dict[int, asyncio.Task[None]] = {}
+        self._pipeline_tasks: dict[int, asyncio.Task[None]] = {}
+        self._snapshot_deadlines: dict[int, float] = {}
+        self._snapshot_tasks: dict[int, asyncio.Task[None]] = {}
         self._np_refresh_deadlines: dict[int, float] = {}
-        self._np_refresh_tasks:    dict[int, asyncio.Task[None]] = {}
+        self._np_refresh_tasks: dict[int, asyncio.Task[None]] = {}
 
         self._guild_extract_semaphores: dict[int, asyncio.Semaphore] = {}
         self.extract_semaphore = asyncio.Semaphore(self.bot.settings.ytdlp_concurrent_extracts)
 
-        self._last_search:     OrderedDict[int, SearchDebugRecord] = OrderedDict()
+        self._last_search: OrderedDict[int, SearchDebugRecord] = OrderedDict()
         self._last_search_max: int = 50
         self._restored_guilds: set[int] = set()
 
@@ -96,13 +107,9 @@ class MusicCog(ExtractionMixin, ResolverMixin, NPanelMixin, commands.Cog):
             with contextlib.suppress(Exception):
                 await player.destroy()
 
-    async def cog_command_error(
-        self, context: commands.Context[Any], error: Exception
-    ) -> None:
+    async def cog_command_error(self, context: commands.Context[Any], error: Exception) -> None:
         if isinstance(error, commands.CommandOnCooldown):
-            await context.send(
-                f"Slow down — retry in `{error.retry_after:.1f}s`.", delete_after=6
-            )
+            await context.send(f"Slow down — retry in `{error.retry_after:.1f}s`.", delete_after=6)
         elif isinstance(error, commands.CheckFailure):
             await context.send(str(error), delete_after=8)
         elif isinstance(error, commands.BadArgument):
@@ -112,10 +119,11 @@ class MusicCog(ExtractionMixin, ResolverMixin, NPanelMixin, commands.Cog):
 
     def _bg_task(self, coro: Any, *, name: str | None = None) -> asyncio.Task[Any]:
         task = asyncio.create_task(coro, name=name)
+
         def _on_done(t: asyncio.Task[Any]) -> None:
             if not t.cancelled() and t.exception() is not None:
-                self.logger.exception("Background task %r raised", t.get_name(),
-                                      exc_info=t.exception())
+                self.logger.exception("Background task %r raised", t.get_name(), exc_info=t.exception())
+
         task.add_done_callback(_on_done)
         return task
 
@@ -125,8 +133,11 @@ class MusicCog(ExtractionMixin, ResolverMixin, NPanelMixin, commands.Cog):
         player = self.players.get(guild.id)
         if not player:
             player = await GuildPlayer.create(
-                self.bot, guild,
-                self._resolve_track, self._build_audio_source, self._validate_stream_url,
+                self.bot,
+                guild,
+                self._resolve_track,
+                self._build_audio_source,
+                self._validate_stream_url,
             )
             self.players[guild.id] = player
             await self._restore_snapshot(player)
@@ -141,9 +152,13 @@ class MusicCog(ExtractionMixin, ResolverMixin, NPanelMixin, commands.Cog):
             return
         restored = [
             Track(
-                title=row["title"], webpage_url=row["webpage_url"],
-                stream_url="", uploader="Restored queue",
-                duration=0, requester_id=int(row["requester_id"]), query=row["query"],
+                title=row["title"],
+                webpage_url=row["webpage_url"],
+                stream_url="",
+                uploader="Restored queue",
+                duration=0,
+                requester_id=int(row["requester_id"]),
+                query=row["query"],
             )
             for row in rows
         ]
@@ -200,9 +215,7 @@ class MusicCog(ExtractionMixin, ResolverMixin, NPanelMixin, commands.Cog):
         finally:
             self._snapshot_tasks.pop(guild_id, None)
 
-    async def _flush_snapshot(
-        self, guild_id: int, *, entries: list[dict[str, Any]] | None = None
-    ) -> None:
+    async def _flush_snapshot(self, guild_id: int, *, entries: list[dict[str, Any]] | None = None) -> None:
         task = self._snapshot_tasks.pop(guild_id, None)
         if task and not task.done():
             task.cancel()
@@ -215,9 +228,7 @@ class MusicCog(ExtractionMixin, ResolverMixin, NPanelMixin, commands.Cog):
         player = self.players.get(guild_id)
         return player.snapshot() if player is not None else []
 
-    async def _write_snapshot(
-        self, guild_id: int, *, entries: list[dict[str, Any]] | None = None
-    ) -> None:
+    async def _write_snapshot(self, guild_id: int, *, entries: list[dict[str, Any]] | None = None) -> None:
         if not self.bot.database.is_open:
             return
         snapshot = self._snapshot_entries(guild_id) if entries is None else entries
@@ -255,7 +266,7 @@ class MusicCog(ExtractionMixin, ResolverMixin, NPanelMixin, commands.Cog):
 
     async def _join_for_context(self, context: commands.Context[Any]) -> GuildPlayer:
         channel = await self._ensure_author_voice(context)
-        player  = await self._get_player(context.guild)
+        player = await self._get_player(context.guild)
         self._remember_channel(player, context.channel)
         await player.connect(channel)
         return player
@@ -283,20 +294,25 @@ class MusicCog(ExtractionMixin, ResolverMixin, NPanelMixin, commands.Cog):
         return QueueView(self, guild_id, player, author_id=author_id, page_index=page)
 
     async def _prompt_for_search_selection(
-        self, context: commands.Context[Any], query: str,
-        candidates: list[Track], *, mode: str,
+        self,
+        context: commands.Context[Any],
+        query: str,
+        candidates: list[Track],
+        *,
+        mode: str,
     ) -> Track | None:
         if not candidates:
             return None
         if len(candidates) == 1:
             return candidates[0]
         view = SearchSelectionView(
-            author_id=context.author.id, candidates=candidates, mode=mode,
-            query_text=self._search_text(query), prefix=context.clean_prefix,
+            author_id=context.author.id,
+            candidates=candidates,
+            mode=mode,
+            query_text=self._search_text(query),
+            prefix=context.clean_prefix,
             bot_avatar_url=self.bot.user.display_avatar.url if self.bot.user else None,
-            guild_icon_url=(
-                context.guild.icon.url if context.guild and context.guild.icon else None
-            ),
+            guild_icon_url=(context.guild.icon.url if context.guild and context.guild.icon else None),
         )
         prompt = await context.send(embed=view.build_embed(), view=view)
         view.message = prompt
@@ -319,7 +335,7 @@ class MusicCog(ExtractionMixin, ResolverMixin, NPanelMixin, commands.Cog):
             player.skip()
             return "Skipped the current track."
         player.skip_votes.add(member.id)
-        needed        = self._required_skip_votes(player)
+        needed = self._required_skip_votes(player)
         current_votes = len(player.skip_votes)
         if current_votes >= needed:
             player.skip_votes.clear()
@@ -330,9 +346,7 @@ class MusicCog(ExtractionMixin, ResolverMixin, NPanelMixin, commands.Cog):
     async def _previous_for_member(self, player: GuildPlayer, member: discord.Member) -> str:
         if not self._is_in_player_voice(player, member):
             return "Join my voice channel first."
-        if not await self._is_dj(member) and (
-            not player.current or player.current.requester_id != member.id
-        ):
+        if not await self._is_dj(member) and (not player.current or player.current.requester_id != member.id):
             return "Only the current requester or a DJ can go to the previous track."
         if not player.play_previous():
             return "There is no previous track to return to."
@@ -358,11 +372,11 @@ class MusicCog(ExtractionMixin, ResolverMixin, NPanelMixin, commands.Cog):
             return "DJ role or Manage Server permission required."
         if not player.current and not player.queue:
             return "Nothing is loaded."
-        prev_label       = LOOP_LABELS.get(player.loop_mode, "Off")
+        prev_label = LOOP_LABELS.get(player.loop_mode, "Off")
         player.loop_mode = LOOP_CYCLE.get(player.loop_mode, "off")
         self._persist_snapshot(member.guild.id)
         label = LOOP_LABELS.get(player.loop_mode, "Off")
-        icon  = LOOP_ICONS.get(player.loop_mode, "→")
+        icon = LOOP_ICONS.get(player.loop_mode, "→")
         return f"Loop changed: **{prev_label}** → {icon} **{label}**"
 
     # ── Event listeners ─────────────────────────────────────────────────────
@@ -372,12 +386,10 @@ class MusicCog(ExtractionMixin, ResolverMixin, NPanelMixin, commands.Cog):
         await self._refresh_now_playing_message(guild.id)
 
     @commands.Cog.listener()
-    async def on_musicbot_track_skipped_error(
-        self, guild: discord.Guild, track: Track, reason: str
-    ) -> None:
+    async def on_musicbot_track_skipped_error(self, guild: discord.Guild, track: Track, reason: str) -> None:
         if not self.bot.settings.error_announce:
             return
-        player  = self.players.get(guild.id)
+        player = self.players.get(guild.id)
         channel = await self._fetch_announce_channel(guild, player) if player else None
         if channel is None:
             channel = guild.system_channel
@@ -387,7 +399,7 @@ class MusicCog(ExtractionMixin, ResolverMixin, NPanelMixin, commands.Cog):
 
     @commands.Cog.listener()
     async def on_musicbot_playback_error(self, guild: discord.Guild, error: Exception) -> None:
-        player  = self.players.get(guild.id)
+        player = self.players.get(guild.id)
         channel = await self._fetch_announce_channel(guild, player) if player else None
         if channel is None:
             channel = guild.system_channel
@@ -400,9 +412,7 @@ class MusicCog(ExtractionMixin, ResolverMixin, NPanelMixin, commands.Cog):
         player = self.players.get(guild.id)
         if player is None or player.current is None:
             return
-        await self._send_now_playing_panel(
-            guild, player, replace_existing=True, status_text="Track changed."
-        )
+        await self._send_now_playing_panel(guild, player, replace_existing=True, status_text="Track changed.")
 
     @commands.Cog.listener()
     async def on_musicbot_queue_updated(self, guild: discord.Guild) -> None:
@@ -423,8 +433,10 @@ class MusicCog(ExtractionMixin, ResolverMixin, NPanelMixin, commands.Cog):
 
     @commands.Cog.listener()
     async def on_voice_state_update(
-        self, member: discord.Member,
-        before: discord.VoiceState, after: discord.VoiceState,
+        self,
+        member: discord.Member,
+        before: discord.VoiceState,
+        after: discord.VoiceState,
     ) -> None:
         player = self.players.get(member.guild.id)
         if not player or not player.voice_client or not player.voice_client.channel:
@@ -471,17 +483,15 @@ class MusicCog(ExtractionMixin, ResolverMixin, NPanelMixin, commands.Cog):
     async def history(self, context: commands.Context[Any]) -> None:
         """Show the last tracks played this session."""
         player = self.players.get(context.guild.id)
-        hist   = list(player.history) if player else []
+        hist = list(player.history) if player else []
         if not hist:
             await context.send("No tracks have been played this session.")
             return
         lines = [
-            f"`{i}.` [{t.escaped_title}]({t.webpage_url})"
-            f" — <@{t.requester_id}>"
+            f"`{i}.` [{t.escaped_title}]({t.webpage_url}) — <@{t.requester_id}>"
             for i, t in enumerate(reversed(hist), start=1)
         ]
-        embed = discord.Embed(title="Recent History", description="\n".join(lines[:20]),
-                              colour=EMBED_COLOUR)
+        embed = discord.Embed(title="Recent History", description="\n".join(lines[:20]), colour=EMBED_COLOUR)
         embed.set_footer(text=f"{len(hist)} track(s) in session history.")
         await context.send(embed=embed)
 
@@ -503,7 +513,7 @@ class MusicCog(ExtractionMixin, ResolverMixin, NPanelMixin, commands.Cog):
         )
         lines: list[str] = []
         for c in record.candidates:
-            sel       = "  ✓" if c.selected else ""
+            sel = "  ✓" if c.selected else ""
             dur_m, dur_s = divmod(c.duration, 60)
             dur_label = f"{dur_m}:{dur_s:02d}" if c.duration else "?"
             detail = (
@@ -539,16 +549,18 @@ class MusicCog(ExtractionMixin, ResolverMixin, NPanelMixin, commands.Cog):
             await context.send("That is already the next track.")
             return
         queue_list = list(player.queue)
-        dropped    = position - 1
-        player.replace_queue(queue_list[position - 1:])
+        dropped = position - 1
+        player.replace_queue(queue_list[position - 1 :])
         self._persist_snapshot(context.guild.id)
         target = player.queue[0]
-        embed  = discord.Embed(title="Jumped to Position", colour=EMBED_COLOUR)
-        embed.add_field(name="Now Up Next",
-                        value=f"[{discord.utils.escape_markdown(target.title)}]({target.webpage_url})",
-                        inline=False)
+        embed = discord.Embed(title="Jumped to Position", colour=EMBED_COLOUR)
+        embed.add_field(
+            name="Now Up Next",
+            value=f"[{discord.utils.escape_markdown(target.title)}]({target.webpage_url})",
+            inline=False,
+        )
         embed.add_field(name="Position", value=f"`{position}`", inline=True)
-        embed.add_field(name="Dropped",  value=f"`{dropped}` track{'s' if dropped != 1 else ''}", inline=True)
+        embed.add_field(name="Dropped", value=f"`{dropped}` track{'s' if dropped != 1 else ''}", inline=True)
         if target.thumbnail_url:
             embed.set_thumbnail(url=target.thumbnail_url)
         await context.send(embed=embed)
@@ -568,7 +580,7 @@ class MusicCog(ExtractionMixin, ResolverMixin, NPanelMixin, commands.Cog):
             await context.send("Queue is full.")
             return
         clone = dataclasses.replace(player.current, requester_id=context.author.id)
-        clone.stream_url  = ""
+        clone.stream_url = ""
         clone.resolved_at = 0.0
         await player.enqueue(clone, front=True)
         self._persist_snapshot(context.guild.id)
@@ -583,24 +595,30 @@ class MusicCog(ExtractionMixin, ResolverMixin, NPanelMixin, commands.Cog):
         if not player or not player.queue:
             await context.send("Queue is empty.")
             return
-        kw      = keyword.strip().lower()
+        kw = keyword.strip().lower()
         matches = [
-            (i + 1, t) for i, t in enumerate(player.queue)
+            (i + 1, t)
+            for i, t in enumerate(player.queue)
             if kw in t.title.lower() or kw in (t.uploader or "").lower()
         ]
         if not matches:
             await context.send(f"No tracks matching `{discord.utils.escape_markdown(keyword)}`.")
             return
         lines = [
-            f"`{pos}.` [{discord.utils.escape_markdown(t.title)}]({t.webpage_url})"
-            for pos, t in matches[:20]
+            f"`{pos}.` [{discord.utils.escape_markdown(t.title)}]({t.webpage_url})" for pos, t in matches[:20]
         ]
-        embed = discord.Embed(title=f"Queue Search: {discord.utils.escape_markdown(keyword)}",
-                              description="\n".join(lines), colour=EMBED_COLOUR)
-        embed.set_footer(text=(
-            f"Showing first 20 of {len(matches)} matches."
-            if len(matches) > 20 else f"{len(matches)} match(es) found."
-        ))
+        embed = discord.Embed(
+            title=f"Queue Search: {discord.utils.escape_markdown(keyword)}",
+            description="\n".join(lines),
+            colour=EMBED_COLOUR,
+        )
+        embed.set_footer(
+            text=(
+                f"Showing first 20 of {len(matches)} matches."
+                if len(matches) > 20
+                else f"{len(matches)} match(es) found."
+            )
+        )
         await context.send(embed=embed)
 
     @commands.hybrid_command(name="play", aliases=["p"])
@@ -613,21 +631,26 @@ class MusicCog(ExtractionMixin, ResolverMixin, NPanelMixin, commands.Cog):
         if len(player.queue) >= self.bot.settings.max_queue_size:
             await context.send("Queue is full.")
             return
-        query       = self._normalize_query(query)
+        query = self._normalize_query(query)
         is_playlist = self._is_playlist_query(query)
         fetch_msg: discord.Message | None = await context.send(
-            "⏳ Loading playlist…" if is_playlist
-            else "🔍 Fetching…" if query.startswith(("http://", "https://"))
+            "⏳ Loading playlist…"
+            if is_playlist
+            else "🔍 Fetching…"
+            if query.startswith(("http://", "https://"))
             else "🔍 Searching…"
         )
         async with context.typing():
             tracks, skipped = await self._extract_tracks(
-                query, requester_id=context.author.id, guild_id=context.guild.id,
+                query,
+                requester_id=context.author.id,
+                guild_id=context.guild.id,
             )
         if not tracks:
             msg = (
                 f"No playable results found. Skipped `{skipped}` unavailable items."
-                if skipped else "No playable results found. Try `!search <query>` to browse manually."
+                if skipped
+                else "No playable results found. Try `!search <query>` to browse manually."
             )
             await (fetch_msg.edit(content=msg) if fetch_msg else context.send(msg))
             return
@@ -650,7 +673,8 @@ class MusicCog(ExtractionMixin, ResolverMixin, NPanelMixin, commands.Cog):
             suffix += f" Stopped at your `{limit}`-track per-user limit."
         result = (
             f"Queued [{tracks[0].escaped_title}]({tracks[0].webpage_url}).{suffix}"
-            if added == 1 else f"Queued `{added}` tracks.{suffix}"
+            if added == 1
+            else f"Queued `{added}` tracks.{suffix}"
         )
         if context.guild.id in self._restored_guilds:
             restored_count = len(player.queue) - added
@@ -668,12 +692,14 @@ class MusicCog(ExtractionMixin, ResolverMixin, NPanelMixin, commands.Cog):
     async def playnext(self, context: commands.Context[Any], *, query: str) -> None:
         """Insert a track next in queue."""
         await self._require_dj(context)
-        player    = await self._join_for_context(context)
-        query     = self._normalize_query(query)
+        player = await self._join_for_context(context)
+        query = self._normalize_query(query)
         fetch_msg = await context.send("🔍 Searching…")
         async with context.typing():
             tracks, _ = await self._extract_tracks(
-                query, requester_id=context.author.id, guild_id=context.guild.id,
+                query,
+                requester_id=context.author.id,
+                guild_id=context.guild.id,
             )
         track = tracks[0] if tracks else None
         if track is None:
@@ -698,11 +724,11 @@ class MusicCog(ExtractionMixin, ResolverMixin, NPanelMixin, commands.Cog):
             await context.send("Nothing is playing.")
             return
         self._remember_channel(player, context.channel)
-        prev_label       = LOOP_LABELS.get(player.loop_mode, "Off")
+        prev_label = LOOP_LABELS.get(player.loop_mode, "Off")
         player.loop_mode = "off" if player.loop_mode == "one" else "one"
         self._persist_snapshot(context.guild.id)
         label = LOOP_LABELS.get(player.loop_mode, "Off")
-        icon  = LOOP_ICONS.get(player.loop_mode, "→")
+        icon = LOOP_ICONS.get(player.loop_mode, "→")
         await context.send(f"Loop changed: **{prev_label}** → {icon} **{label}**")
         await self._refresh_now_playing_message(context.guild.id)
 
@@ -725,9 +751,7 @@ class MusicCog(ExtractionMixin, ResolverMixin, NPanelMixin, commands.Cog):
                 )
             finally:
                 _CURRENT_GUILD_ID.reset(token)
-        selected = await self._prompt_for_search_selection(
-            context, search_query, tracks, mode="play"
-        )
+        selected = await self._prompt_for_search_selection(context, search_query, tracks, mode="play")
         if selected is None:
             if not tracks:
                 await context.send("No results found.")
@@ -837,7 +861,8 @@ class MusicCog(ExtractionMixin, ResolverMixin, NPanelMixin, commands.Cog):
             )
             return
         controller = NowPlayingController(
-            channel_id=context.channel.id, message_id=0,
+            channel_id=context.channel.id,
+            message_id=0,
             expires_at=time.monotonic() + NOW_PLAYING_TIMEOUT_SECONDS,
         )
         await context.send(embed=self._render_now_playing_embed(context.guild, None, controller))
@@ -851,7 +876,7 @@ class MusicCog(ExtractionMixin, ResolverMixin, NPanelMixin, commands.Cog):
             await context.send("Queue is empty.")
             return
         self._remember_channel(player, context.channel)
-        view    = self._build_queue_view(context.guild.id, player, author_id=context.author.id)
+        view = self._build_queue_view(context.guild.id, player, author_id=context.author.id)
         message = await context.send(embed=view.build_embed(), view=view)
         if isinstance(message, discord.Message):
             view.message = message
@@ -868,7 +893,7 @@ class MusicCog(ExtractionMixin, ResolverMixin, NPanelMixin, commands.Cog):
         if index < 1 or index > len(player.queue):
             raise commands.BadArgument("Queue index is out of range.")
         queue_list = list(player.queue)
-        removed    = queue_list[index - 1]
+        removed = queue_list[index - 1]
         if removed.requester_id != context.author.id and not await self._is_dj(context.author):
             raise commands.CheckFailure("Only the requester or a DJ can remove this track.")
         queue_list.pop(index - 1)
@@ -930,7 +955,7 @@ class MusicCog(ExtractionMixin, ResolverMixin, NPanelMixin, commands.Cog):
             await context.send("Source and destination are the same.")
             return
         queue_list = list(player.queue)
-        track      = queue_list.pop(from_index - 1)
+        track = queue_list.pop(from_index - 1)
         queue_list.insert(to_index - 1, track)
         player.replace_queue(queue_list)
         self._persist_snapshot(context.guild.id)
@@ -953,11 +978,11 @@ class MusicCog(ExtractionMixin, ResolverMixin, NPanelMixin, commands.Cog):
             await context.send("Nothing is loaded.")
             return
         self._remember_channel(player, context.channel)
-        prev_label       = LOOP_LABELS.get(player.loop_mode, "Off")
+        prev_label = LOOP_LABELS.get(player.loop_mode, "Off")
         player.loop_mode = LOOP_CYCLE.get(player.loop_mode, "off")
         self._persist_snapshot(context.guild.id)
         label = LOOP_LABELS.get(player.loop_mode, "Off")
-        icon  = LOOP_ICONS.get(player.loop_mode, "→")
+        icon = LOOP_ICONS.get(player.loop_mode, "→")
         await context.send(f"Loop changed: **{prev_label}** → {icon} **{label}**")
         await self._refresh_now_playing_message(context.guild.id)
 
@@ -966,8 +991,7 @@ class MusicCog(ExtractionMixin, ResolverMixin, NPanelMixin, commands.Cog):
     async def playlist(self, context: commands.Context[Any]) -> None:
         """Work with saved server playlists."""
         await context.send(
-            "Use `playlist save`, `playlist load`, `playlist list`, "
-            "`playlist show`, or `playlist delete`."
+            "Use `playlist save`, `playlist load`, `playlist list`, `playlist show`, or `playlist delete`."
         )
 
     @playlist.command(name="save")
@@ -978,9 +1002,7 @@ class MusicCog(ExtractionMixin, ResolverMixin, NPanelMixin, commands.Cog):
             await context.send("Nothing is loaded to save.")
             return
         entries = player.snapshot()
-        await self.bot.database.save_playlist(
-            context.guild.id, name.lower(), context.author.id, entries
-        )
+        await self.bot.database.save_playlist(context.guild.id, name.lower(), context.author.id, entries)
         await context.send(f"Saved `{len(entries)}` tracks to playlist `{name.lower()}`.")
 
     @playlist.command(name="list")
@@ -990,16 +1012,16 @@ class MusicCog(ExtractionMixin, ResolverMixin, NPanelMixin, commands.Cog):
         if not rows:
             await context.send("No saved playlists for this server.")
             return
-        PAGE       = 25
+        PAGE = 25
         page_count = math.ceil(len(rows) / PAGE)
         for page in range(page_count):
-            chunk = rows[page * PAGE: (page + 1) * PAGE]
+            chunk = rows[page * PAGE : (page + 1) * PAGE]
             lines = [
-                f"`{row['name']}` — {row['track_count']} tracks — <@{row['created_by']}>"
-                for row in chunk
+                f"`{row['name']}` — {row['track_count']} tracks — <@{row['created_by']}>" for row in chunk
             ]
-            title = ("Saved Playlists" if page_count == 1
-                     else f"Saved Playlists (page {page+1}/{page_count})")
+            title = (
+                "Saved Playlists" if page_count == 1 else f"Saved Playlists (page {page + 1}/{page_count})"
+            )
             embed = discord.Embed(title=title, description="\n".join(lines), colour=EMBED_COLOUR)
             embed.set_footer(text=f"{len(rows)} playlist(s) total")
             await context.send(embed=embed)
@@ -1011,16 +1033,19 @@ class MusicCog(ExtractionMixin, ResolverMixin, NPanelMixin, commands.Cog):
         if not rows:
             await context.send("Playlist not found.")
             return
-        PAGE       = 15
+        PAGE = 15
         page_count = math.ceil(len(rows) / PAGE)
         for page in range(page_count):
-            chunk = rows[page * PAGE: (page + 1) * PAGE]
+            chunk = rows[page * PAGE : (page + 1) * PAGE]
             lines = [
                 f"`{index}.` {discord.utils.escape_markdown(row['title'])}"
                 for index, row in enumerate(chunk, start=page * PAGE + 1)
             ]
-            title = (f"Playlist: {name.lower()}" if page_count == 1
-                     else f"Playlist: {name.lower()} (page {page+1}/{page_count})")
+            title = (
+                f"Playlist: {name.lower()}"
+                if page_count == 1
+                else f"Playlist: {name.lower()} (page {page + 1}/{page_count})"
+            )
             embed = discord.Embed(title=title, description="\n".join(lines), colour=EMBED_COLOUR)
             embed.set_footer(text=f"{len(rows)} track(s) total")
             await context.send(embed=embed)
@@ -1028,27 +1053,33 @@ class MusicCog(ExtractionMixin, ResolverMixin, NPanelMixin, commands.Cog):
     @playlist.command(name="load")
     @commands.guild_only()
     async def playlist_load(self, context: commands.Context[Any], name: str) -> None:
-        player    = await self._join_for_context(context)
-        rows      = await self.bot.database.get_playlist_entries(context.guild.id, name.lower())
+        player = await self._join_for_context(context)
+        rows = await self.bot.database.get_playlist_entries(context.guild.id, name.lower())
         if not rows:
             await context.send("Playlist not found.")
             return
-        cap_rows  = list(rows[: self.bot.settings.max_playlist_size])
+        cap_rows = list(rows[: self.bot.settings.max_playlist_size])
         truncated = len(rows) - len(cap_rows)
-        added     = 0
+        added = 0
         async with context.typing():
             for row in cap_rows:
                 if len(player.queue) >= self.bot.settings.max_queue_size:
                     break
-                query       = row["query"]
+                query = row["query"]
                 webpage_url = row["webpage_url"] or query
                 if not query or not webpage_url:
                     continue
-                await player.enqueue(Track(
-                    title=row["title"], webpage_url=webpage_url, stream_url="",
-                    uploader="Saved playlist", duration=0,
-                    requester_id=context.author.id, query=query,
-                ))
+                await player.enqueue(
+                    Track(
+                        title=row["title"],
+                        webpage_url=webpage_url,
+                        stream_url="",
+                        uploader="Saved playlist",
+                        duration=0,
+                        requester_id=context.author.id,
+                        query=query,
+                    )
+                )
                 added += 1
         queue_skipped = len(cap_rows) - added
         self._persist_snapshot(context.guild.id)
