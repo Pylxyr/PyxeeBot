@@ -204,6 +204,7 @@ def prepare_entry(item: dict[str, Any]) -> SearchEntryContext:
         channel_is_verified=bool(item.get("channel_is_verified", False)),
         upload_date=str(item.get("upload_date") or ""),
         was_live=bool(item.get("was_live", False)),
+        description_token_set=frozenset(tokenize_text(str(item.get("description") or "")[:500])),
     )
 
 
@@ -382,8 +383,9 @@ def score_entry(
     discouraged_penalty = 0.0
     raw_query_token_set = set(query.raw_query_tokens)
 
+    combined_token_set = entry.metadata_token_set | entry.description_token_set
     for token, weight in SEARCH_DISCOURAGED_TOKENS.items():
-        if token not in raw_query_token_set and token in entry.metadata_token_set:
+        if token not in raw_query_token_set and token in combined_token_set:
             if is_anime_query and token in {"live", "stage", "concert"}:
                 discouraged_penalty += weight * _ANIME_LIVE_PENALTY_SCALE
             elif curation_mode and token in SEARCH_CURATION_EXTRA_TOKENS:
@@ -469,7 +471,7 @@ def score_entry(
         )
         if is_jp and not _JP_EVENT_FROM_RE.search(raw_title):
             jp_original_bonus = _JP_ORIGINAL_BONUS
-            if anchor_score > 0 and not _CJK_RE.search(query.normalized_query):
+            if uploader_overlap > 0 and not _CJK_RE.search(query.normalized_query):
                 jp_original_bonus += _JP_ROMANIZED_ANCHOR_BONUS
 
     final = (

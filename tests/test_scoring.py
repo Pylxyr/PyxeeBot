@@ -278,6 +278,14 @@ def test_was_live_applies_penalty():
     assert _score("artist song", live) < _score("artist song", base)
 
 
+def test_description_live_keyword_penalised():
+    # A track whose description contains "live" (but not the title) should score
+    # lower than one without it, for a non-live query.
+    clean = _item("Artist - Song", "Artist")
+    with_desc = dict(clean, description="Recorded live at Budokan 2024")
+    assert _score("artist song", with_desc) < _score("artist song", clean)
+
+
 # ── score_anchor_match ────────────────────────────────────────────────────────
 
 

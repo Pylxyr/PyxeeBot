@@ -102,6 +102,7 @@ class SearchEntryContext:
     channel_is_verified: bool
     upload_date: str
     was_live: bool = False
+    description_token_set: frozenset[str] = field(default_factory=frozenset)
 
 
 @dataclass(slots=True)
