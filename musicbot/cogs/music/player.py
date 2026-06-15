@@ -163,7 +163,9 @@ class GuildPlayer:
             return False
         previous_track = self.history.pop()
         if self.current:
+            self._total_duration += self.current.duration
             self.queue.appendleft(self.current)
+        self._total_duration += previous_track.duration
         self.queue.appendleft(previous_track)
         self.rewind_requested = True
         self.next_event.set()

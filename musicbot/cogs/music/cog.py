@@ -476,7 +476,7 @@ class MusicCog(ExtractionMixin, ResolverMixin, NPanelMixin, commands.Cog):
             await context.send("No tracks have been played this session.")
             return
         lines = [
-            f"`{i}.` [{discord.utils.escape_markdown(t.title)}]({t.webpage_url})"
+            f"`{i}.` [{t.escaped_title}]({t.webpage_url})"
             f" — <@{t.requester_id}>"
             for i, t in enumerate(reversed(hist), start=1)
         ]
@@ -509,7 +509,8 @@ class MusicCog(ExtractionMixin, ResolverMixin, NPanelMixin, commands.Cog):
             detail = (
                 f"title={c.title_overlap:.2f} artist={c.uploader_overlap:.2f} "
                 f"anchor={c.anchor_score:+.2f} jp={c.jp_original_bonus:+.2f} "
-                f"views={c.view_bonus:+.2f} penalty={-c.discouraged_penalty:+.2f}"
+                f"recency={c.recency_bonus:+.2f} views={c.view_bonus:+.2f} "
+                f"penalty={-c.discouraged_penalty:+.2f}"
             )
             lines.append(
                 f"`#{c.rank}` **{c.final_score:+.3f}**{sel} "
@@ -551,6 +552,7 @@ class MusicCog(ExtractionMixin, ResolverMixin, NPanelMixin, commands.Cog):
         if target.thumbnail_url:
             embed.set_thumbnail(url=target.thumbnail_url)
         await context.send(embed=embed)
+        await self._refresh_now_playing_message(context.guild.id)
 
     @commands.hybrid_command(name="replay")
     @commands.guild_only()
@@ -716,9 +718,13 @@ class MusicCog(ExtractionMixin, ResolverMixin, NPanelMixin, commands.Cog):
         self._remember_channel(player, context.channel)
         search_query = f"ytsearch{self._search_result_count(query)}:{self._preprocess_query(query)}"
         async with context.typing():
-            tracks, _ = await self._extract_search_candidates(
-                search_query, requester_id=context.author.id
-            )
+            token = _CURRENT_GUILD_ID.set(context.guild.id)
+            try:
+                tracks, _ = await self._extract_search_candidates(
+                    search_query, requester_id=context.author.id
+                )
+            finally:
+                _CURRENT_GUILD_ID.reset(token)
         selected = await self._prompt_for_search_selection(
             context, search_query, tracks, mode="play"
         )
@@ -928,7 +934,13 @@ class MusicCog(ExtractionMixin, ResolverMixin, NPanelMixin, commands.Cog):
         queue_list.insert(to_index - 1, track)
         player.replace_queue(queue_list)
         self._persist_snapshot(context.guild.id)
-        await context.send(f"Moved **{track.escaped_title}** from `{from_index}` to `{to_index}`.")
+        embed = discord.Embed(
+            description=f"Moved **{track.escaped_title}** from `{from_index}` to `{to_index}`.",
+            colour=EMBED_COLOUR,
+        )
+        if track.thumbnail_url:
+            embed.set_thumbnail(url=track.thumbnail_url)
+        await context.send(embed=embed)
         await self._refresh_now_playing_message(context.guild.id)
 
     @commands.hybrid_command(name="loop")
