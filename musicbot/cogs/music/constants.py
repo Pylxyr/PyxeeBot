@@ -206,6 +206,7 @@ _JP_COVER_BRACKET_RE = re.compile(
 _BRACKET_STRIP_RE = re.compile(r"[\(\[（【][^\)\]）】]*[\)\]）】]")
 _CJK_RE = re.compile(r"[\u3040-\u30ff\u4e00-\u9fff]")
 _HANGUL_RE = re.compile(r"[\uAC00-\uD7AF\u3130-\u318F]")
+_KANA_RE = re.compile(r"[\u3040-\u30ff]")  # hiragana + katakana only (not shared CJK)
 # Matches "(from <event>)" / "（from <event>）" in raw titles — indicates the
 # video is sourced from a concert, cafe-event, or other live context rather
 # than being a standalone original release.

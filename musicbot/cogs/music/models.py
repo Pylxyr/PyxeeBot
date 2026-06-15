@@ -101,6 +101,7 @@ class SearchEntryContext:
     view_count: int
     channel_is_verified: bool
     upload_date: str
+    was_live: bool = False
 
 
 @dataclass(slots=True)

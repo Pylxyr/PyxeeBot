@@ -200,6 +200,84 @@ def test_jp_original_bonus_for_cjk_title():
     assert _score(query, jp_item) > _score(query, non_jp)
 
 
+def test_chinese_title_no_jp_bonus():
+    # Pure CJK but no kana — should not receive jp_original_bonus
+    chinese = {
+        "title": "制服·剪刀·鲨鱼尾",
+        "uploader": "san-z Topic",
+        "channel": "san-z Topic",
+        "duration": 163,
+        "view_count": 800_000,
+        "webpage_url": "https://youtube.com/watch?v=zh",
+    }
+    latin = {
+        "title": "Seifuku Scissors Sharkuzu",
+        "uploader": "san-z",
+        "channel": "san-z",
+        "duration": 163,
+        "view_count": 800_000,
+        "webpage_url": "https://youtube.com/watch?v=la",
+    }
+    bd_cn: dict = {}
+    bd_la: dict = {}
+    from musicbot.cogs.music.scoring import prepare_entry, build_query_context, score_entry
+
+    e_cn = prepare_entry(chinese)
+    e_la = prepare_entry(latin)
+    ctx = build_query_context("san-z pinking", [e_cn, e_la])
+    score_entry(ctx, e_cn, breakdown=bd_cn)
+    score_entry(ctx, e_la, breakdown=bd_la)
+    assert bd_cn.get("jp_original_bonus", 0.0) == 0.0, "Chinese title must not receive jp_original_bonus"
+
+
+def test_jp_kana_title_gets_jp_bonus():
+    # Title with hiragana/katakana must receive jp_original_bonus
+    jp = {
+        "title": "三月のパンタシア 『パステルレイン』",
+        "uploader": "Sangatsu no Phantasia",
+        "channel": "Sangatsu no Phantasia",
+        "duration": 224,
+        "view_count": 2_000_000,
+        "webpage_url": "https://youtube.com/watch?v=jp",
+    }
+    bd: dict = {}
+    from musicbot.cogs.music.scoring import prepare_entry, build_query_context, score_entry
+
+    entry = prepare_entry(jp)
+    ctx = build_query_context("sangatsu no phantasia pastel rain", [entry])
+    score_entry(ctx, entry, breakdown=bd)
+    assert bd.get("jp_original_bonus", 0.0) > 0.0, "Kana title must receive jp_original_bonus"
+
+
+def test_jp_romanized_anchor_bonus_beats_latin_live():
+    # Official CJK-titled JP track should outscore a Latin-titled version when
+    # the artist is known (anchor) and the query is romanized Latin.
+    jp_studio = {
+        "title": "三月のパンタシア 『パステルレイン』",
+        "uploader": "Sangatsu no Phantasia",
+        "channel": "Sangatsu no Phantasia",
+        "duration": 224,
+        "view_count": 2_000_000,
+        "webpage_url": "https://youtube.com/watch?v=jp",
+    }
+    latin_live = {
+        "title": "Sangatsu No Phantasia - Pastel Rain",
+        "uploader": "Sangatsu no Phantasia",
+        "channel": "Sangatsu no Phantasia",
+        "duration": 219,
+        "view_count": 500_000,
+        "webpage_url": "https://youtube.com/watch?v=la",
+    }
+    query = "sangatsu no phantasia pastel rain"
+    assert _score(query, jp_studio) > _score(query, latin_live)
+
+
+def test_was_live_applies_penalty():
+    base = _item("Artist - Song", "Artist")
+    live = dict(base, was_live=True)
+    assert _score("artist song", live) < _score("artist song", base)
+
+
 # ── score_anchor_match ────────────────────────────────────────────────────────
 
 

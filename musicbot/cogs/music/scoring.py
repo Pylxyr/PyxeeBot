@@ -14,6 +14,7 @@ from musicbot.cogs.music.constants import (
     _ANIME_INTENT_RE,
     _BRACKET_STRIP_RE,
     _CJK_RE,
+    _KANA_RE,
     _DASH_SEPARATED_RE,
     _HANGUL_RE,
     _JP_COVER_BRACKET_RE,
@@ -118,6 +119,8 @@ _SYNERGY_BONUS_PARTIAL = 0.24  # high title overlap with partial uploader covera
 _DASH_FORMAT_BONUS = 0.18
 _VERIFIED_BONUS = 0.15
 _JP_ORIGINAL_BONUS = 0.55
+_JP_ROMANIZED_ANCHOR_BONUS = 1.80  # extra boost: CJK-titled JP original, Latin query, known artist
+_WAS_LIVE_PENALTY = 0.50
 _DURATION_BONUS_IDEAL = 0.10
 _DURATION_BONUS_OK = 0.05
 _DURATION_PENALTY_LONG = -0.12
@@ -200,6 +203,7 @@ def prepare_entry(item: dict[str, Any]) -> SearchEntryContext:
         view_count=int(item.get("view_count") or 0),
         channel_is_verified=bool(item.get("channel_is_verified", False)),
         upload_date=str(item.get("upload_date") or ""),
+        was_live=bool(item.get("was_live", False)),
     )
 
 
@@ -407,6 +411,9 @@ def score_entry(
         if not query_asks_cover:
             discouraged_penalty += _JP_COVER_PENALTY
 
+    if entry.was_live:
+        discouraged_penalty += _WAS_LIVE_PENALTY
+
     if _DUR_IDEAL_MIN <= entry.duration <= _DUR_IDEAL_MAX:
         duration_bonus = _DURATION_BONUS_IDEAL
     elif _DUR_OK_MIN <= entry.duration <= _DUR_OK_MAX:
@@ -454,11 +461,16 @@ def score_entry(
         hangul_count = len(_HANGUL_RE.findall(title_core))
         cjk_count = len(re.findall(r"[\u3040-\u30ff\u4e00-\u9fff]", title_core))
         latin_ratio = latin_chars / total_chars if total_chars else 1.0
-        is_jp = latin_ratio < _THR_JP_LATIN_RATIO and (
-            hangul_count == 0 or cjk_count > hangul_count * _THR_JP_CJK_HANGUL
+        kana_count = len(_KANA_RE.findall(title_core))
+        is_jp = (
+            kana_count > 0
+            and latin_ratio < _THR_JP_LATIN_RATIO
+            and (hangul_count == 0 or cjk_count > hangul_count * _THR_JP_CJK_HANGUL)
         )
         if is_jp and not _JP_EVENT_FROM_RE.search(raw_title):
             jp_original_bonus = _JP_ORIGINAL_BONUS
+            if anchor_score > 0 and not _CJK_RE.search(query.normalized_query):
+                jp_original_bonus += _JP_ROMANIZED_ANCHOR_BONUS
 
     final = (
         (ratio * _W_FUZZY_RATIO)
