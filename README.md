@@ -51,6 +51,7 @@ Queries go through a custom multi-factor scoring engine built entirely in Python
 | Duration sanity | Penalises hour-long compilations and <60s clips |
 | JP original detection | Boosts CJK-title uploads for J-pop / anime searches |
 | View count signal | Log-scaled bonus, capped to avoid popularity bias |
+| Recency bonus | Boosts tracks uploaded within the last 6 months / 1 year / 2 years |
 
 Run `!why` after any search to see the full per-candidate score breakdown in Discord, or DM yourself the complete component-level breakdown.
 
@@ -202,6 +203,11 @@ All settings are read from `.env`. Every value has a default.
 | `NP_AUTO_REFRESH` | `false` | Auto-refresh NP embed on a timer |
 | `NP_AUTO_REFRESH_INTERVAL` | `30` | Seconds between auto-refresh edits |
 | `YTDLP_COOKIES_FILE` | — | Path to Netscape cookies file |
+| `YTDLP_PREFETCH_COUNT` | `1` | Queue positions to pre-resolve in the background pipeline |
+| `YTDLP_CURATION_CONCURRENCY` | `3` | Concurrent Last.fm vibe lookups (max 6) |
+| `MAX_QUEUE_SIZE_PER_USER` | `0` | Per-user track limit; `0` disables the limit |
+| `NEAR_END_PREFETCH_SECONDS` | `30` | Trigger safety-net URL refresh this many seconds before track end |
+| `ERROR_ANNOUNCE` | `true` | Post playback errors to the announce channel |
 
 ---
 
@@ -223,6 +229,7 @@ All settings are read from `.env`. Every value has a default.
 | `!nowplaying` | `np` | Open the live control panel |
 | `!loop` | — | Cycle loop mode (DJ) |
 | `!replay` | — | Re-queue current track (DJ) |
+| `!repeat` | `rp` | Toggle single-track repeat |
 | `!join` | `summon` | Join your voice channel |
 | `!leave` | `disconnect` | Disconnect and clear session |
 
@@ -262,7 +269,7 @@ All settings are read from `.env`. Every value has a default.
 
 | Command | Aliases | Description |
 |---|---|---|
-| `!why` | `searchdebug` | Show last search score breakdown |
+| `!why` | `searchdebug`, `scorewhy` | Show last search score breakdown |
 | `!setdj <role>` | — | Set the DJ role |
 | `!cleardj` | — | Remove the DJ role |
 | `!dj` | — | Show current DJ role |
