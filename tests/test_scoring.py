@@ -286,6 +286,37 @@ def test_description_live_keyword_penalised():
     assert _score("artist song", with_desc) < _score("artist song", clean)
 
 
+def test_topic_bonus_zeroed_without_title_overlap():
+    # A Topic channel song with zero title match should not receive topic or
+    # preferred-uploader bonuses — they are song-level signals, not artist-level.
+    topic_no_title = _item("Completely Different Song", "san-z Topic")
+    topic_no_title["channel"] = "san-z Topic"
+    correct_song = _item("pinking", "san-z")
+
+    q = "pinking san-z"
+    bd_wrong: dict = {}
+    bd_right: dict = {}
+    from musicbot.cogs.music.scoring import prepare_entry, build_query_context, score_entry
+
+    e_wrong = prepare_entry(topic_no_title)
+    e_right = prepare_entry(correct_song)
+    ctx = build_query_context(q, [e_wrong, e_right])
+    score_entry(ctx, e_wrong, breakdown=bd_wrong)
+    score_entry(ctx, e_right, breakdown=bd_right)
+
+    assert bd_wrong["topic_bonus"] == 0.0, "topic_bonus must be 0 when title_overlap is 0"
+    assert bd_wrong["uploader_pref_bonus"] == 0.0, "uploader_pref_bonus must be 0 when title_overlap is 0"
+    assert bd_right["final"] > bd_wrong["final"], "correct song must outscore wrong-channel song"
+
+
+def test_discouraged_penalty_capped():
+    # Even a heavily penalised track (e.g. lyrics video) should not score lower
+    # than a completely title-irrelevant track.
+    lyrics_correct = dict(_item("pinking", "san-z"), title="pinking san-z official english lyrics")
+    irrelevant = _item("Completely Different Song", "san-z")
+    assert _score("pinking san-z", lyrics_correct) > _score("pinking san-z", irrelevant)
+
+
 # ── score_anchor_match ────────────────────────────────────────────────────────
 
 

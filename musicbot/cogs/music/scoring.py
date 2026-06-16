@@ -61,7 +61,8 @@ _THR_TITLE_MIN = 0.45  # minimum title_overlap to trigger completion logic
 _THR_TITLE_HIGH = 0.75  # high title_overlap for penalty / partial synergy
 _THR_TITLE_SYNERGY = 0.55  # title_overlap required for full synergy bonus
 _THR_DASH_RATIO = 0.70  # fuzzy ratio required for dash-format bonus
-_THR_PENALTY_GATE = 0.50  # discouraged_penalty cap: above this, skip recency/JP
+_THR_PENALTY_GATE = 0.50  # above this, skip recency/JP bonuses
+_MAX_DISCOURAGED_PENALTY = 0.65  # hard cap so a perfect title match can never rank last
 _THR_JP_LATIN_RATIO = 0.35  # max latin-char ratio to qualify as JP original
 _THR_JP_CJK_HANGUL = 1.5  # CJK must exceed hangul by this multiple for JP
 
@@ -352,6 +353,12 @@ def score_entry(
         w for tok, w in SEARCH_PREFERRED_UPLOADER_TOKENS.items() if tok in entry.uploader_token_set
     )
 
+    # Channel-level bonuses should amplify the right song, not every song from
+    # the artist's channel.  With no title signal at all they do more harm than good.
+    if title_overlap == 0:
+        topic_bonus = 0.0
+        uploader_preference_bonus = 0.0
+
     artist_completion_bonus = 0.0
     title_only_penalty = 0.0
     if missing_title_tokens and title_overlap >= _THR_TITLE_MIN:
@@ -415,6 +422,9 @@ def score_entry(
 
     if entry.was_live:
         discouraged_penalty += _WAS_LIVE_PENALTY
+
+    if not curation_mode:
+        discouraged_penalty = min(discouraged_penalty, _MAX_DISCOURAGED_PENALTY)
 
     if _DUR_IDEAL_MIN <= entry.duration <= _DUR_IDEAL_MAX:
         duration_bonus = _DURATION_BONUS_IDEAL
