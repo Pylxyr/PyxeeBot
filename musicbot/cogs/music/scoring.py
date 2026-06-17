@@ -7,7 +7,7 @@ import time
 from collections import OrderedDict
 from datetime import date as _date
 from functools import lru_cache
-from typing import Any
+from typing import Any, NamedTuple
 from rapidfuzz import fuzz as _fuzz
 
 from musicbot.cogs.music.constants import (
@@ -304,30 +304,41 @@ def score_anchor_match(
     return _ANCHOR_NO_MATCH
 
 
-def score_entry(
-    query: SearchQueryContext,
-    entry: SearchEntryContext,
-    *,
-    breakdown: dict[str, float] | None = None,
-    curation_mode: bool = False,
-    _today: _date | None = None,
-) -> float:
-    if not query.normalized_query or not entry.normalized_metadata:
-        return 0.0
+class _OverlapSignals(NamedTuple):
+    title_overlap: float
+    uploader_overlap: float
+    metadata_overlap: float
+    missing_title_tokens: list[str]
+    missing_title_uploader_overlap: float
 
-    is_anime_query = query.intent.get("anime", False)
-    is_dash_query = query.intent.get("dash_format", False)
 
+def _compute_overlap_signals(query: SearchQueryContext, entry: SearchEntryContext) -> _OverlapSignals:
     title_overlap = token_overlap_ratio(query.query_tokens, entry.title_token_set)
     uploader_overlap = token_overlap_ratio(query.query_tokens, entry.uploader_token_set)
     metadata_overlap = token_overlap_ratio(query.query_tokens, entry.metadata_token_set)
-
     missing_title_tokens = [t for t in query.query_tokens if t not in entry.title_token_set]
     missing_title_uploader_overlap = token_overlap_ratio(missing_title_tokens, entry.uploader_token_set)
+    return _OverlapSignals(
+        title_overlap,
+        uploader_overlap,
+        metadata_overlap,
+        missing_title_tokens,
+        missing_title_uploader_overlap,
+    )
 
+
+class _FuzzySignals(NamedTuple):
+    ratio: float
+    metadata_ratio: float
+    exact_metadata_match: float
+    metadata_prefix_match: float
+    all_title_tokens_match: float
+    all_metadata_tokens_match: float
+
+
+def _compute_fuzzy_signals(query: SearchQueryContext, entry: SearchEntryContext) -> _FuzzySignals:
     ratio = _fuzz.ratio(query.normalized_query, entry.normalized_title) / 100.0
     metadata_ratio = _fuzz.partial_ratio(query.normalized_query, entry.normalized_metadata) / 100.0
-
     exact_metadata_match = 1.0 if query.normalized_query in entry.normalized_metadata else 0.0
     metadata_prefix_match = 1.0 if entry.normalized_metadata.startswith(query.normalized_query) else 0.0
     all_title_tokens_match = (
@@ -336,7 +347,30 @@ def score_entry(
     all_metadata_tokens_match = (
         1.0 if query.query_token_set and query.query_token_set.issubset(entry.metadata_token_set) else 0.0
     )
+    return _FuzzySignals(
+        ratio,
+        metadata_ratio,
+        exact_metadata_match,
+        metadata_prefix_match,
+        all_title_tokens_match,
+        all_metadata_tokens_match,
+    )
 
+
+class _ChannelSignals(NamedTuple):
+    artist_match_bonus: float
+    strong_uploader_bonus: float
+    topic_bonus: float
+    uploader_preference_bonus: float
+
+
+def _score_channel_signals(
+    query: SearchQueryContext,
+    entry: SearchEntryContext,
+    uploader_overlap: float,
+    title_overlap: float,
+    curation_mode: bool,
+) -> _ChannelSignals:
     artist_token_matches = len(query.query_token_set & entry.uploader_token_set)
     artist_match_bonus = (
         _ARTIST_BONUS_MULTI
@@ -352,13 +386,26 @@ def score_entry(
     uploader_preference_bonus = sum(
         w for tok, w in SEARCH_PREFERRED_UPLOADER_TOKENS.items() if tok in entry.uploader_token_set
     )
-
     # Channel-level bonuses should amplify the right song, not every song from
     # the artist's channel.  With no title signal at all they do more harm than good.
     if title_overlap == 0:
         topic_bonus = 0.0
         uploader_preference_bonus = 0.0
+    return _ChannelSignals(artist_match_bonus, strong_uploader_bonus, topic_bonus, uploader_preference_bonus)
 
+
+class _CompletionSignals(NamedTuple):
+    artist_completion_bonus: float
+    title_only_penalty: float
+    title_uploader_synergy: float
+
+
+def _score_completion_and_synergy(
+    title_overlap: float,
+    uploader_overlap: float,
+    missing_title_tokens: list[str],
+    missing_title_uploader_overlap: float,
+) -> _CompletionSignals:
     artist_completion_bonus = 0.0
     title_only_penalty = 0.0
     if missing_title_tokens and title_overlap >= _THR_TITLE_MIN:
@@ -381,12 +428,15 @@ def score_entry(
         and missing_title_uploader_overlap >= _THR_UPLOADER_PARTIAL
     ):
         title_uploader_synergy = _SYNERGY_BONUS_PARTIAL
+    return _CompletionSignals(artist_completion_bonus, title_only_penalty, title_uploader_synergy)
 
-    dash_format_bonus = _DASH_FORMAT_BONUS if is_dash_query and ratio >= _THR_DASH_RATIO else 0.0
-    preferred_bonus = sum(
-        w for phrase, w in SEARCH_PREFERRED_PHRASES.items() if phrase in entry.normalized_metadata
-    )
 
+def _score_discouraged_penalty(
+    query: SearchQueryContext,
+    entry: SearchEntryContext,
+    curation_mode: bool,
+    is_anime_query: bool,
+) -> float:
     discouraged_penalty = 0.0
     raw_query_token_set = set(query.raw_query_tokens)
 
@@ -426,80 +476,134 @@ def score_entry(
     if not curation_mode:
         discouraged_penalty = min(discouraged_penalty, _MAX_DISCOURAGED_PENALTY)
 
-    if _DUR_IDEAL_MIN <= entry.duration <= _DUR_IDEAL_MAX:
-        duration_bonus = _DURATION_BONUS_IDEAL
-    elif _DUR_OK_MIN <= entry.duration <= _DUR_OK_MAX:
-        duration_bonus = _DURATION_BONUS_OK
-    elif entry.duration > _DUR_LONG:
-        duration_bonus = _DURATION_PENALTY_LONG
-    else:
-        duration_bonus = 0.0
+    return discouraged_penalty
 
-    anchor_score = score_anchor_match(entry, query.anchor_phrases)
 
+def _score_duration_bonus(duration: int) -> float:
+    if _DUR_IDEAL_MIN <= duration <= _DUR_IDEAL_MAX:
+        return _DURATION_BONUS_IDEAL
+    if _DUR_OK_MIN <= duration <= _DUR_OK_MAX:
+        return _DURATION_BONUS_OK
+    if duration > _DUR_LONG:
+        return _DURATION_PENALTY_LONG
+    return 0.0
+
+
+def _score_view_bonus(entry: SearchEntryContext) -> float:
     vc = entry.view_count
-    _is_topic = "topic" in entry.uploader_token_set
     if vc >= _VIEW_MIN:
-        view_bonus = min(
+        return min(
             _VIEW_BONUS_MAX, (math.log10(vc) - _VIEW_BONUS_LOG_REF) / _VIEW_BONUS_LOG_RNG * _VIEW_BONUS_MAX
         )
-    elif _is_topic:
-        view_bonus = _VIEW_BONUS_TOPIC
-    else:
-        view_bonus = 0.0
+    if "topic" in entry.uploader_token_set:
+        return _VIEW_BONUS_TOPIC
+    return 0.0
 
-    verified_bonus = _VERIFIED_BONUS if entry.channel_is_verified else 0.0
 
-    recency_bonus = 0.0
+def _score_recency_bonus(entry: SearchEntryContext, discouraged_penalty: float, today: _date) -> float:
     ud = entry.upload_date
-    if len(ud) == 8 and ud.isdigit() and discouraged_penalty < _THR_PENALTY_GATE:
-        try:
-            uploaded = _date(int(ud[:4]), int(ud[4:6]), int(ud[6:8]))
-            days_old = ((_today or _date.today()) - uploaded).days
-            if days_old <= _RECENCY_DAYS_NEW:
-                recency_bonus = _RECENCY_BONUS_NEW
-            elif days_old <= _RECENCY_DAYS_RECENT:
-                recency_bonus = _RECENCY_BONUS_RECENT
-            elif days_old <= _RECENCY_DAYS_OLDER:
-                recency_bonus = _RECENCY_BONUS_OLDER
-        except ValueError:
-            pass
+    if not (len(ud) == 8 and ud.isdigit() and discouraged_penalty < _THR_PENALTY_GATE):
+        return 0.0
+    try:
+        uploaded = _date(int(ud[:4]), int(ud[4:6]), int(ud[6:8]))
+        days_old = (today - uploaded).days
+    except ValueError:
+        return 0.0
+    if days_old <= _RECENCY_DAYS_NEW:
+        return _RECENCY_BONUS_NEW
+    if days_old <= _RECENCY_DAYS_RECENT:
+        return _RECENCY_BONUS_RECENT
+    if days_old <= _RECENCY_DAYS_OLDER:
+        return _RECENCY_BONUS_OLDER
+    return 0.0
 
-    jp_original_bonus = 0.0
+
+def _score_jp_original_bonus(
+    query: SearchQueryContext,
+    entry: SearchEntryContext,
+    uploader_overlap: float,
+    discouraged_penalty: float,
+) -> float:
+    if discouraged_penalty >= _THR_PENALTY_GATE:
+        return 0.0
+    raw_title = str(entry.item.get("title") or "")
     title_core = _BRACKET_STRIP_RE.sub("", raw_title).strip()
-    if discouraged_penalty < _THR_PENALTY_GATE and _CJK_RE.search(title_core):
-        latin_chars = len(re.findall(r"[a-zA-Z]", title_core))
-        total_chars = len(title_core.replace(" ", ""))
-        hangul_count = len(_HANGUL_RE.findall(title_core))
-        cjk_count = len(re.findall(r"[\u3040-\u30ff\u4e00-\u9fff]", title_core))
-        latin_ratio = latin_chars / total_chars if total_chars else 1.0
-        kana_count = len(_KANA_RE.findall(title_core))
-        is_jp = (
-            kana_count > 0
-            and latin_ratio < _THR_JP_LATIN_RATIO
-            and (hangul_count == 0 or cjk_count > hangul_count * _THR_JP_CJK_HANGUL)
-        )
-        if is_jp and not _JP_EVENT_FROM_RE.search(raw_title):
-            jp_original_bonus = _JP_ORIGINAL_BONUS
-            if uploader_overlap > 0 and not _CJK_RE.search(query.normalized_query):
-                jp_original_bonus += _JP_ROMANIZED_ANCHOR_BONUS
+    if not _CJK_RE.search(title_core):
+        return 0.0
+    latin_chars = len(re.findall(r"[a-zA-Z]", title_core))
+    total_chars = len(title_core.replace(" ", ""))
+    hangul_count = len(_HANGUL_RE.findall(title_core))
+    cjk_count = len(re.findall(r"[\u3040-\u30ff\u4e00-\u9fff]", title_core))
+    latin_ratio = latin_chars / total_chars if total_chars else 1.0
+    kana_count = len(_KANA_RE.findall(title_core))
+    is_jp = (
+        kana_count > 0
+        and latin_ratio < _THR_JP_LATIN_RATIO
+        and (hangul_count == 0 or cjk_count > hangul_count * _THR_JP_CJK_HANGUL)
+    )
+    if not is_jp or _JP_EVENT_FROM_RE.search(raw_title):
+        return 0.0
+    bonus = _JP_ORIGINAL_BONUS
+    if uploader_overlap > 0 and not _CJK_RE.search(query.normalized_query):
+        bonus += _JP_ROMANIZED_ANCHOR_BONUS
+    return bonus
+
+
+def score_entry(
+    query: SearchQueryContext,
+    entry: SearchEntryContext,
+    *,
+    breakdown: dict[str, float] | None = None,
+    curation_mode: bool = False,
+    _today: _date | None = None,
+) -> float:
+    if not query.normalized_query or not entry.normalized_metadata:
+        return 0.0
+
+    is_anime_query = query.intent.get("anime", False)
+    is_dash_query = query.intent.get("dash_format", False)
+
+    overlap = _compute_overlap_signals(query, entry)
+    fuzzy = _compute_fuzzy_signals(query, entry)
+    channel = _score_channel_signals(
+        query, entry, overlap.uploader_overlap, overlap.title_overlap, curation_mode
+    )
+    completion = _score_completion_and_synergy(
+        overlap.title_overlap,
+        overlap.uploader_overlap,
+        overlap.missing_title_tokens,
+        overlap.missing_title_uploader_overlap,
+    )
+
+    dash_format_bonus = _DASH_FORMAT_BONUS if is_dash_query and fuzzy.ratio >= _THR_DASH_RATIO else 0.0
+    preferred_bonus = sum(
+        w for phrase, w in SEARCH_PREFERRED_PHRASES.items() if phrase in entry.normalized_metadata
+    )
+
+    discouraged_penalty = _score_discouraged_penalty(query, entry, curation_mode, is_anime_query)
+    duration_bonus = _score_duration_bonus(entry.duration)
+    anchor_score = score_anchor_match(entry, query.anchor_phrases)
+    view_bonus = _score_view_bonus(entry)
+    verified_bonus = _VERIFIED_BONUS if entry.channel_is_verified else 0.0
+    recency_bonus = _score_recency_bonus(entry, discouraged_penalty, _today or _date.today())
+    jp_original_bonus = _score_jp_original_bonus(query, entry, overlap.uploader_overlap, discouraged_penalty)
 
     final = (
-        (ratio * _W_FUZZY_RATIO)
-        + (metadata_ratio * _W_METADATA_RATIO)
-        + (title_overlap * _W_TITLE_OVERLAP)
-        + (uploader_overlap * _W_UPLOADER_OVERLAP)
-        + (metadata_overlap * _W_METADATA_OVERLAP)
-        + (exact_metadata_match * _W_EXACT_METADATA)
-        + (metadata_prefix_match * _W_PREFIX_MATCH)
-        + (all_title_tokens_match * _W_ALL_TITLE_TOKENS)
-        + (all_metadata_tokens_match * _W_ALL_METADATA_TOKENS)
-        + artist_match_bonus
-        + strong_uploader_bonus
-        + topic_bonus
-        + uploader_preference_bonus
-        + artist_completion_bonus
-        + title_uploader_synergy
+        (fuzzy.ratio * _W_FUZZY_RATIO)
+        + (fuzzy.metadata_ratio * _W_METADATA_RATIO)
+        + (overlap.title_overlap * _W_TITLE_OVERLAP)
+        + (overlap.uploader_overlap * _W_UPLOADER_OVERLAP)
+        + (overlap.metadata_overlap * _W_METADATA_OVERLAP)
+        + (fuzzy.exact_metadata_match * _W_EXACT_METADATA)
+        + (fuzzy.metadata_prefix_match * _W_PREFIX_MATCH)
+        + (fuzzy.all_title_tokens_match * _W_ALL_TITLE_TOKENS)
+        + (fuzzy.all_metadata_tokens_match * _W_ALL_METADATA_TOKENS)
+        + channel.artist_match_bonus
+        + channel.strong_uploader_bonus
+        + channel.topic_bonus
+        + channel.uploader_preference_bonus
+        + completion.artist_completion_bonus
+        + completion.title_uploader_synergy
         + dash_format_bonus
         + preferred_bonus
         + duration_bonus
@@ -508,24 +612,24 @@ def score_entry(
         + view_bonus
         + verified_bonus
         + recency_bonus
-        - title_only_penalty
+        - completion.title_only_penalty
         - discouraged_penalty
     )
 
     if breakdown is not None:
         breakdown.update(
             {
-                "title_overlap": title_overlap,
-                "uploader_overlap": uploader_overlap,
-                "ratio": ratio,
-                "metadata_ratio": metadata_ratio,
-                "topic_bonus": topic_bonus,
-                "uploader_pref_bonus": uploader_preference_bonus,
+                "title_overlap": overlap.title_overlap,
+                "uploader_overlap": overlap.uploader_overlap,
+                "ratio": fuzzy.ratio,
+                "metadata_ratio": fuzzy.metadata_ratio,
+                "topic_bonus": channel.topic_bonus,
+                "uploader_pref_bonus": channel.uploader_preference_bonus,
                 "anchor_score": anchor_score,
-                "artist_match_bonus": artist_match_bonus,
-                "strong_uploader_bonus": strong_uploader_bonus,
-                "artist_completion_bonus": artist_completion_bonus,
-                "title_uploader_synergy": title_uploader_synergy,
+                "artist_match_bonus": channel.artist_match_bonus,
+                "strong_uploader_bonus": channel.strong_uploader_bonus,
+                "artist_completion_bonus": completion.artist_completion_bonus,
+                "title_uploader_synergy": completion.title_uploader_synergy,
                 "preferred_bonus": preferred_bonus,
                 "discouraged_penalty": discouraged_penalty,
                 "duration_bonus": duration_bonus,
