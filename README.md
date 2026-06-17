@@ -46,10 +46,10 @@ Queries go through a custom multi-factor scoring engine built entirely in Python
 | Anchor phrases | Artist name extracted from cross-candidate analysis |
 | Topic channel bonus | YouTube Music auto-generated channels (always studio) |
 | Preferred uploaders | Label channels — HYBE, SMTOWN, Avex, Victor, etc. |
-| Live / concert penalty | Suppresses festival recordings, BBC sessions, TV performances |
+| Live / concert penalty | Suppresses festival recordings, BBC sessions, TV performances — checks title, description, and yt-dlp's `was_live` flag |
 | Cover penalty | Suppresses guitar/piano covers, karaoke, English covers |
 | Duration sanity | Penalises hour-long compilations and <60s clips |
-| JP original detection | Boosts CJK-title uploads for J-pop / anime searches |
+| JP original detection | Boosts kana-titled uploads for J-pop / anime searches, with an extra boost when the query is romanized Latin and the uploader matches |
 | View count signal | Log-scaled bonus, capped to avoid popularity bias |
 | Recency bonus | Boosts tracks uploaded within the last 6 months / 1 year / 2 years |
 
@@ -295,16 +295,23 @@ PyxeeBot/
         ├── admin.py     — Ping, DJ role management
         ├── curation.py  — Last.fm vibe/curation, auto-refill
         └── music/
-            ├── cog.py          — Commands, events, wiring (inherits mixins)
-            ├── _extraction.py  — ExtractionMixin: yt-dlp, audio source, search
-            ├── _resolver.py    — ResolverMixin: stream-URL cache and pipeline
-            ├── _panel.py       — NPanelMixin: NP embed rendering and refresh
-            ├── _context.py     — Shared ContextVar (avoids circular imports)
-            ├── player.py       — Per-guild audio state machine
-            ├── scoring.py      — Pure search scoring (no Discord dependency)
-            ├── views.py        — Discord UI: NP panel, queue, search, debug
-            ├── models.py       — Pure dataclasses
-            └── constants.py    — FFmpeg options, scoring tables, timing
+            ├── cog.py                  — MusicCog: composes all mixins, init, lifecycle hooks
+            ├── _lifecycle.py           — LifecycleMixin: player create/restore/cleanup, snapshots
+            ├── _helpers.py             — CommandHelpersMixin: permission checks, shared utilities
+            ├── _events.py              — EventsMixin: bot/player event listeners
+            ├── _playback_commands.py   — PlaybackCommandsMixin: join/play/skip/pause/loop/etc.
+            ├── _queue_commands.py      — QueueCommandsMixin: queue/remove/clear/shuffle/move
+            ├── _search_commands.py     — SearchCommandsMixin: search, why
+            ├── _playlist_commands.py   — PlaylistCommandsMixin: playlist save/load/list/show/delete
+            ├── _extraction.py          — ExtractionMixin: yt-dlp, audio source, search
+            ├── _resolver.py            — ResolverMixin: stream-URL cache and pipeline
+            ├── _panel.py               — NPanelMixin: NP embed rendering and refresh
+            ├── _context.py             — Shared ContextVar (avoids circular imports)
+            ├── player.py               — Per-guild audio state machine
+            ├── scoring.py              — Pure search scoring (no Discord dependency)
+            ├── views.py                — Discord UI: NP panel, queue, search, debug
+            ├── models.py               — Pure dataclasses
+            └── constants.py            — FFmpeg options, scoring tables, timing
 ```
 
 ---
@@ -313,7 +320,7 @@ PyxeeBot/
 
 **Search scoring** is fully pure — `scoring.py` has no Discord or bot imports and can be unit tested in isolation. Scores are logged at `DEBUG` level; `!why` surfaces them in Discord.
 
-**cog.py split** — the original 1877-line file is split into three private mixin classes (`ExtractionMixin`, `ResolverMixin`, `NPanelMixin`) that `MusicCog` inherits from. All instance state still lives in `MusicCog.__init__`; the mixins carry no state of their own. `_context.py` holds the shared `_CURRENT_GUILD_ID` ContextVar to avoid circular imports between the mixin files.
+**cog.py split** — `MusicCog` composes ten mixins: `ExtractionMixin`, `ResolverMixin`, `NPanelMixin`, `LifecycleMixin`, `CommandHelpersMixin`, `EventsMixin`, `PlaybackCommandsMixin`, `QueueCommandsMixin`, `SearchCommandsMixin`, and `PlaylistCommandsMixin`. `cog.py` itself only holds `__init__`, lifecycle hooks (`cog_load`/`cog_unload`/`shutdown`/`cog_command_error`), and `_bg_task`. All instance state still lives in `MusicCog.__init__`; no mixin carries state of its own. discord.py's `CogMeta` walks the full MRO when collecting commands and listeners, so `@commands.hybrid_command` and `@commands.Cog.listener()` decorators work identically whether defined directly on `MusicCog` or on any mixin it inherits from. `_context.py` holds the shared `_CURRENT_GUILD_ID` ContextVar to avoid circular imports between the mixin files.
 
 **Player loop** runs as a single long-lived `asyncio.Task` per guild. After each track finishes it re-evaluates loop mode, appends to history, and dispatches `musicbot_queue_updated` which triggers the snapshot debounce, NP refresh, and URL pipeline.
 
@@ -336,7 +343,7 @@ pip install pytest pytest-asyncio
 pytest
 ```
 
-Tests live in `tests/`. `test_scoring.py` covers the pure scoring engine (normalize, tokenize, signal tokens, overlap ratios, live/cover penalties, topic bonuses, anchor matching, rank ordering, debug record eviction). `test_player.py` covers `GuildPlayer` state transitions (enqueue duration tracking, replace_queue, snapshot fallback chain, pause/resume accounting, skip, play_previous).
+Tests live in `tests/`. `test_scoring.py` covers the pure scoring engine (normalize, tokenize, signal tokens, overlap ratios, live/cover penalties, topic bonuses, anchor matching, rank ordering, debug record eviction). `test_scoring_golden.py` pins down real-world ranking outcomes end-to-end — one case per scoring bug found and fixed in production (JP original vs. romanized live, correct song vs. wrong songs on the preferred channel, Chinese vs. Japanese script detection, live-recording detection, discouraged-penalty cap, anchor disambiguation, and more) so a future scoring tweak can't silently reintroduce a solved bug. `test_player.py` covers `GuildPlayer` state transitions (enqueue duration tracking, replace_queue, snapshot fallback chain, pause/resume accounting, skip, play_previous).
 
 ---
 
