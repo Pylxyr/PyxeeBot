@@ -27,6 +27,7 @@ YTDL_OPTIONS: dict[str, object] = {
     "default_search": "ytsearch",
     "ignoreerrors": True,
     "extract_flat": False,
+    "socket_timeout": 15,
 }
 
 NOW_PLAYING_PREVIEW_LIMIT = 5

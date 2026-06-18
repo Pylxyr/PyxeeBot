@@ -131,7 +131,7 @@ class CurationView(discord.ui.View):
         )
         result_msg = f"Queued {queued} track(s)." + (f" ({failed} could not be resolved.)" if failed else "")
         await interaction.edit_original_response(content=result_msg, embed=None, view=None)
-        del self.cog._sessions[self.session.guild_id]
+        self.cog._sessions.pop(self.session.guild_id, None)
 
     @discord.ui.button(label="Save Playlist", style=discord.ButtonStyle.primary, row=1)
     async def save_playlist(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
@@ -713,25 +713,36 @@ class CurationCog(commands.Cog, name="CurationCog"):
 
         queued = 0
         failed = 0
+        limit_hit = asyncio.Event()
+        concurrency = max(1, getattr(self.bot.settings, "ytdlp_curation_concurrency", 3))
+        sem = asyncio.Semaphore(concurrency)
 
-        for entry in entries:
-            query = str(entry["query"])
-            try:
-                tracks, _ = await music._extract_tracks(
-                    f"ytsearch5:{query}",
-                    requester_id=context.author.id,
-                    guild_id=context.guild.id,
-                )
-                if tracks:
-                    if music._check_per_user_limit(player, context.author.id):
+        async def _load_one(entry: dict[str, Any]) -> None:
+            nonlocal queued, failed
+            if limit_hit.is_set():
+                return
+            async with sem:
+                if limit_hit.is_set():
+                    return
+                query = str(entry["query"])
+                try:
+                    tracks, _ = await music._extract_tracks(
+                        f"ytsearch5:{query}",
+                        requester_id=context.author.id,
+                        guild_id=context.guild.id,
+                    )
+                    if not tracks:
                         failed += 1
-                        continue
+                        return
+                    if music._check_per_user_limit(player, context.author.id):
+                        limit_hit.set()
+                        return
                     await player.enqueue(tracks[0])
                     queued += 1
-                else:
+                except Exception:
                     failed += 1
-            except Exception:
-                failed += 1
+
+        await asyncio.gather(*(_load_one(entry) for entry in entries), return_exceptions=True)
 
         music._persist_snapshot(context.guild.id)
         await msg.edit(

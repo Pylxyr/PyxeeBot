@@ -130,12 +130,17 @@ class ExtractionMixin:
 
     async def _build_audio_source(self, track: Track) -> discord.AudioSource:
         # yt-dlp reports acodec="opus" for WebM/Opus streams (the common YouTube
-        # high-quality format).  Skip ffprobe entirely and use direct passthrough —
-        # saves one subprocess invocation and avoids re-encoding on 1 OCPU.
+        # high-quality format).  Skip the ffprobe subprocess since we already know
+        # the codec from yt-dlp metadata — but do NOT pass codec="copy". Copy mode
+        # bypasses the libopus encoder entirely, so -frame_duration/-flush_packets
+        # have no effect and ffmpeg dumps the container's buffered packets at
+        # whatever cadence it read them, causing fast-forwarded playback for the
+        # first few seconds of every track. Re-encoding (the default codec when
+        # omitted) is what makes the steady 20ms pacing in FFMPEG_OPTIONS work.
         if track.acodec == "opus":
             return discord.FFmpegOpusAudio(
                 track.stream_url,
-                codec="copy",
+                bitrate=self.bot.settings.opus_bitrate_kbps,  # type: ignore[attr-defined]
                 before_options=FFMPEG_BEFORE_OPTIONS,
                 options=FFMPEG_OPTIONS,
             )

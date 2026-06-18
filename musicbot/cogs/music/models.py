@@ -129,6 +129,7 @@ class ScoreBreakdown:
     view_bonus: float = 0.0
     verified_bonus: float = 0.0
     recency_bonus: float = 0.0
+    strong_uploader_bonus: float = 0.0
     selected: bool = False
 
 

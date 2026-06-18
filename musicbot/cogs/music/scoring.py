@@ -699,6 +699,7 @@ def rank_entries(
                     view_bonus=round(bd.get("view_bonus", 0.0), 3),
                     verified_bonus=round(bd.get("verified_bonus", 0.0), 3),
                     recency_bonus=round(bd.get("recency_bonus", 0.0), 3),
+                    strong_uploader_bonus=round(bd.get("strong_uploader_bonus", 0.0), 3),
                 )
             )
         if records:

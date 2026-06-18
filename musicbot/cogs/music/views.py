@@ -447,6 +447,7 @@ class ScoreDebugView(discord.ui.View):
                 f"seq_ratio      {c.ratio:+.3f}\n"
                 f"topic_bonus    {c.topic_bonus:+.3f}\n"
                 f"upldr_pref     {c.uploader_pref_bonus:+.3f}\n"
+                f"strong_upldr   {c.strong_uploader_bonus:+.3f}\n"
                 f"anchor         {c.anchor_score:+.3f}\n"
                 f"artist_match   {c.artist_match_bonus:+.3f}\n"
                 f"completion     {c.artist_completion_bonus:+.3f}\n"
@@ -456,6 +457,7 @@ class ScoreDebugView(discord.ui.View):
                 f"jp_original    {c.jp_original_bonus:+.3f}\n"
                 f"view_count     {c.view_bonus:+.3f}\n"
                 f"verified       {c.verified_bonus:+.3f}\n"
+                f"recency        {c.recency_bonus:+.3f}\n"
                 f"duration       {c.duration_bonus:+.3f}\n"
                 f"```\n"
             )

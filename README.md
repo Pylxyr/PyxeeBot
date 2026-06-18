@@ -75,7 +75,8 @@ A background pipeline pre-resolves stream URLs for the top 3 queue positions as 
 - **Embed hash comparison** — NP panel skips HTTP edits when visible state is unchanged
 - **Bounded queue deque** — enforced at the data structure level via `maxlen`
 - **Running duration total** — O(1) queue total time instead of O(n) sum on every render
-- **Proper 20ms Opus frames** — FFmpeg forced to `-frame_duration 20 -flush_packets 1` to eliminate audio fast-forward and jitter caused by packet buffering
+- **Proper 20ms Opus frames** — FFmpeg is always re-encoded through libopus (never `codec="copy"`) and forced to `-frame_duration 20 -flush_packets 1` to eliminate audio fast-forward and jitter caused by packet buffering. `codec="copy"` skips the encoder entirely, so these flags have no effect and playback fast-forwards for the first few seconds — do not reintroduce it as an optimization
+- **Bounded yt-dlp socket timeout** — `socket_timeout: 15` on every extraction call prevents a single stalled connection from hanging the shared 2-worker extraction thread pool indefinitely
 
 ---
 
@@ -204,7 +205,7 @@ All settings are read from `.env`. Every value has a default.
 | `NP_AUTO_REFRESH_INTERVAL` | `30` | Seconds between auto-refresh edits |
 | `YTDLP_COOKIES_FILE` | — | Path to Netscape cookies file |
 | `YTDLP_PREFETCH_COUNT` | `1` | Queue positions to pre-resolve in the background pipeline |
-| `YTDLP_CURATION_CONCURRENCY` | `3` | Concurrent Last.fm vibe lookups (max 6) |
+| `YTDLP_CURATION_CONCURRENCY` | `3` | Concurrent yt-dlp resolutions during `!vibe` and `!vibe-load` (max 6) |
 | `MAX_QUEUE_SIZE_PER_USER` | `0` | Per-user track limit; `0` disables the limit |
 | `NEAR_END_PREFETCH_SECONDS` | `30` | Trigger safety-net URL refresh this many seconds before track end |
 | `ERROR_ANNOUNCE` | `true` | Post playback errors to the announce channel |
@@ -332,7 +333,7 @@ PyxeeBot/
 
 **Last.fm error handling** — `_lastfm` retries once on transient failures (5xx, timeout, network error) with a short backoff. 429 backs off 5 seconds before the retry. 403 logs at `ERROR` and returns immediately. JSON decode failures and API-level error payloads are both caught and logged.
 
-**Audio timing** — FFmpeg is forced to `-frame_duration 20 -flush_packets 1` to produce exactly 20ms Opus frames matching `AudioPlayer.DELAY`. This eliminates the fast-forward and mid-track jitter caused by `codec=copy` passthrough sending raw container packets at whatever cadence FFmpeg pre-buffered them.
+**Audio timing** — FFmpeg is always re-encoded through libopus and forced to `-frame_duration 20 -flush_packets 1` to produce exactly 20ms Opus frames matching `AudioPlayer.DELAY`. This eliminates the fast-forward and mid-track jitter caused by `codec="copy"` passthrough sending raw container packets at whatever cadence FFmpeg pre-buffered them. `_build_audio_source` deliberately skips `FFmpegOpusAudio.from_probe()`'s ffprobe subprocess for known-Opus streams (yt-dlp already reports `acodec`), but it must never pass `codec="copy"` to skip the encoder too — that reintroduces the fast-forward bug since `-frame_duration`/`-flush_packets` are libopus-only options with zero effect in copy mode.
 
 ---
 
