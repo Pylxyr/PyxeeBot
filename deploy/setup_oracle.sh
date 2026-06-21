@@ -103,9 +103,30 @@ DEFAULT_PREFIX_VALUE="!"
 LASTFM_API_KEY_VALUE=""
 RUN_WIZARD=true
 
+HAS_EXISTING_ENV=false
 if [[ -f "$ENV_PATH" ]] \
    && grep -q "^DISCORD_TOKEN=" "$ENV_PATH" 2>/dev/null \
    && ! grep -qE "^DISCORD_TOKEN=(replace_me)?$" "$ENV_PATH" 2>/dev/null; then
+  HAS_EXISTING_ENV=true
+fi
+
+if [[ ! -t 0 ]]; then
+  # No terminal attached to stdin — every `read` below would hit EOF
+  # immediately and, under set -e, silently kill the script with no
+  # explanation. Handle it explicitly instead.
+  if [[ "$HAS_EXISTING_ENV" == true ]]; then
+    RUN_WIZARD=false
+    info "No interactive terminal detected — reusing the existing .env without prompting."
+  else
+    error "This is the first run and needs an interactive terminal to ask for your"
+    error "Discord token, etc. — but none is attached to stdin."
+    echo ""
+    echo "If you're connecting over SSH, reconnect with a pseudo-terminal allocated:"
+    echo "  ssh -t user@host"
+    echo "Then run this script directly on the machine, not piped through a command."
+    exit 1
+  fi
+elif [[ "$HAS_EXISTING_ENV" == true ]]; then
   echo "Found an existing, filled-in .env at ${ENV_PATH}."
   read -rp "Reconfigure it? [y/N] " reconf
   if [[ ! "$reconf" =~ ^[Yy]$ ]]; then

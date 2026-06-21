@@ -477,3 +477,27 @@ async def test_is_authorized_owner_recognizes_team_owner_ids():
 
     assert await _is_authorized_owner(team_member_ctx) is True
     assert await _is_authorized_owner(stranger_ctx) is False
+
+
+def test_command_helpers_is_bot_owner_recognizes_team_owner_ids():
+    """CommandHelpersMixin._is_bot_owner (used by _is_dj, gating DJ-level
+    playback commands) must also recognize owner_ids, not just owner_id —
+    same gap as admin.py's check, fixed the same way."""
+    from musicbot.cogs.music._helpers import CommandHelpersMixin
+
+    class _Harness(CommandHelpersMixin):
+        def __init__(self, bot):
+            self.bot = bot
+
+    bot = MagicMock()
+    bot.settings.bot_owners = ()
+    bot.owner_id = None
+    bot.owner_ids = {42}
+
+    harness = _Harness(bot)
+
+    team_member = MagicMock(id=42)
+    stranger = MagicMock(id=43)
+
+    assert harness._is_bot_owner(team_member) is True
+    assert harness._is_bot_owner(stranger) is False
