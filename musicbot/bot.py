@@ -289,7 +289,11 @@ class MusicBot(commands.Bot):
         # at startup but genuinely reconnects later.
         now = time.monotonic()
         for guild in self.guilds:
-            last = self._reconnect_announced_at.get(guild.id, 0.0)
+            # -inf sentinel, not 0.0: time.monotonic()'s absolute starting
+            # point is undefined and can itself be a small number (e.g. on a
+            # freshly booted container), which would make a guild that was
+            # never announced to look like it's still within the cooldown.
+            last = self._reconnect_announced_at.get(guild.id, float("-inf"))
             if now - last < 60.0:
                 continue
             try:

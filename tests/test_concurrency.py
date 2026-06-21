@@ -261,7 +261,9 @@ async def test_reconnect_announces_on_first_on_ready_when_snapshot_exists():
     """The motivating case: process restarts fresh (e.g. after an OOM kill via
     systemd Restart=on-failure) — this must fire on the very first on_ready,
     not be suppressed as a 'startup', since a snapshot existing already proves
-    this isn't a brand new install."""
+    this isn't a brand new install. time.monotonic() is patched to a small
+    value to simulate a freshly-booted container, where its absolute value can
+    itself be under the cooldown window."""
     from musicbot.bot import MusicBot
 
     fake_bot = MagicMock(spec=MusicBot)
@@ -271,7 +273,8 @@ async def test_reconnect_announces_on_first_on_ready_when_snapshot_exists():
     guild = _make_fake_guild(1)
     fake_bot.guilds = [guild]
 
-    await MusicBot._maybe_announce_reconnects(fake_bot)
+    with patch("musicbot.bot.time.monotonic", return_value=10.0):
+        await MusicBot._maybe_announce_reconnects(fake_bot)
 
     guild.system_channel.send.assert_awaited_once()
     assert 1 in fake_bot._reconnect_announced_at
@@ -288,7 +291,8 @@ async def test_reconnect_skips_guild_with_no_snapshot():
     guild = _make_fake_guild(1)
     fake_bot.guilds = [guild]
 
-    await MusicBot._maybe_announce_reconnects(fake_bot)
+    with patch("musicbot.bot.time.monotonic", return_value=10.0):
+        await MusicBot._maybe_announce_reconnects(fake_bot)
 
     guild.system_channel.send.assert_not_awaited()
     assert 1 not in fake_bot._reconnect_announced_at
@@ -307,8 +311,9 @@ async def test_reconnect_does_not_spam_within_cooldown():
     guild = _make_fake_guild(1)
     fake_bot.guilds = [guild]
 
-    await MusicBot._maybe_announce_reconnects(fake_bot)
-    await MusicBot._maybe_announce_reconnects(fake_bot)
+    with patch("musicbot.bot.time.monotonic", side_effect=[10.0, 15.0]):
+        await MusicBot._maybe_announce_reconnects(fake_bot)
+        await MusicBot._maybe_announce_reconnects(fake_bot)
 
     guild.system_channel.send.assert_awaited_once()
 
@@ -327,12 +332,13 @@ async def test_reconnect_later_announces_guild_that_had_no_snapshot_at_startup()
     guild = _make_fake_guild(1)
     fake_bot.guilds = [guild]
 
-    await MusicBot._maybe_announce_reconnects(fake_bot)
+    with patch("musicbot.bot.time.monotonic", return_value=10.0):
+        await MusicBot._maybe_announce_reconnects(fake_bot)
     guild.system_channel.send.assert_not_awaited()
 
     # Now a snapshot exists and enough time has passed for the cooldown to clear.
     fake_bot.database.load_queue_snapshot = AsyncMock(return_value=[{"title": "x"}])
-    fake_bot._reconnect_announced_at[1] = -1000.0  # simulate cooldown having elapsed
 
-    await MusicBot._maybe_announce_reconnects(fake_bot)
+    with patch("musicbot.bot.time.monotonic", return_value=10.0 + 1000.0):
+        await MusicBot._maybe_announce_reconnects(fake_bot)
     guild.system_channel.send.assert_awaited_once()
