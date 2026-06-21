@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import re
+import subprocess
 import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
@@ -144,32 +145,43 @@ class ExtractionMixin:
                 before_options=FFMPEG_BEFORE_OPTIONS,
                 options=FFMPEG_OPTIONS,
             )
+        # If yt-dlp didn't report acodec=="opus" (incomplete/unusual metadata,
+        # but the underlying stream may still genuinely be opus), probe for
+        # BITRATE ONLY — never thread the probed codec into the constructor.
+        # FFmpegOpusAudio.from_probe() would do exactly that, and if the probe
+        # detects "opus" (quite possible even here), discord.py's own __init__
+        # silently maps codec in {"opus","libopus","copy"} to codec="copy",
+        # reintroducing the exact copy-mode bug above through the back door.
+        # Probing ourselves and discarding the codec keeps this branch on the
+        # same always-re-encode path as the one above.
         try:
-            source: discord.AudioSource = await discord.FFmpegOpusAudio.from_probe(
-                track.stream_url,
-                method="fallback",
-                before_options=FFMPEG_BEFORE_OPTIONS,
-                options=FFMPEG_OPTIONS,
-            )
-        except (discord.ClientException, OSError, TypeError, ValueError) as exc:
+            _, probed_bitrate = await discord.FFmpegOpusAudio.probe(track.stream_url, method="fallback")
+        except (
+            discord.ClientException,
+            OSError,
+            TypeError,
+            ValueError,
+            subprocess.TimeoutExpired,
+        ) as exc:
             self.logger.warning(  # type: ignore[attr-defined]
                 "Opus probe fallback for %s: %s", track.webpage_url, exc
             )
-            try:
-                source = discord.FFmpegOpusAudio(
-                    track.stream_url,
-                    bitrate=self.bot.settings.opus_bitrate_kbps,  # type: ignore[attr-defined]
-                    before_options=FFMPEG_BEFORE_OPTIONS,
-                    options=FFMPEG_OPTIONS,
-                )
-            except (discord.ClientException, OSError, TypeError, ValueError) as exc2:
-                self.logger.warning(  # type: ignore[attr-defined]
-                    "FFmpeg source construction failed for %s [%s]: %s — skipping.",
-                    track.title,
-                    track.webpage_url,
-                    exc2,
-                )
-                raise
+            probed_bitrate = None
+        try:
+            source: discord.AudioSource = discord.FFmpegOpusAudio(
+                track.stream_url,
+                bitrate=probed_bitrate or self.bot.settings.opus_bitrate_kbps,  # type: ignore[attr-defined]
+                before_options=FFMPEG_BEFORE_OPTIONS,
+                options=FFMPEG_OPTIONS,
+            )
+        except (discord.ClientException, OSError, TypeError, ValueError) as exc2:
+            self.logger.warning(  # type: ignore[attr-defined]
+                "FFmpeg source construction failed for %s [%s]: %s — skipping.",
+                track.title,
+                track.webpage_url,
+                exc2,
+            )
+            raise
         return source
 
     # ── Core yt-dlp wrapper ─────────────────────────────────────────────────
