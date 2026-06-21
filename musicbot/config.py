@@ -45,6 +45,7 @@ class Settings:
     error_announce: bool
     lastfm_api_key: str | None
     restore_queue_on_restart: bool
+    autoplay: bool
 
 
 def _parse_owner_ids(raw_value: str) -> tuple[int, ...]:
@@ -111,4 +112,5 @@ def load_settings() -> Settings:
         lastfm_api_key=os.getenv("LASTFM_API_KEY", "").strip() or None,
         restore_queue_on_restart=os.getenv("RESTORE_QUEUE_ON_RESTART", "true").strip().lower()
         in {"1", "true", "yes", "on"},
+        autoplay=os.getenv("AUTOPLAY", "false").strip().lower() in {"1", "true", "yes", "on"},
     )

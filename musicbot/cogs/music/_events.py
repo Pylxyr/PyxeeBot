@@ -83,7 +83,6 @@ class EventsMixin:
         if self.bot.user is not None and member.id == self.bot.user.id:
             if before.channel is not None and after.channel is None:
                 await self._cleanup_guild(member.guild.id)
-                await self._refresh_now_playing_message(member.guild.id)
             elif after.channel is not None and after.channel != before.channel:
                 player.voice_client = member.guild.voice_client  # type: ignore[assignment]
                 await player.refresh_empty_channel_state()

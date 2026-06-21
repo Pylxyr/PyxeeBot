@@ -10,8 +10,8 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import re
-import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
@@ -180,15 +180,25 @@ class ExtractionMixin:
         *,
         flat_playlist: bool = False,
         flat_search: bool = False,
+        curation_mode: bool = False,
     ) -> dict[str, Any]:
         key = (flat_playlist, flat_search)
         options = self._build_ytdl_options(flat_playlist=flat_playlist, flat_search=flat_search)
         guild_id = _CURRENT_GUILD_ID.get()
-        guild_sem = (
-            self._guild_extract_semaphores.setdefault(guild_id, asyncio.Semaphore(1))  # type: ignore[attr-defined]
-            if guild_id is not None
-            else None
-        )
+        if guild_id is None:
+            guild_sem = None
+        elif curation_mode:
+            # Curation (!vibe / !vibe-load) gets its own per-guild semaphore sized
+            # from YTDLP_CURATION_CONCURRENCY so it isn't forced through the
+            # single-slot playback semaphore below. Still bounded by the global
+            # extract_semaphore (YTDLP_CONCURRENT_EXTRACTS), which is the real
+            # CPU-bound gate on a single-vCPU host.
+            guild_sem = self._curation_semaphores.setdefault(  # type: ignore[attr-defined]
+                guild_id,
+                asyncio.Semaphore(self.bot.settings.ytdlp_curation_concurrency),  # type: ignore[attr-defined]
+            )
+        else:
+            guild_sem = self._guild_extract_semaphores.setdefault(guild_id, asyncio.Semaphore(1))  # type: ignore[attr-defined]
 
         sem_ctx = guild_sem if guild_sem is not None else contextlib.nullcontext()
         async with sem_ctx:  # type: ignore[attr-defined]
@@ -214,9 +224,21 @@ class ExtractionMixin:
                         raise commands.BadArgument(
                             "No information could be extracted for the provided source."
                         )
+                    self._ytdl_timeout_count = 0  # type: ignore[attr-defined]
                     return result
                 except asyncio.TimeoutError as exc:
                     self.logger.warning("yt-dlp timed out for query %r", query)  # type: ignore[attr-defined]
+                    self._ytdl_timeout_count += 1  # type: ignore[attr-defined]
+                    if self._ytdl_timeout_count >= 3:  # type: ignore[attr-defined]
+                        self.logger.warning(  # type: ignore[attr-defined]
+                            "3 consecutive yt-dlp timeouts — recycling extraction thread pool."
+                        )
+                        old_executor = self._ytdl_executor  # type: ignore[attr-defined]
+                        self._ytdl_executor = ThreadPoolExecutor(  # type: ignore[attr-defined]
+                            max_workers=2, thread_name_prefix="ytdlp"
+                        )
+                        self._ytdl_timeout_count = 0  # type: ignore[attr-defined]
+                        old_executor.shutdown(wait=False)
                     raise commands.BadArgument(
                         f"Source lookup timed out after "
                         f"{self.bot.settings.ytdlp_extract_timeout_seconds} seconds."  # type: ignore[attr-defined]
@@ -409,7 +431,7 @@ class ExtractionMixin:
         curation_mode: bool = False,
     ) -> tuple[list[Track], int]:
         try:
-            info = await self._extract_info(query, flat_search=True)
+            info = await self._extract_info(query, flat_search=True, curation_mode=curation_mode)
         except commands.BadArgument:
             raise
         except DownloadError as exc:

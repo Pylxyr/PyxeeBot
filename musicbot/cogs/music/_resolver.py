@@ -6,7 +6,6 @@ Mixed into MusicCog.  Depends on ExtractionMixin methods being available on self
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import itertools
 import time
 from typing import Any
@@ -14,10 +13,7 @@ from typing import Any
 from discord.ext import commands
 
 from musicbot.cogs.music._context import _CURRENT_GUILD_ID
-from musicbot.cogs.music.constants import (
-    SNAPSHOT_DEBOUNCE_SECONDS,
-    STREAM_URL_REFRESH_AGE_SECONDS,
-)
+from musicbot.cogs.music.constants import STREAM_URL_REFRESH_AGE_SECONDS
 from musicbot.cogs.music.models import ResolvedTrackData, Track
 
 
@@ -122,9 +118,9 @@ class ResolverMixin:
 
         try:
             return await asyncio.shield(pending)
-        except (asyncio.CancelledError, Exception):
-            # CancelledError is BaseException in 3.8+; catch it so caller
-            # cancellation doesn't destroy the shared pending resolve task.
+        except asyncio.CancelledError:
+            raise
+        except Exception:
             return None
 
     async def _resolve_track(self, track: Track) -> Track | None:

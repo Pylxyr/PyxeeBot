@@ -209,8 +209,7 @@ def prepare_entry(item: dict[str, Any]) -> SearchEntryContext:
     )
 
 
-@lru_cache(maxsize=512)
-def _derive_anchor_phrases_cached(
+def _derive_anchor_phrases(
     query_tokens: tuple[str, ...],
     uploader_texts: tuple[str, ...],
 ) -> tuple[str, ...]:
@@ -259,7 +258,7 @@ def derive_anchor_phrases(
     entries: list[SearchEntryContext],
 ) -> list[str]:
     uploader_texts = tuple(e.normalized_uploader for e in entries if e.normalized_uploader)
-    return list(_derive_anchor_phrases_cached(tuple(query_tokens), uploader_texts))
+    return list(_derive_anchor_phrases(tuple(query_tokens), uploader_texts))
 
 
 def build_query_context(

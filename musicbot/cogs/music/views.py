@@ -13,15 +13,13 @@ import discord
 
 from musicbot.cogs.music.constants import (
     EMBED_COLOUR,
-    LOOP_ICONS,
-    LOOP_LABELS,
     NOW_PLAYING_TIMEOUT_SECONDS,
     QUEUE_PAGE_SIZE,
     QUEUE_VIEW_TIMEOUT_SECONDS,
     SEARCH_SELECTION_PAGE_SIZE,
     SEARCH_SELECTION_TIMEOUT_SECONDS,
 )
-from musicbot.cogs.music.models import NowPlayingController, SearchDebugRecord, Track
+from musicbot.cogs.music.models import SearchDebugRecord, Track
 
 if TYPE_CHECKING:
     from musicbot.cogs.music.cog import MusicCog

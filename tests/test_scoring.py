@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 from collections import OrderedDict
-from unittest.mock import MagicMock
 
-import pytest
 
 from musicbot.cogs.music.scoring import (
     build_query_context,

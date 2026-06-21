@@ -8,7 +8,7 @@ SYSTEMD_UNIT_PATH="/etc/systemd/system/${SERVICE_NAME}.service"
 
 echo "[1/8] Installing system packages"
 sudo apt update
-sudo apt install -y python3 python3-venv ffmpeg logrotate libopus0
+sudo apt install -y python3 python3-venv ffmpeg logrotate libopus0 libsodium-dev
 
 echo "[2/8] Validating Python runtime"
 if ! command -v "${PYTHON_BIN}" >/dev/null 2>&1; then
@@ -37,8 +37,15 @@ python -m pip install -r requirements.txt
 
 echo "[6/8] Validating environment file"
 if [[ ! -f .env ]]; then
-  cp .env.example .env
-  echo "Created .env from template. Edit ${APP_DIR}/.env with your Discord token before starting the service."
+  # Write a minimal template so the service file's EnvironmentFile= directive
+  # doesn't fail even before the operator fills in real values.
+  cat > .env << 'EOF'
+# Edit this file and set DISCORD_TOKEN before starting the bot.
+# See deploy/.env.example for all available options.
+DISCORD_TOKEN=replace_me
+BOT_OWNERS=replace_me
+EOF
+  echo "Created .env stub. Edit ${APP_DIR}/.env with your Discord token before starting the service."
 fi
 
 echo "[7/8] Installing logrotate config"

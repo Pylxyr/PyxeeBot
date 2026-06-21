@@ -10,7 +10,6 @@ import asyncio
 import contextlib
 import itertools
 import time
-from typing import Any, TYPE_CHECKING
 
 import discord
 
@@ -22,11 +21,8 @@ from musicbot.cogs.music.constants import (
     NOW_PLAYING_TIMEOUT_SECONDS,
     NP_REFRESH_DEBOUNCE_SECONDS,
 )
-from musicbot.cogs.music.models import NowPlayingController, Track
+from musicbot.cogs.music.models import NowPlayingController
 from musicbot.cogs.music.player import GuildPlayer
-
-if TYPE_CHECKING:
-    pass
 
 
 class NPanelMixin:

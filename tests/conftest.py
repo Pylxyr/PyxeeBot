@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-from collections import deque
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from musicbot.cogs.music.models import Track
@@ -38,14 +37,25 @@ def make_settings(**overrides) -> MagicMock:
     s.np_auto_refresh = False
     s.np_auto_refresh_interval = 30
     s.near_end_threshold_seconds = 20
+    s.ytdlp_concurrent_extracts = overrides.get("ytdlp_concurrent_extracts", 1)
+    s.ytdlp_curation_concurrency = overrides.get("ytdlp_curation_concurrency", 3)
+    s.autoplay = overrides.get("autoplay", False)
     return s
 
 
 def make_bot(**settings_overrides) -> MagicMock:
     bot = MagicMock()
     bot.settings = make_settings(**settings_overrides)
+    bot.settings.restore_queue_on_restart = False
     bot.dispatch = MagicMock()
     bot.loop = None
+    bot.user = MagicMock(id=999999)
+    bot.database = MagicMock()
+    bot.database.get_stay_connected = AsyncMock(return_value=False)
+    bot.database.set_stay_connected = AsyncMock(return_value=None)
+    bot.database.save_queue_snapshot = AsyncMock(return_value=None)
+    bot.database.load_queue_snapshot = AsyncMock(return_value=[])
+    bot.database.add_play_history = AsyncMock(return_value=None)
     return bot
 
 

@@ -11,5 +11,4 @@ select = ["E", "F", "W"]
 ignore = [
     "E501",   # line too long — handled by formatter
     "E402",   # module level import not at top (TYPE_CHECKING pattern)
-    "F401",   # unused import — false positives in TYPE_CHECKING blocks
 ]

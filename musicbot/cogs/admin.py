@@ -9,6 +9,21 @@ if TYPE_CHECKING:
     from musicbot.bot import MusicBot
 
 
+async def _is_authorized_owner(context: commands.Context[Any]) -> bool:
+    """Mirrors CommandHelpersMixin._is_bot_owner — checks settings.bot_owners
+    (BOT_OWNERS env var) as well as the Discord application owner, rather than
+    relying on commands.is_owner() which only knows about the latter."""
+    bot = context.bot
+    user = context.author
+    if user.id in bot.settings.bot_owners:  # type: ignore[attr-defined]
+        return True
+    return bot.owner_id is not None and user.id == bot.owner_id
+
+
+def _bot_owner_check() -> Any:
+    return commands.check(_is_authorized_owner)
+
+
 class AdminCog(commands.Cog):
     def __init__(self, bot: "MusicBot") -> None:
         self.bot = bot
@@ -31,10 +46,83 @@ class AdminCog(commands.Cog):
         latency_ms = round(self.bot.latency * 1000)
         await context.send(f"Pong. `{latency_ms}ms`")
 
+    @commands.hybrid_command(name="stay")
+    @commands.guild_only()
+    @commands.has_guild_permissions(manage_guild=True)
+    async def stay(self, context: commands.Context[Any]) -> None:
+        """Toggle 24/7 mode — bot stays connected when the queue empties."""
+        guild_id = context.guild.id
+        current = await self.bot.database.get_stay_connected(guild_id)
+        new_value = not current
+        await self.bot.database.set_stay_connected(
+            guild_id, new_value, default_prefix=self.bot.settings.default_prefix
+        )
+        music = self.bot.get_cog("MusicCog")
+        player = music.players.get(guild_id) if music else None
+        if player is not None:
+            player.stay_connected = new_value
+        state = "enabled" if new_value else "disabled"
+        await context.send(f"24/7 mode {state}.")
+
+    @commands.hybrid_command(name="stats")
+    @_bot_owner_check()
+    async def stats(self, context: commands.Context[Any]) -> None:
+        """Show bot process stats (owner only)."""
+        import platform
+        import sys
+
+        import discord as discord_module
+        import yt_dlp
+
+        music = self.bot.get_cog("MusicCog")
+        active_players = len(music.players) if music else 0
+        playing = sum(1 for p in music.players.values() if p.current is not None) if music else 0
+
+        lines = [
+            f"discord.py: `{discord_module.__version__}`",
+            f"yt-dlp: `{yt_dlp.version.__version__}`",
+            f"Python: `{platform.python_version()}` ({sys.platform})",
+            f"Guilds: `{len(self.bot.guilds)}`",
+            f"Active voice connections: `{active_players}`",
+            f"Currently playing: `{playing}`",
+            f"Gateway latency: `{round(self.bot.latency * 1000)}ms`",
+        ]
+        try:
+            import resource
+
+            rss_kb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+            # ru_maxrss is KB on Linux, bytes on macOS — assume Linux (deploy target).
+            lines.append(f"Peak RSS: `{rss_kb / 1024:.1f} MB`")
+        except ImportError:
+            pass
+
+        embed = discord.Embed(
+            title="PyxeeBot Stats",
+            description="\n".join(lines),
+            colour=discord.Colour.from_rgb(255, 170, 64),
+        )
+        await context.send(embed=embed)
+
     @commands.command(name="commands", aliases=["cmds"])
     async def commands_list(self, context: commands.Context[Any]) -> None:
         """Open the styled command atlas."""
         await context.send_help()
+
+    @commands.hybrid_command(name="setprefix")
+    @commands.guild_only()
+    @commands.has_guild_permissions(manage_guild=True)
+    async def setprefix(self, context: commands.Context[Any], prefix: str) -> None:
+        """Change the bot command prefix for this server."""
+        prefix = prefix.strip()
+        if not prefix or " " in prefix:
+            await context.send("Prefix must be a single token with no spaces.")
+            return
+        if len(prefix) > 5:
+            await context.send("Prefix must be 5 characters or fewer.")
+            return
+        await self.bot.database.set_prefix(context.guild.id, prefix)
+        self.bot.invalidate_prefix_cache(context.guild.id)
+        await context.send(f"Prefix set to `{prefix}` for this server.")
 
     @commands.hybrid_command(name="setdj")
     @commands.guild_only()

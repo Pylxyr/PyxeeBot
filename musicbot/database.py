@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import sqlite3
 from pathlib import Path
 from typing import Any
@@ -12,8 +13,15 @@ class Database:
         self.db_path = db_path
         self._prefix_cache: dict[int, str | None] = {}
         self._dj_role_cache: dict[int, int | None] = {}
+        self._stay_connected_cache: dict[int, bool] = {}
         self._conn: aiosqlite.Connection | None = None
         self._snapshot_hashes: dict[int, int] = {}
+        # Serialises every write (not just multi-statement transactions) — a
+        # single-statement commit() from one guild can otherwise land inside
+        # another guild's open BEGIN IMMEDIATE on this same shared connection
+        # and force-commit it early, since SQLite transactions are connection-
+        # scoped rather than statement-scoped.
+        self._write_lock = asyncio.Lock()
 
     async def initialize(self) -> None:
         self._conn = await aiosqlite.connect(self.db_path)
@@ -53,6 +61,10 @@ class Database:
             columns = {row["name"] async for row in cursor}
         if "dj_role_id" not in columns:
             await conn.execute("ALTER TABLE guild_settings ADD COLUMN dj_role_id INTEGER")
+        if "stay_connected" not in columns:
+            await conn.execute(
+                "ALTER TABLE guild_settings ADD COLUMN stay_connected INTEGER NOT NULL DEFAULT 0"
+            )
 
         await conn.execute(
             """
@@ -94,6 +106,21 @@ class Database:
             )
             """
         )
+        await conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS play_history (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                guild_id     INTEGER NOT NULL,
+                title        TEXT    NOT NULL,
+                webpage_url  TEXT    NOT NULL,
+                requester_id INTEGER NOT NULL,
+                played_at    TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        await conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_play_history_guild ON play_history(guild_id, played_at)"
+        )
         await conn.commit()
 
     async def get_prefix(self, guild_id: int) -> str | None:
@@ -112,15 +139,16 @@ class Database:
     async def set_prefix(self, guild_id: int, prefix: str) -> None:
         if self._conn is None:
             return
-        await self._conn.execute(
-            """
-            INSERT INTO guild_settings (guild_id, prefix)
-            VALUES (?, ?)
-            ON CONFLICT(guild_id) DO UPDATE SET prefix = excluded.prefix
-            """,
-            (guild_id, prefix),
-        )
-        await self._conn.commit()
+        async with self._write_lock:
+            await self._conn.execute(
+                """
+                INSERT INTO guild_settings (guild_id, prefix)
+                VALUES (?, ?)
+                ON CONFLICT(guild_id) DO UPDATE SET prefix = excluded.prefix
+                """,
+                (guild_id, prefix),
+            )
+            await self._conn.commit()
         self._prefix_cache[guild_id] = prefix
 
     async def get_dj_role_id(self, guild_id: int) -> int | None:
@@ -144,15 +172,16 @@ class Database:
     ) -> None:
         if self._conn is None:
             return
-        await self._conn.execute(
-            """
-            INSERT INTO guild_settings (guild_id, prefix, dj_role_id)
-            VALUES (?, ?, ?)
-            ON CONFLICT(guild_id) DO UPDATE SET dj_role_id = excluded.dj_role_id
-            """,
-            (guild_id, default_prefix, role_id),
-        )
-        await self._conn.commit()
+        async with self._write_lock:
+            await self._conn.execute(
+                """
+                INSERT INTO guild_settings (guild_id, prefix, dj_role_id)
+                VALUES (?, ?, ?)
+                ON CONFLICT(guild_id) DO UPDATE SET dj_role_id = excluded.dj_role_id
+                """,
+                (guild_id, default_prefix, role_id),
+            )
+            await self._conn.commit()
         self._dj_role_cache[guild_id] = role_id
         self._prefix_cache.setdefault(guild_id, default_prefix)
 
@@ -165,43 +194,44 @@ class Database:
     ) -> None:
         if self._conn is None:
             return
-        await self._conn.execute("BEGIN IMMEDIATE")
-        try:
-            await self._conn.execute(
-                """
-                INSERT INTO saved_playlists (guild_id, name, created_by)
-                VALUES (?, ?, ?)
-                ON CONFLICT(guild_id, name) DO UPDATE SET created_by = excluded.created_by
-                """,
-                (guild_id, name, created_by),
-            )
-            await self._conn.execute(
-                "DELETE FROM saved_playlist_items WHERE guild_id = ? AND playlist_name = ?",
-                (guild_id, name),
-            )
-            await self._conn.executemany(
-                """
-                INSERT INTO saved_playlist_items (
-                    guild_id, playlist_name, position, query, title, webpage_url
+        async with self._write_lock:
+            await self._conn.execute("BEGIN IMMEDIATE")
+            try:
+                await self._conn.execute(
+                    """
+                    INSERT INTO saved_playlists (guild_id, name, created_by)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(guild_id, name) DO UPDATE SET created_by = excluded.created_by
+                    """,
+                    (guild_id, name, created_by),
                 )
-                VALUES (?, ?, ?, ?, ?, ?)
-                """,
-                [
-                    (
-                        guild_id,
-                        name,
-                        position,
-                        entry["query"],
-                        entry["title"],
-                        entry["webpage_url"],
+                await self._conn.execute(
+                    "DELETE FROM saved_playlist_items WHERE guild_id = ? AND playlist_name = ?",
+                    (guild_id, name),
+                )
+                await self._conn.executemany(
+                    """
+                    INSERT INTO saved_playlist_items (
+                        guild_id, playlist_name, position, query, title, webpage_url
                     )
-                    for position, entry in enumerate(entries)
-                ],
-            )
-            await self._conn.commit()
-        except Exception:
-            await self._conn.rollback()
-            raise
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    [
+                        (
+                            guild_id,
+                            name,
+                            position,
+                            entry["query"],
+                            entry["title"],
+                            entry["webpage_url"],
+                        )
+                        for position, entry in enumerate(entries)
+                    ],
+                )
+                await self._conn.commit()
+            except Exception:
+                await self._conn.rollback()
+                raise
 
     async def list_playlists(self, guild_id: int) -> list[sqlite3.Row]:
         if self._conn is None:
@@ -237,12 +267,13 @@ class Database:
     async def delete_playlist(self, guild_id: int, name: str) -> bool:
         if self._conn is None:
             return False
-        async with self._conn.execute(
-            "DELETE FROM saved_playlists WHERE guild_id = ? AND name = ?",
-            (guild_id, name),
-        ) as cursor:
-            deleted = cursor.rowcount
-        await self._conn.commit()
+        async with self._write_lock:
+            async with self._conn.execute(
+                "DELETE FROM saved_playlists WHERE guild_id = ? AND name = ?",
+                (guild_id, name),
+            ) as cursor:
+                deleted = cursor.rowcount
+            await self._conn.commit()
         return deleted > 0
 
     def _snapshot_hash(self, guild_id: int, entries: list[dict[str, Any]]) -> int:
@@ -268,33 +299,34 @@ class Database:
         if self._snapshot_hashes.get(guild_id) == new_hash:
             return
 
-        await self._conn.execute("BEGIN IMMEDIATE")
-        try:
-            await self._conn.execute("DELETE FROM queue_snapshots WHERE guild_id = ?", (guild_id,))
-            if entries:
-                await self._conn.executemany(
-                    """
-                    INSERT INTO queue_snapshots (
-                        guild_id, position, query, title, webpage_url, requester_id
-                    )
-                    VALUES (?, ?, ?, ?, ?, ?)
-                    """,
-                    [
-                        (
-                            guild_id,
-                            position,
-                            entry["query"],
-                            entry["title"],
-                            entry["webpage_url"],
-                            entry["requester_id"],
+        async with self._write_lock:
+            await self._conn.execute("BEGIN IMMEDIATE")
+            try:
+                await self._conn.execute("DELETE FROM queue_snapshots WHERE guild_id = ?", (guild_id,))
+                if entries:
+                    await self._conn.executemany(
+                        """
+                        INSERT INTO queue_snapshots (
+                            guild_id, position, query, title, webpage_url, requester_id
                         )
-                        for position, entry in enumerate(entries)
-                    ],
-                )
-            await self._conn.commit()
-        except Exception:
-            await self._conn.rollback()
-            raise
+                        VALUES (?, ?, ?, ?, ?, ?)
+                        """,
+                        [
+                            (
+                                guild_id,
+                                position,
+                                entry["query"],
+                                entry["title"],
+                                entry["webpage_url"],
+                                entry["requester_id"],
+                            )
+                            for position, entry in enumerate(entries)
+                        ],
+                    )
+                await self._conn.commit()
+            except Exception:
+                await self._conn.rollback()
+                raise
         self._snapshot_hashes[guild_id] = new_hash
 
     async def load_queue_snapshot(self, guild_id: int) -> list[sqlite3.Row]:
@@ -308,5 +340,79 @@ class Database:
             ORDER BY position ASC
             """,
             (guild_id,),
+        ) as cursor:
+            return list(await cursor.fetchall())
+
+    async def get_stay_connected(self, guild_id: int) -> bool:
+        if self._conn is None:
+            return False
+        if guild_id in self._stay_connected_cache:
+            return self._stay_connected_cache[guild_id]
+        async with self._conn.execute(
+            "SELECT stay_connected FROM guild_settings WHERE guild_id = ?", (guild_id,)
+        ) as cursor:
+            row = await cursor.fetchone()
+        value = bool(row["stay_connected"]) if row else False
+        self._stay_connected_cache[guild_id] = value
+        return value
+
+    async def set_stay_connected(self, guild_id: int, enabled: bool, default_prefix: str = "!") -> None:
+        if self._conn is None:
+            return
+        async with self._write_lock:
+            await self._conn.execute(
+                """
+                INSERT INTO guild_settings (guild_id, prefix, stay_connected)
+                VALUES (?, ?, ?)
+                ON CONFLICT(guild_id) DO UPDATE SET stay_connected = excluded.stay_connected
+                """,
+                (guild_id, default_prefix, int(enabled)),
+            )
+            await self._conn.commit()
+        self._stay_connected_cache[guild_id] = enabled
+        self._prefix_cache.setdefault(guild_id, default_prefix)
+
+    async def add_play_history(self, guild_id: int, title: str, webpage_url: str, requester_id: int) -> None:
+        if self._conn is None:
+            return
+        async with self._write_lock:
+            await self._conn.execute(
+                """
+                INSERT INTO play_history (guild_id, title, webpage_url, requester_id)
+                VALUES (?, ?, ?, ?)
+                """,
+                (guild_id, title, webpage_url, requester_id),
+            )
+            await self._conn.commit()
+
+    async def get_top_played(self, guild_id: int, limit: int = 10) -> list[sqlite3.Row]:
+        if self._conn is None:
+            return []
+        async with self._conn.execute(
+            """
+            SELECT title, webpage_url, COUNT(*) AS play_count
+            FROM play_history
+            WHERE guild_id = ?
+            GROUP BY webpage_url
+            ORDER BY play_count DESC, MAX(played_at) DESC
+            LIMIT ?
+            """,
+            (guild_id, limit),
+        ) as cursor:
+            return list(await cursor.fetchall())
+
+    async def get_top_requesters(self, guild_id: int, limit: int = 10) -> list[sqlite3.Row]:
+        if self._conn is None:
+            return []
+        async with self._conn.execute(
+            """
+            SELECT requester_id, COUNT(*) AS request_count
+            FROM play_history
+            WHERE guild_id = ?
+            GROUP BY requester_id
+            ORDER BY request_count DESC
+            LIMIT ?
+            """,
+            (guild_id, limit),
         ) as cursor:
             return list(await cursor.fetchall())

@@ -59,9 +59,13 @@ Run `!why` after any search to see the full per-candidate score breakdown in Dis
 
 `!vibe <query>` discovers similar tracks using Last.fm's `track.getSimilar` API. Results are sorted by Last.fm match confidence (0.0–1.0) so the strongest recommendations appear first. A curation panel lets you deselect tracks before queuing. When the queue drops to ≤10 tracks, a refill prompt surfaces automatically. Selecting tracks in the dropdown sends an ephemeral confirmation so it is clear which items are marked for exclusion before you commit with **Add All**.
 
+Curation resolutions for a single guild run up to `YTDLP_CURATION_CONCURRENCY` at a time (own per-guild semaphore, separate from the playback path), bounded overall by `YTDLP_CONCURRENT_EXTRACTS`.
+
 Vibe searches use a strengthened version of the scoring engine — live/concert penalties are tripled, Topic channel bonus is raised, and queries are biased toward `official audio` to keep studio versions out of reach of festival recordings.
 
 Save and reload named curated playlists with `!vibe-save` / `!vibe-load`.
+
+If `AUTOPLAY=true`, the bot queues one similar track (via the same Last.fm pipeline) whenever the queue fully empties, using the last completed track as the seed — no `!vibe` required.
 
 ### URL Pipeline
 
@@ -77,6 +81,7 @@ A background pipeline pre-resolves stream URLs for the top 3 queue positions as 
 - **Running duration total** — O(1) queue total time instead of O(n) sum on every render
 - **Proper 20ms Opus frames** — FFmpeg is always re-encoded through libopus (never `codec="copy"`) and forced to `-frame_duration 20 -flush_packets 1` to eliminate audio fast-forward and jitter caused by packet buffering. `codec="copy"` skips the encoder entirely, so these flags have no effect and playback fast-forwards for the first few seconds — do not reintroduce it as an optimization
 - **Bounded yt-dlp socket timeout** — `socket_timeout: 15` on every extraction call prevents a single stalled connection from hanging the shared 2-worker extraction thread pool indefinitely
+- **Extraction pool self-healing** — 3 consecutive `YTDLP_EXTRACT_TIMEOUT_SECONDS` timeouts recycle the 2-worker thread pool, since a hung thread (e.g. stuck DNS resolution) can't otherwise be force-killed and would permanently consume a worker slot
 
 ---
 
@@ -113,7 +118,11 @@ pip install -r requirements.txt
 
 **4. Configure**
 
-Create a `.env` file in the project root:
+Copy `deploy/.env.example` to `.env` in the project root and fill in your token:
+
+```bash
+cp deploy/.env.example .env
+```
 
 ```env
 DISCORD_TOKEN=your_discord_bot_token
@@ -160,6 +169,9 @@ MemoryHigh=600M
 MemoryMax=700M
 OOMScoreAdjust=-500
 LimitNOFILE=65536
+ProtectSystem=full
+PrivateTmp=yes
+NoNewPrivileges=yes
 StandardOutput=journal
 StandardError=journal
 
@@ -187,7 +199,7 @@ All settings are read from `.env`. Every value has a default.
 | `DEFAULT_PREFIX` | `!` | Command prefix |
 | `BOT_OWNERS` | — | Comma-separated owner user IDs |
 | `LOG_LEVEL` | `INFO` | `DEBUG` / `INFO` / `WARNING` / `ERROR` |
-| `LOG_TO_FILE` | `true` | Write rotating logs to `LOG_DIR` |
+| `LOG_TO_FILE` | `true` | Write logs to `LOG_DIR` (rotated weekly by `deploy/musicbot-logrotate`, not in-process) |
 | `LOG_DIR` | `logs` | Log file directory |
 | `MAX_QUEUE_SIZE` | `100` | Maximum queued tracks |
 | `MAX_PLAYLIST_SIZE` | `25` | Maximum tracks loaded from a playlist URL |
@@ -204,11 +216,13 @@ All settings are read from `.env`. Every value has a default.
 | `NP_AUTO_REFRESH` | `false` | Auto-refresh NP embed on a timer |
 | `NP_AUTO_REFRESH_INTERVAL` | `30` | Seconds between auto-refresh edits |
 | `YTDLP_COOKIES_FILE` | — | Path to Netscape cookies file |
+| `YTDLP_JS_RUNTIME_PATH` | — | Path to a Node.js binary, for sites requiring JS signature decryption |
 | `YTDLP_PREFETCH_COUNT` | `1` | Queue positions to pre-resolve in the background pipeline |
 | `YTDLP_CURATION_CONCURRENCY` | `3` | Concurrent yt-dlp resolutions during `!vibe` and `!vibe-load` (max 6) |
 | `MAX_QUEUE_SIZE_PER_USER` | `0` | Per-user track limit; `0` disables the limit |
 | `NEAR_END_PREFETCH_SECONDS` | `30` | Trigger safety-net URL refresh this many seconds before track end |
 | `ERROR_ANNOUNCE` | `true` | Post playback errors to the announce channel |
+| `AUTOPLAY` | `false` | Queue similar Last.fm tracks when the queue empties |
 
 ---
 
@@ -246,6 +260,7 @@ All settings are read from `.env`. Every value has a default.
 | `!skipto <position>` | — | Jump ahead, dropping earlier tracks (DJ) |
 | `!qsearch <keyword>` | `qs` | Search within the current queue |
 | `!history` | — | Show recently played tracks |
+| `!toptracks` | `top` | Show the most-played tracks for this server |
 
 ### Playlists
 
@@ -274,6 +289,9 @@ All settings are read from `.env`. Every value has a default.
 | `!setdj <role>` | — | Set the DJ role |
 | `!cleardj` | — | Remove the DJ role |
 | `!dj` | — | Show current DJ role |
+| `!setprefix <prefix>` | — | Change the command prefix for this server |
+| `!stay` | — | Toggle 24/7 mode (stay connected when queue empties) |
+| `!stats` | — | Show bot process stats (owner only) |
 | `!ping` | — | Check gateway latency |
 
 ---

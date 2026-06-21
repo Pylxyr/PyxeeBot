@@ -34,6 +34,20 @@ class QueueCommandsMixin:
         embed.set_footer(text=f"{len(hist)} track(s) in session history.")
         await context.send(embed=embed)
 
+    @commands.hybrid_command(name="toptracks", aliases=["top"])
+    @commands.guild_only()
+    async def toptracks(self, context: commands.Context[Any]) -> None:
+        """Show the most-played tracks for this server, all-time."""
+        rows = await self.bot.database.get_top_played(context.guild.id, limit=10)
+        if not rows:
+            await context.send("No play history recorded yet.")
+            return
+        lines = [
+            f"`{i}.` **{row['title']}** — played {row['play_count']}x" for i, row in enumerate(rows, start=1)
+        ]
+        embed = discord.Embed(title="Most Played Tracks", description="\n".join(lines), colour=EMBED_COLOUR)
+        await context.send(embed=embed)
+
     @commands.hybrid_command(name="qsearch", aliases=["qs"])
     @commands.guild_only()
     async def qsearch(self, context: commands.Context[Any], *, keyword: str) -> None:

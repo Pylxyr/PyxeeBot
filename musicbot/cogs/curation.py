@@ -6,7 +6,6 @@ import asyncio
 import contextlib
 import logging
 import re
-import random
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -730,6 +729,7 @@ class CurationCog(commands.Cog, name="CurationCog"):
                         f"ytsearch5:{query}",
                         requester_id=context.author.id,
                         guild_id=context.guild.id,
+                        curation_mode=True,
                     )
                     if not tracks:
                         failed += 1
@@ -768,7 +768,7 @@ class CurationCog(commands.Cog, name="CurationCog"):
 
     @commands.Cog.listener()
     async def on_musicbot_queue_updated(self, guild: discord.Guild) -> None:
-        """Trigger refill suggestion when queue drops to ≤ REFILL_AT tracks."""
+        """Trigger autoplay when the queue empties, or a refill prompt when it's low."""
         if not self._key:
             return
         music: MusicCog | None = self.bot.get_cog("MusicCog")  # type: ignore
@@ -782,10 +782,33 @@ class CurationCog(commands.Cog, name="CurationCog"):
             self._last_queue_len.pop(guild.id, None)
             return
 
+        current_len = len(player.queue) + (1 if player.current else 0)
+
+        if current_len == 0:
+            if not self.bot.settings.autoplay or guild.id in self._refill_in_progress:
+                return
+            seed = self._refill_seeds.get(guild.id)
+            if seed is None:
+                last = player.history[-1] if player.history else None
+                if last is None:
+                    return
+                seed = await self._search_track(last.title)
+                if seed is None:
+                    return
+            self._refill_in_progress.add(guild.id)
+            task = asyncio.create_task(self._do_autoplay(guild, *seed), name=f"autoplay-{guild.id}")
+
+            def _on_autoplay_done(t: asyncio.Task[None]) -> None:
+                self._refill_in_progress.discard(guild.id)
+                if not t.cancelled() and t.exception() is not None:
+                    log.exception("_do_autoplay failed", exc_info=t.exception())
+
+            task.add_done_callback(_on_autoplay_done)
+            return
+
         if not player.voice_client.is_playing() and not player.voice_client.is_paused():
             return
 
-        current_len = len(player.queue) + (1 if player.current else 0)
         prev_len = self._last_queue_len.get(guild.id, current_len + 1)
         self._last_queue_len[guild.id] = current_len
 
@@ -811,6 +834,45 @@ class CurationCog(commands.Cog, name="CurationCog"):
                 log.exception("_do_refill failed", exc_info=t.exception())
 
         task.add_done_callback(_on_refill_done)
+
+    async def _do_autoplay(self, guild: discord.Guild, artist: str, track: str) -> None:
+        """Silently queue one similar track when the queue has fully emptied."""
+        music: MusicCog | None = self.bot.get_cog("MusicCog")  # type: ignore
+        if music is None:
+            return
+        player = music.players.get(guild.id)
+        if player is None or not player.voice_client or not player.voice_client.is_connected():
+            return
+        if player.queue or player.current:
+            return  # something got queued before this task ran — nothing to do
+
+        candidates = await self._get_similar_tracks(artist, track, limit=8)
+        if not candidates:
+            return
+
+        played_titles = {t.title.lower() for t in player.history}
+        candidates = [c for c in candidates if c.title.lower() not in played_titles]
+        if not candidates:
+            return
+
+        for ct in candidates:
+            query = f"ytsearch5:{ct.artist} - {ct.title}"
+            try:
+                resolved, _ = await music._extract_tracks(
+                    query,
+                    requester_id=self.bot.user.id if self.bot.user else 0,
+                    guild_id=guild.id,
+                    curation_mode=True,
+                )
+            except Exception:
+                continue
+            if not resolved:
+                continue
+            await player.enqueue(resolved[0])
+            self._refill_seeds[guild.id] = (ct.artist, ct.title)
+            break
+
+        music._persist_snapshot(guild.id)
 
     async def _do_refill(self, guild: discord.Guild, artist: str, track: str) -> None:
         """Fetch REFILL_MAX new similar tracks and post a refill approval prompt."""

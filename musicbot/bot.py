@@ -4,7 +4,7 @@ import asyncio
 import contextlib
 import logging
 import signal
-from logging.handlers import RotatingFileHandler
+import time
 from typing import Any
 
 import discord
@@ -16,6 +16,10 @@ from musicbot.cogs.curation import CurationCog
 from musicbot.config import Settings, load_settings
 from musicbot.database import Database
 
+# Module-level set to keep strong references to fire-and-forget tasks (SIGTERM
+# handler) so the event loop doesn't garbage-collect them mid-run.
+_bg_tasks: set[asyncio.Task[Any]] = set()
+
 
 class PyxeeHelpCommand(commands.HelpCommand):
     CATEGORY_STYLES = {
@@ -25,6 +29,9 @@ class PyxeeHelpCommand(commands.HelpCommand):
         None: ("\N{SPARKLES}", "Extras"),
     }
     COMMAND_BLURBS = {
+        "setprefix": "Change the bot command prefix for this server.",
+        "stay": "Toggle 24/7 mode — bot stays connected when the queue empties.",
+        "stats": "Show bot process stats (owner only).",
         "play": "Queue a URL, playlist, or search. Uses YouTube Music for best accuracy.",
         "playnext": "Insert a track next in queue. Plain text uses YouTube Music direct.",
         "search": "Browse results and pick one to queue. Use when !play gets the wrong track.",
@@ -54,6 +61,7 @@ class PyxeeHelpCommand(commands.HelpCommand):
         "skipto": "Jump to a specific queue position, dropping tracks before it.",
         "replay": "Re-queue the current track to play again next.",
         "qsearch": "Search for a keyword within the current queue.",
+        "toptracks": "Show the most-played tracks for this server, all-time.",
     }
 
     def get_command_signature(self, command: commands.Command[Any, ..., Any]) -> str:
@@ -228,6 +236,7 @@ class MusicBot(commands.Bot):
         self.settings = settings
         self.database = database
         self._prefix_cache: dict[int, str] = {}
+        self._reconnect_announced_at: dict[int, float] = {}
 
     async def setup_hook(self) -> None:
         self._shutting_down = False
@@ -267,6 +276,36 @@ class MusicBot(commands.Bot):
         logging.getLogger(__name__).info(
             "Logged in as %s (%s)", self.user, self.user.id if self.user else "unknown"
         )
+        await self._maybe_announce_reconnects()
+
+    async def _maybe_announce_reconnects(self) -> None:
+        # A persisted queue snapshot existing for a guild is itself the signal
+        # that we're coming back from a restart (crash, OOM, deploy) with that
+        # guild's queue intact — fire on this process's first on_ready too, not
+        # just later gateway reconnects, since systemd's Restart=on-failure is
+        # exactly the case this is meant to surface. A per-guild cooldown stops
+        # repeated on_ready calls from gateway flakiness from spamming the
+        # channel, without permanently silencing a guild that had no snapshot
+        # at startup but genuinely reconnects later.
+        now = time.monotonic()
+        for guild in self.guilds:
+            last = self._reconnect_announced_at.get(guild.id, 0.0)
+            if now - last < 60.0:
+                continue
+            try:
+                rows = await self.database.load_queue_snapshot(guild.id)
+            except Exception:
+                continue
+            if not rows:
+                continue
+            self._reconnect_announced_at[guild.id] = now
+            channel = guild.system_channel
+            if channel is None:
+                continue
+            with contextlib.suppress(discord.HTTPException):
+                await channel.send(
+                    "🔌 Reconnected — your queue has been preserved and will resume on `!join`."
+                )
 
     async def on_command_error(self, context: commands.Context[Any], error: commands.CommandError) -> None:
         if hasattr(context.command, "on_error"):
@@ -302,10 +341,11 @@ def configure_logging(settings: Settings) -> None:
     handlers[0].setFormatter(formatter)
 
     if settings.log_to_file:
-        file_handler = RotatingFileHandler(
+        # Use a plain FileHandler — logrotate (deploy/musicbot-logrotate) manages
+        # rotation via copytruncate.  Using RotatingFileHandler here in addition
+        # creates two independent rotators fighting over the same file.
+        file_handler = logging.FileHandler(
             settings.log_dir / "musicbot.log",
-            maxBytes=1_500_000,
-            backupCount=3,
             encoding="utf-8",
         )
         file_handler.setFormatter(formatter)
@@ -332,7 +372,9 @@ async def _async_run() -> None:
 
         def _handle_sigterm() -> None:
             logging.getLogger(__name__).info("SIGTERM received — initiating graceful shutdown.")
-            asyncio.create_task(bot.close())
+            task = asyncio.create_task(bot.close())
+            _bg_tasks.add(task)
+            task.add_done_callback(_bg_tasks.discard)
 
         with contextlib.suppress(NotImplementedError):
             loop.add_signal_handler(signal.SIGTERM, _handle_sigterm)

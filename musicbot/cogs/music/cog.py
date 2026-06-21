@@ -29,6 +29,9 @@ from musicbot.cogs.music.player import GuildPlayer
 if TYPE_CHECKING:
     from musicbot.bot import MusicBot
 
+# Keeps strong references to fire-and-forget tasks so they aren't GC'd mid-run.
+_bg_tasks: set[asyncio.Task[Any]] = set()
+
 
 class MusicCog(
     ExtractionMixin,
@@ -48,6 +51,7 @@ class MusicCog(
         self.logger = logging.getLogger(__name__)
 
         self.players: dict[int, GuildPlayer] = {}
+        self._player_create_locks: dict[int, asyncio.Lock] = {}
         self.now_playing_messages: dict[int, NowPlayingController] = {}
 
         self._warned_missing_cookiefile = False
@@ -56,6 +60,7 @@ class MusicCog(
 
         self._ytdl_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="ytdlp")
         self._ytdl_tlocal: threading.local = threading.local()
+        self._ytdl_timeout_count = 0
 
         self._http_session: aiohttp.ClientSession | None = None
 
@@ -69,6 +74,7 @@ class MusicCog(
         self._np_refresh_tasks: dict[int, asyncio.Task[None]] = {}
 
         self._guild_extract_semaphores: dict[int, asyncio.Semaphore] = {}
+        self._curation_semaphores: dict[int, asyncio.Semaphore] = {}
         self.extract_semaphore = asyncio.Semaphore(self.bot.settings.ytdlp_concurrent_extracts)
 
         self._last_search: OrderedDict[int, SearchDebugRecord] = OrderedDict()
@@ -86,7 +92,9 @@ class MusicCog(
             for task in task_dict.values():
                 task.cancel()
         if self._http_session and not self._http_session.closed:
-            asyncio.create_task(self._http_session.close())
+            task = asyncio.create_task(self._http_session.close())
+            _bg_tasks.add(task)
+            task.add_done_callback(_bg_tasks.discard)
         self._ytdl_executor.shutdown(wait=False)
 
     async def shutdown(self) -> None:

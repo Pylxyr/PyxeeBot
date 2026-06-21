@@ -25,17 +25,23 @@ class LifecycleMixin:
 
     async def _get_player(self, guild: discord.Guild) -> GuildPlayer:
         player = self.players.get(guild.id)
-        if not player:
-            player = await GuildPlayer.create(
-                self.bot,
-                guild,
-                self._resolve_track,
-                self._build_audio_source,
-                self._validate_stream_url,
-            )
-            self.players[guild.id] = player
-            await self._restore_snapshot(player)
-        return player
+        if player:
+            return player
+        lock = self._player_create_locks.setdefault(guild.id, asyncio.Lock())
+        async with lock:
+            player = self.players.get(guild.id)
+            if not player:
+                player = await GuildPlayer.create(
+                    self.bot,
+                    guild,
+                    self._resolve_track,
+                    self._build_audio_source,
+                    self._validate_stream_url,
+                )
+                self.players[guild.id] = player
+                player.stay_connected = await self.bot.database.get_stay_connected(guild.id)
+                await self._restore_snapshot(player)
+            return player
 
     async def _restore_snapshot(self, player: GuildPlayer) -> None:
         if not self.bot.settings.restore_queue_on_restart:
@@ -81,6 +87,8 @@ class LifecycleMixin:
             if task and not task.done():
                 task.cancel()
         self._guild_extract_semaphores.pop(guild_id, None)
+        self._curation_semaphores.pop(guild_id, None)
+        self._player_create_locks.pop(guild_id, None)
         self.now_playing_messages.pop(guild_id, None)
 
     # ── Snapshot persistence ────────────────────────────────────────────────

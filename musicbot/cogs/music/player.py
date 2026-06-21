@@ -12,7 +12,6 @@ from typing import Any, Awaitable, Callable, Literal, TYPE_CHECKING
 import discord
 
 from musicbot.cogs.music.constants import (
-    LOOP_CYCLE,
     STREAM_URL_REFRESH_AGE_SECONDS,
     VOICE_RECONNECT_ATTEMPTS,
 )
@@ -49,6 +48,7 @@ class GuildPlayer:
         self.announce_channel_id: int | None = None
         self.loop_mode: Literal["off", "one", "all"] = "off"
         self.rewind_requested = False
+        self.stay_connected = False
         self._connected_at: float = 0.0
 
         self.next_event = asyncio.Event()
@@ -402,6 +402,13 @@ class GuildPlayer:
 
                     if played_track and not self.rewind_requested:
                         self.history.append(played_track)
+                        with contextlib.suppress(Exception):
+                            await self.bot.database.add_play_history(
+                                self.guild.id,
+                                played_track.title,
+                                played_track.webpage_url,
+                                played_track.requester_id,
+                            )
                         if self.loop_mode == "one":
                             age = time.monotonic() - played_track.resolved_at
                             if played_track.resolved_at > 0 and age >= STREAM_URL_REFRESH_AGE_SECONDS:
@@ -444,6 +451,8 @@ class GuildPlayer:
 
     async def _disconnect_when_idle(self) -> None:
         await asyncio.sleep(self.bot.settings.idle_timeout_seconds)
+        if self.stay_connected:
+            return
         if not self.current and not self.queue:
             await self.stop()
             await self.disconnect()
