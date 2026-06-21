@@ -90,11 +90,24 @@ A background pipeline pre-resolves stream URLs for the top 3 queue positions as 
 - Python 3.11+
 - FFmpeg on `PATH`
 - Discord bot token
-- Last.fm API key *(optional — required for `!vibe` curation only)*
+- Last.fm API key *(optional — required for `!vibe` curation and the per-server `!autoplay` toggle only)*
 
 ---
 
 ## Installation
+
+**Deploying to a fresh Ubuntu VPS (e.g. Oracle Cloud free tier)?** Clone the repo
+to the server, then run the setup script — it installs everything, walks you
+through getting a Discord token and (optionally) a Last.fm key with live
+validation, and starts the bot as a systemd service in one go:
+
+```bash
+git clone https://github.com/Pylxyr/PyxeeBot.git /home/ubuntu/musicbot
+cd /home/ubuntu/musicbot
+bash deploy/setup_oracle.sh
+```
+
+The manual steps below are for local development or other platforms.
 
 **1. Clone**
 
@@ -141,6 +154,9 @@ python bot.py
 ---
 
 ## Running as a systemd service
+
+> If you used `deploy/setup_oracle.sh`, this is already done — the bot is running
+> as a systemd service. The steps below are for setting it up manually.
 
 Create `/etc/systemd/system/musicbot.service`:
 
@@ -195,7 +211,7 @@ All settings are read from `.env`. Every value has a default.
 | Variable | Default | Description |
 |---|---|---|
 | `DISCORD_TOKEN` | required | Bot token |
-| `LASTFM_API_KEY` | — | Enables `!vibe` curation |
+| `LASTFM_API_KEY` | — | Enables `!vibe` curation and the per-server `!autoplay` toggle |
 | `DEFAULT_PREFIX` | `!` | Command prefix |
 | `BOT_OWNERS` | — | Comma-separated owner user IDs |
 | `LOG_LEVEL` | `INFO` | `DEBUG` / `INFO` / `WARNING` / `ERROR` |

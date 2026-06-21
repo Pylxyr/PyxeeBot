@@ -11,13 +11,15 @@ if TYPE_CHECKING:
 
 async def _is_authorized_owner(context: commands.Context[Any]) -> bool:
     """Mirrors CommandHelpersMixin._is_bot_owner — checks settings.bot_owners
-    (BOT_OWNERS env var) as well as the Discord application owner, rather than
-    relying on commands.is_owner() which only knows about the latter."""
+    (BOT_OWNERS env var) as well as the Discord application owner(s), rather
+    than relying on commands.is_owner() which only knows about the latter."""
     bot = context.bot
     user = context.author
     if user.id in bot.settings.bot_owners:  # type: ignore[attr-defined]
         return True
-    return bot.owner_id is not None and user.id == bot.owner_id
+    if bot.owner_id is not None and user.id == bot.owner_id:
+        return True
+    return bool(bot.owner_ids) and user.id in bot.owner_ids
 
 
 def _bot_owner_check() -> Any:

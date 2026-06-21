@@ -35,9 +35,11 @@ class CommandHelpersMixin:
         return [m for m in getattr(channel, "members", []) if not m.bot]
 
     def _is_bot_owner(self, user: discord.User | discord.Member) -> bool:
-        return user.id in self.bot.settings.bot_owners or (
-            self.bot.owner_id is not None and user.id == self.bot.owner_id
-        )
+        if user.id in self.bot.settings.bot_owners:
+            return True
+        if self.bot.owner_id is not None and user.id == self.bot.owner_id:
+            return True
+        return bool(self.bot.owner_ids) and user.id in self.bot.owner_ids
 
     async def _is_dj(self, member: discord.Member) -> bool:
         if self._is_bot_owner(member):

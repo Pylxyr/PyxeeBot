@@ -241,9 +241,27 @@ class MusicBot(commands.Bot):
 
     async def setup_hook(self) -> None:
         self._shutting_down = False
+        await self._populate_owner_ids()
         await self.add_cog(AdminCog(self))
         await self.add_cog(MusicCog(self))
         await self.add_cog(CurationCog(self))
+
+    async def _populate_owner_ids(self) -> None:
+        # discord.py only populates owner_id/owner_ids lazily, the first time
+        # something calls is_owner() — nothing in this codebase does, so without
+        # this, the admin-owner fallback in _is_authorized_owner would never
+        # actually trigger and !stats would be unusable unless BOT_OWNERS was
+        # set explicitly. Populate it the same way is_owner() would.
+        if not self.owner_id and not self.owner_ids:
+            app_info = await self.application_info()
+            if app_info.team:
+                self.owner_ids = {
+                    member.id
+                    for member in app_info.team.members
+                    if member.role in (discord.TeamMemberRole.admin, discord.TeamMemberRole.developer)
+                }
+            else:
+                self.owner_id = app_info.owner.id
 
     async def _resolve_prefix(self, _: commands.Bot, message: discord.Message) -> list[str]:
         prefixes = [self.settings.default_prefix]

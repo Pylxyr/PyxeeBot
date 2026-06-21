@@ -392,3 +392,88 @@ async def test_reconnect_later_announces_guild_that_had_no_snapshot_at_startup()
     with patch("musicbot.bot.time.monotonic", return_value=10.0 + 1000.0):
         await MusicBot._maybe_announce_reconnects(fake_bot)
     guild.system_channel.send.assert_awaited_once()
+
+
+# ── Bot owner_id / owner_ids population ──────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_setup_hook_populates_owner_id_for_personal_app():
+    """discord.py only populates owner_id lazily, the first time something
+    calls is_owner() — nothing in this codebase does that, so without this,
+    the admin-owner fallback would be unreachable dead code."""
+    from musicbot.bot import MusicBot
+
+    fake_bot = MagicMock(spec=MusicBot)
+    fake_bot.owner_id = None
+    fake_bot.owner_ids = None
+    app_info = MagicMock()
+    app_info.team = None
+    app_info.owner.id = 999
+    fake_bot.application_info = AsyncMock(return_value=app_info)
+
+    await MusicBot._populate_owner_ids(fake_bot)
+
+    assert fake_bot.owner_id == 999
+    fake_bot.application_info.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_setup_hook_populates_owner_ids_for_team_app():
+    import discord
+
+    from musicbot.bot import MusicBot
+
+    fake_bot = MagicMock(spec=MusicBot)
+    fake_bot.owner_id = None
+    fake_bot.owner_ids = None
+
+    admin_member = MagicMock(id=1, role=discord.TeamMemberRole.admin)
+    dev_member = MagicMock(id=2, role=discord.TeamMemberRole.developer)
+    read_only_member = MagicMock(id=3, role=discord.TeamMemberRole.read_only)
+
+    app_info = MagicMock()
+    app_info.team.members = [admin_member, dev_member, read_only_member]
+    fake_bot.application_info = AsyncMock(return_value=app_info)
+
+    await MusicBot._populate_owner_ids(fake_bot)
+
+    assert fake_bot.owner_ids == {1, 2}, "read_only team members must not be granted owner access"
+
+
+@pytest.mark.asyncio
+async def test_setup_hook_does_not_refetch_if_owner_already_set():
+    from musicbot.bot import MusicBot
+
+    fake_bot = MagicMock(spec=MusicBot)
+    fake_bot.owner_id = 555
+    fake_bot.owner_ids = None
+    fake_bot.application_info = AsyncMock()
+
+    await MusicBot._populate_owner_ids(fake_bot)
+
+    fake_bot.application_info.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_is_authorized_owner_recognizes_team_owner_ids():
+    """The owner check must also recognize owner_ids (team-owned applications),
+    not just owner_id (personal applications) — both can now be populated by
+    setup_hook."""
+    from musicbot.cogs.admin import _is_authorized_owner
+
+    bot = MagicMock()
+    bot.settings.bot_owners = ()
+    bot.owner_id = None
+    bot.owner_ids = {1, 2}
+
+    team_member_ctx = MagicMock()
+    team_member_ctx.bot = bot
+    team_member_ctx.author = MagicMock(id=2)
+
+    stranger_ctx = MagicMock()
+    stranger_ctx.bot = bot
+    stranger_ctx.author = MagicMock(id=3)
+
+    assert await _is_authorized_owner(team_member_ctx) is True
+    assert await _is_authorized_owner(stranger_ctx) is False
