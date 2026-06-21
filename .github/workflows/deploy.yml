@@ -65,7 +65,7 @@ jobs:
 
             git reset --hard origin/main
 
-            pip install -r requirements.txt --break-system-packages -q
+            ~/musicbot/.venv/bin/pip install -r requirements.txt -q
 
             sudo systemctl stop musicbot
             sudo systemctl daemon-reload
