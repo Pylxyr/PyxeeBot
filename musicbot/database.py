@@ -14,6 +14,7 @@ class Database:
         self._prefix_cache: dict[int, str | None] = {}
         self._dj_role_cache: dict[int, int | None] = {}
         self._stay_connected_cache: dict[int, bool] = {}
+        self._autoplay_cache: dict[int, bool] = {}
         self._conn: aiosqlite.Connection | None = None
         self._snapshot_hashes: dict[int, int] = {}
         # Serialises every write (not just multi-statement transactions) — a
@@ -65,6 +66,8 @@ class Database:
             await conn.execute(
                 "ALTER TABLE guild_settings ADD COLUMN stay_connected INTEGER NOT NULL DEFAULT 0"
             )
+        if "autoplay" not in columns:
+            await conn.execute("ALTER TABLE guild_settings ADD COLUMN autoplay INTEGER NOT NULL DEFAULT 0")
 
         await conn.execute(
             """
@@ -370,6 +373,35 @@ class Database:
             )
             await self._conn.commit()
         self._stay_connected_cache[guild_id] = enabled
+        self._prefix_cache.setdefault(guild_id, default_prefix)
+
+    async def get_autoplay(self, guild_id: int) -> bool:
+        if self._conn is None:
+            return False
+        if guild_id in self._autoplay_cache:
+            return self._autoplay_cache[guild_id]
+        async with self._conn.execute(
+            "SELECT autoplay FROM guild_settings WHERE guild_id = ?", (guild_id,)
+        ) as cursor:
+            row = await cursor.fetchone()
+        value = bool(row["autoplay"]) if row else False
+        self._autoplay_cache[guild_id] = value
+        return value
+
+    async def set_autoplay(self, guild_id: int, enabled: bool, default_prefix: str = "!") -> None:
+        if self._conn is None:
+            return
+        async with self._write_lock:
+            await self._conn.execute(
+                """
+                INSERT INTO guild_settings (guild_id, prefix, autoplay)
+                VALUES (?, ?, ?)
+                ON CONFLICT(guild_id) DO UPDATE SET autoplay = excluded.autoplay
+                """,
+                (guild_id, default_prefix, int(enabled)),
+            )
+            await self._conn.commit()
+        self._autoplay_cache[guild_id] = enabled
         self._prefix_cache.setdefault(guild_id, default_prefix)
 
     async def add_play_history(self, guild_id: int, title: str, webpage_url: str, requester_id: int) -> None:

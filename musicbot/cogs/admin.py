@@ -64,6 +64,23 @@ class AdminCog(commands.Cog):
         state = "enabled" if new_value else "disabled"
         await context.send(f"24/7 mode {state}.")
 
+    @commands.hybrid_command(name="autoplay")
+    @commands.guild_only()
+    @commands.has_guild_permissions(manage_guild=True)
+    async def autoplay(self, context: commands.Context[Any]) -> None:
+        """Toggle autoplay — queue a similar Last.fm track when the queue empties."""
+        guild_id = context.guild.id
+        current = await self.bot.database.get_autoplay(guild_id)
+        new_value = not current
+        await self.bot.database.set_autoplay(
+            guild_id, new_value, default_prefix=self.bot.settings.default_prefix
+        )
+        state = "enabled" if new_value else "disabled"
+        message = f"Autoplay {state}."
+        if new_value and not self.bot.settings.lastfm_api_key:
+            message += " Note: LASTFM_API_KEY isn't set, so autoplay won't find any tracks yet."
+        await context.send(message)
+
     @commands.hybrid_command(name="stats")
     @_bot_owner_check()
     async def stats(self, context: commands.Context[Any]) -> None:

@@ -144,6 +144,56 @@ async def test_concurrent_playlist_saves_do_not_race(tmp_path):
         await db.close()
 
 
+# ── Per-guild autoplay setting ───────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_autoplay_defaults_off_and_is_independent_per_guild(tmp_path):
+    db = Database(tmp_path / "test_autoplay.db")
+    await db.initialize()
+    try:
+        assert await db.get_autoplay(1) is False
+        await db.set_autoplay(1, True)
+        assert await db.get_autoplay(1) is True
+        assert await db.get_autoplay(2) is False, "enabling for one guild must not affect another"
+    finally:
+        await db.close()
+
+
+@pytest.mark.asyncio
+async def test_autoplay_toggle_persists_and_is_cached(tmp_path):
+    db = Database(tmp_path / "test_autoplay_cache.db")
+    await db.initialize()
+    try:
+        await db.set_autoplay(1, True)
+        assert await db.get_autoplay(1) is True
+        # Second read for the same guild should hit the in-memory cache,
+        # not issue another query against the connection.
+        with patch.object(db._conn, "execute", wraps=db._conn.execute) as spy:
+            assert await db.get_autoplay(1) is True
+            spy.assert_not_called()
+    finally:
+        await db.close()
+
+
+@pytest.mark.asyncio
+async def test_autoplay_command_toggles_per_guild_setting():
+    from musicbot.cogs.admin import AdminCog
+
+    bot = make_bot()
+    cog = AdminCog(bot)
+    context = MagicMock()
+    context.guild = make_guild()
+    context.send = AsyncMock()
+
+    await AdminCog.autoplay.callback(cog, context)
+
+    bot.database.set_autoplay.assert_awaited_once()
+    args, kwargs = bot.database.set_autoplay.call_args
+    assert args[0] == context.guild.id
+    assert args[1] is True  # toggled from the default False
+
+
 # ── Resolver CancelledError propagation ─────────────────────────────────────
 
 

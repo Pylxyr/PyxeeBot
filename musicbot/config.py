@@ -45,7 +45,6 @@ class Settings:
     error_announce: bool
     lastfm_api_key: str | None
     restore_queue_on_restart: bool
-    autoplay: bool
 
 
 def _parse_owner_ids(raw_value: str) -> tuple[int, ...]:
@@ -101,7 +100,7 @@ def load_settings() -> Settings:
         ytdlp_concurrent_extracts=max(1, _int_env("YTDLP_CONCURRENT_EXTRACTS", 1)),
         ytdlp_curation_concurrency=max(1, min(6, _int_env("YTDLP_CURATION_CONCURRENCY", 3))),
         near_end_prefetch_seconds=max(0, _int_env("NEAR_END_PREFETCH_SECONDS", 30)),
-        opus_bitrate_kbps=max(64, min(256, _int_env("OPUS_BITRATE_KBPS", 96))),
+        opus_bitrate_kbps=max(64, min(256, _int_env("OPUS_BITRATE_KBPS", 64))),
         ytdlp_search_results=max(1, min(10, _int_env("YTDLP_SEARCH_RESULTS", 5))),
         ytdlp_resolve_cache_size=max(16, _int_env("YTDLP_RESOLVE_CACHE_SIZE", 128)),
         ytdlp_resolve_cache_ttl_seconds=max(60, _int_env("YTDLP_RESOLVE_CACHE_TTL_SECONDS", 1800)),
@@ -112,5 +111,4 @@ def load_settings() -> Settings:
         lastfm_api_key=os.getenv("LASTFM_API_KEY", "").strip() or None,
         restore_queue_on_restart=os.getenv("RESTORE_QUEUE_ON_RESTART", "true").strip().lower()
         in {"1", "true", "yes", "on"},
-        autoplay=os.getenv("AUTOPLAY", "false").strip().lower() in {"1", "true", "yes", "on"},
     )

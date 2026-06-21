@@ -39,7 +39,6 @@ def make_settings(**overrides) -> MagicMock:
     s.near_end_threshold_seconds = 20
     s.ytdlp_concurrent_extracts = overrides.get("ytdlp_concurrent_extracts", 1)
     s.ytdlp_curation_concurrency = overrides.get("ytdlp_curation_concurrency", 3)
-    s.autoplay = overrides.get("autoplay", False)
     return s
 
 
@@ -53,6 +52,8 @@ def make_bot(**settings_overrides) -> MagicMock:
     bot.database = MagicMock()
     bot.database.get_stay_connected = AsyncMock(return_value=False)
     bot.database.set_stay_connected = AsyncMock(return_value=None)
+    bot.database.get_autoplay = AsyncMock(return_value=False)
+    bot.database.set_autoplay = AsyncMock(return_value=None)
     bot.database.save_queue_snapshot = AsyncMock(return_value=None)
     bot.database.load_queue_snapshot = AsyncMock(return_value=[])
     bot.database.add_play_history = AsyncMock(return_value=None)

@@ -785,7 +785,9 @@ class CurationCog(commands.Cog, name="CurationCog"):
         current_len = len(player.queue) + (1 if player.current else 0)
 
         if current_len == 0:
-            if not self.bot.settings.autoplay or guild.id in self._refill_in_progress:
+            if guild.id in self._refill_in_progress:
+                return
+            if not await self.bot.database.get_autoplay(guild.id):
                 return
             seed = self._refill_seeds.get(guild.id)
             if seed is None:

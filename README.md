@@ -65,7 +65,7 @@ Vibe searches use a strengthened version of the scoring engine — live/concert 
 
 Save and reload named curated playlists with `!vibe-save` / `!vibe-load`.
 
-If `AUTOPLAY=true`, the bot queues one similar track (via the same Last.fm pipeline) whenever the queue fully empties, using the last completed track as the seed — no `!vibe` required.
+If autoplay is enabled for the server (`!autoplay`), the bot queues one similar track (via the same Last.fm pipeline) whenever the queue fully empties, using the last completed track as the seed — no `!vibe` required.
 
 ### URL Pipeline
 
@@ -212,7 +212,7 @@ All settings are read from `.env`. Every value has a default.
 | `YTDLP_EXTRACT_TIMEOUT_SECONDS` | `45` | Abort yt-dlp after this long |
 | `RESTORE_QUEUE_ON_RESTART` | `true` | Restore queue from DB snapshot on startup |
 | `YTDLP_CONCURRENT_EXTRACTS` | `1` | Max simultaneous yt-dlp extractions — keep at `1` on single-core hosts |
-| `OPUS_BITRATE_KBPS` | `96` | Opus encoding bitrate |
+| `OPUS_BITRATE_KBPS` | `64` | Opus encoding bitrate |
 | `NP_AUTO_REFRESH` | `false` | Auto-refresh NP embed on a timer |
 | `NP_AUTO_REFRESH_INTERVAL` | `30` | Seconds between auto-refresh edits |
 | `YTDLP_COOKIES_FILE` | — | Path to Netscape cookies file |
@@ -222,7 +222,6 @@ All settings are read from `.env`. Every value has a default.
 | `MAX_QUEUE_SIZE_PER_USER` | `0` | Per-user track limit; `0` disables the limit |
 | `NEAR_END_PREFETCH_SECONDS` | `30` | Trigger safety-net URL refresh this many seconds before track end |
 | `ERROR_ANNOUNCE` | `true` | Post playback errors to the announce channel |
-| `AUTOPLAY` | `false` | Queue similar Last.fm tracks when the queue empties |
 
 ---
 
@@ -291,6 +290,7 @@ All settings are read from `.env`. Every value has a default.
 | `!dj` | — | Show current DJ role |
 | `!setprefix <prefix>` | — | Change the command prefix for this server |
 | `!stay` | — | Toggle 24/7 mode (stay connected when queue empties) |
+| `!autoplay` | — | Toggle per-server autoplay (queue a similar track when the queue empties) |
 | `!stats` | — | Show bot process stats (owner only) |
 | `!ping` | — | Check gateway latency |
 

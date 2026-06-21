@@ -31,6 +31,7 @@ class PyxeeHelpCommand(commands.HelpCommand):
     COMMAND_BLURBS = {
         "setprefix": "Change the bot command prefix for this server.",
         "stay": "Toggle 24/7 mode — bot stays connected when the queue empties.",
+        "autoplay": "Toggle autoplay — queue a similar Last.fm track when the queue empties.",
         "stats": "Show bot process stats (owner only).",
         "play": "Queue a URL, playlist, or search. Uses YouTube Music for best accuracy.",
         "playnext": "Insert a track next in queue. Plain text uses YouTube Music direct.",
