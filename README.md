@@ -1,29 +1,16 @@
-<div align="center">
-
-<img src="https://github.com/Pylxyr/PyxeeBot-Page/blob/main/public/assets/logo.png" alt="PyxeeBot" width="120" />
-
 # PyxeeBot
 
-**A self-hosted Discord music bot built for music communities that care about getting the right track.**
-
-Stream from YouTube · Last.fm curation · Custom search scoring · Live controls
-
-[![Python](https://img.shields.io/badge/Python-3.11%2B-3572A5?style=flat-square&logo=python&logoColor=white)](https://python.org)
-[![discord.py](https://img.shields.io/badge/discord.py-2.7.1-5865F2?style=flat-square&logo=discord&logoColor=white)](https://github.com/Rapptz/discord.py)
-[![License](https://img.shields.io/badge/License-MIT-22c55e?style=flat-square)](LICENSE)
-[![Website](https://img.shields.io/badge/Website-pylxyr.github.io%2FPyxeeBot--Page-FFAA40?style=flat-square)](https://pylxyr.github.io/PyxeeBot-Page/)
-
-</div>
+A self-hosted Discord music bot built with [discord.py](https://github.com/Rapptz/discord.py), yt-dlp, aiosqlite, and RapidFuzz. Designed to run well on a single-core VPS (tested on Oracle Cloud free-tier AMD E2.1.Micro running Ubuntu).
 
 ---
 
 ## Overview
 
-PyxeeBot is a fully self-hosted Discord music bot designed for servers that want accurate track selection and a polished playback experience. It runs on a single Linux instance with no external services beyond a Discord token and an optional Last.fm API key.
-
-The search engine doesn't just take the top YouTube result. It runs every candidate through a multi-factor scoring pass — token overlap, sequence similarity, anchor phrase detection, uploader signals, live/cover penalties, Japanese-original detection — to select the most accurate studio version of what you actually asked for.
-
-**[→ Visit the project page](https://pylxyr.github.io/PyxeeBot-Page/)**
+- Plays audio from YouTube and YouTube Music
+- A custom multi-signal scoring engine selects the most accurate YouTube result for any search query, with specific tuning for Japanese/anime content
+- Last.fm integration for `!vibe` similar-track curation and per-server `!autoplay`
+- Persistent queue snapshots survive restarts; per-server DJ role, prefix, 24/7 mode, and autoplay settings stored in SQLite
+- Designed around the constraints of a 1/8-core shared VPS: single-threaded yt-dlp pool, 64 kbps Opus encoding, debounced panel refreshes, bounded deque-based queue
 
 ---
 
@@ -31,37 +18,41 @@ The search engine doesn't just take the top YouTube result. It runs every candid
 
 ### Playback
 
-Streams audio from YouTube URLs, playlists, or plain search queries. Supports vote-skip, force-skip, loop modes (off / single track / full queue), previous track, pause/resume, and idle/empty-channel auto-disconnect. The queue survives a bot restart via SQLite snapshot persistence — `!clear` and `!leave` both flush the snapshot immediately so the queue does not reappear after a restart. Set `RESTORE_QUEUE_ON_RESTART=false` to disable restoration entirely.
-
-A live now-playing panel shows a real-time progress bar and inline controls — skip, pause, loop, queue — without leaving the channel. The panel auto-refreshes on queue mutations and skips redundant HTTP edits when nothing visible has changed.
+- `!play` accepts YouTube/YouTube Music URLs, playlist URLs, or plain text search queries
+- `!playnext` queues a track immediately after the current one
+- `!search` shows up to 10 interactive results before committing
+- Vote-skip (`!skip`): instant if you're the requester or a DJ; otherwise requires ≥50% of listeners to call it
+- `!forceskip` — immediate skip, DJ-only
+- `!skipto <position>` — jump to a queue position, dropping everything before it (DJ-only)
+- `!prev` — requeue the last-played track
+- `!pause` / `!resume`
+- `!stop` — clears the queue and disconnects
+- `!loop` — cycles through Off → Single track → Entire queue
+- `!repeat` / `!replay` — aliases for one-track loop
+- `!nowplaying` — live now-playing embed with queue preview
 
 ### Search Engine
 
-Queries go through a custom multi-factor scoring engine built entirely in Python with no external ML dependencies. Each candidate is evaluated across 20+ weighted factors:
+The scoring engine ranks yt-dlp search candidates across multiple signals before committing to one:
 
-| Signal | What it measures |
-|---|---|
-| Token overlap | How many query words appear in the title / uploader |
-| Sequence ratio | Full string similarity via rapidfuzz |
-| Anchor phrases | Artist name extracted from cross-candidate analysis |
-| Topic channel bonus | YouTube Music auto-generated channels (always studio) |
-| Preferred uploaders | Label channels — HYBE, SMTOWN, Avex, Victor, etc. |
-| Live / concert penalty | Suppresses festival recordings, BBC sessions, TV performances — checks title, description, and yt-dlp's `was_live` flag |
-| Cover penalty | Suppresses guitar/piano covers, karaoke, English covers |
-| Duration sanity | Penalises hour-long compilations and <60s clips |
-| JP original detection | Boosts kana-titled uploads for J-pop / anime searches, with an extra boost when the query is romanized Latin and the uploader matches |
-| View count signal | Log-scaled bonus, capped to avoid popularity bias |
-| Recency bonus | Boosts tracks uploaded within the last 6 months / 1 year / 2 years |
-
-Run `!why` after any search to see the full per-candidate score breakdown in Discord, or DM yourself the complete component-level breakdown.
+- **Token overlap** — RapidFuzz partial ratio between query tokens and title
+- **Artist / title format detection** — detects `Artist - Title` queries vs. bare title queries and adjusts anchor-phrase matching accordingly
+- **Live/concert penalties** — live, concert, and festival keywords in title, description, or uploader name are penalised; tripled in curation mode
+- **Cover penalties** — cover/tribute versions are penalised when not explicitly requested
+- **Topic-channel bonus** — YouTube Music `- Topic` channels receive a bonus when title tokens also overlap
+- **Verified-channel bonus** — applies for channels with a checkmark when title tokens match
+- **JP/anime bonus** — CJK characters or hiragana/katakana in the title receive a small bonus; Latin-romanised query against a JP title gets an anchor-phrase bonus
+- **Duration filter** — very short clips (<60s) and very long mixes (>20min) are penalised unless the query implies otherwise
+- **Recency bonus** — tracks uploaded within the past two years receive a small boost, suppressed for heavily-penalised entries
+- **Uploader preference** — known label/distributor uploaders receive a small bonus
 
 ### Vibe Curation (Last.fm)
 
-`!vibe <query>` discovers similar tracks using Last.fm's `track.getSimilar` API. Results are sorted by Last.fm match confidence (0.0–1.0) so the strongest recommendations appear first. A curation panel lets you deselect tracks before queuing. When the queue drops to ≤10 tracks, a refill prompt surfaces automatically. Selecting tracks in the dropdown sends an ephemeral confirmation so it is clear which items are marked for exclusion before you commit with **Add All**.
+`!vibe <query>` discovers similar tracks via Last.fm's `track.getSimilar` API. Results are sorted by match confidence (0.0–1.0). A curation panel lets you deselect tracks before queuing. When the queue drops to ≤10 tracks, a refill prompt surfaces automatically.
 
 Curation resolutions for a single guild run up to `YTDLP_CURATION_CONCURRENCY` at a time (own per-guild semaphore, separate from the playback path), bounded overall by `YTDLP_CONCURRENT_EXTRACTS`.
 
-Vibe searches use a strengthened version of the scoring engine — live/concert penalties are tripled, Topic channel bonus is raised, and queries are biased toward `official audio` to keep studio versions out of reach of festival recordings.
+Vibe searches use a strengthened version of the scoring engine — live/concert penalties are tripled, Topic channel bonus is raised, and queries are biased toward `official audio`.
 
 Save and reload named curated playlists with `!vibe-save` / `!vibe-load`.
 
@@ -69,19 +60,22 @@ If autoplay is enabled for the server (`!autoplay`), the bot queues one similar 
 
 ### URL Pipeline
 
-A background pipeline pre-resolves stream URLs for the top 3 queue positions as soon as tracks are enqueued, sequentially, with no concurrent yt-dlp calls. By the time the current track ends, the next track's URL has been warm for its entire duration — no gap, no buffering wait between tracks. A 20-second safety-net near-end refresh covers the edge case where a URL ages out during a long session.
+- YouTube watch URLs, short URLs (`youtu.be`), and playlist URLs all resolve correctly
+- Playlist URLs respect `MAX_PLAYLIST_SIZE` (default 25)
+- yt-dlp selects `bestaudio[ext=webm]` → `bestaudio[ext=m4a]` → `bestaudio` → `best[height<=480]`
+- Stream URLs are cached per-track (128 entries, 30-minute TTL by default) and refreshed automatically 30s before the track ends
+- Audio re-encodes through libopus at 64 kbps by default — copy mode is intentionally avoided to prevent pacing irregularities
 
 ### Performance
 
-- **rapidfuzz** replaces difflib for all similarity scoring — 10–100× faster in the hot path
-- **Thread-local YoutubeDL instances** — construction cost (5–20ms) paid once per options variant per worker thread; each thread holds its own instance set so concurrent extractions never share a `YoutubeDL` object across threads
-- **Cached markdown escaping** on Track objects — `re.sub` runs once per track, not per render
-- **Embed hash comparison** — NP panel skips HTTP edits when visible state is unchanged
-- **Bounded queue deque** — enforced at the data structure level via `maxlen`
-- **Running duration total** — O(1) queue total time instead of O(n) sum on every render
-- **Proper 20ms Opus frames** — FFmpeg is always re-encoded through libopus (never `codec="copy"`) and forced to `-frame_duration 20 -flush_packets 1` to eliminate audio fast-forward and jitter caused by packet buffering. `codec="copy"` skips the encoder entirely, so these flags have no effect and playback fast-forwards for the first few seconds — do not reintroduce it as an optimization
-- **Bounded yt-dlp socket timeout** — `socket_timeout: 15` on every extraction call prevents a single stalled connection from hanging the shared 2-worker extraction thread pool indefinitely
-- **Extraction pool self-healing** — 3 consecutive `YTDLP_EXTRACT_TIMEOUT_SECONDS` timeouts recycle the 2-worker thread pool, since a hung thread (e.g. stuck DNS resolution) can't otherwise be force-killed and would permanently consume a worker slot
+- yt-dlp runs in a `ThreadPoolExecutor(max_workers=2)` to avoid blocking the event loop
+- A global semaphore (`YTDLP_CONCURRENT_EXTRACTS`, default 1) limits concurrent extractions on the constrained vCPU
+- Per-guild playback semaphore (`Semaphore(1)`) isolates guilds from each other
+- Curation resolutions use a separate per-guild semaphore sized by `YTDLP_CURATION_CONCURRENCY`
+- Thread pool automatically recycles after 3 consecutive extraction timeouts
+- Bounded yt-dlp socket timeout (`socket_timeout: 15`) prevents stalled connections from permanently consuming a worker slot
+- Now-playing panel refresh is debounced (0.8s) with a state-key check to skip redundant Discord edits
+- Queue duration tracked as a running total (`O(1)`) rather than summing on every render
 
 ---
 
@@ -96,10 +90,7 @@ A background pipeline pre-resolves stream URLs for the top 3 queue positions as 
 
 ## Installation
 
-**Deploying to a fresh Ubuntu VPS (e.g. Oracle Cloud free tier)?** Clone the repo
-to the server, then run the setup script — it installs everything, walks you
-through getting a Discord token and (optionally) a Last.fm key with live
-validation, and starts the bot as a systemd service in one go:
+**Deploying to a fresh Ubuntu VPS (e.g. Oracle Cloud free tier)?** Clone the repo to the server, then run the setup script — it installs everything, walks you through getting a Discord token and (optionally) a Last.fm key with live validation, and starts the bot as a systemd service in one go:
 
 ```bash
 git clone https://github.com/Pylxyr/PyxeeBot.git /home/ubuntu/musicbot
@@ -155,8 +146,7 @@ python bot.py
 
 ## Running as a systemd service
 
-> If you used `deploy/setup_oracle.sh`, this is already done — the bot is running
-> as a systemd service. The steps below are for setting it up manually.
+> If you used `deploy/setup_oracle.sh`, this is already done — the bot is running as a systemd service. The steps below are for setting it up manually.
 
 Create `/etc/systemd/system/musicbot.service`:
 
@@ -206,38 +196,38 @@ journalctl -u musicbot -f -o cat
 
 ## Configuration
 
-All settings are read from `.env`. Every value has a default.
+All settings are read from `.env`. Every value has a default. See `deploy/.env.example` for the full annotated list.
 
 | Variable | Default | Description |
 |---|---|---|
 | `DISCORD_TOKEN` | required | Bot token |
 | `LASTFM_API_KEY` | — | Enables `!vibe` curation and the per-server `!autoplay` toggle |
-| `DEFAULT_PREFIX` | `!` | Command prefix |
-| `BOT_OWNERS` | — | Comma-separated owner user IDs |
+| `DEFAULT_PREFIX` | `!` | Global command prefix (per-server overrides via `!setprefix`) |
+| `BOT_OWNERS` | — | Comma-separated owner user IDs (owner-only commands; app owner is always included) |
 | `LOG_LEVEL` | `INFO` | `DEBUG` / `INFO` / `WARNING` / `ERROR` |
 | `LOG_TO_FILE` | `true` | Write logs to `LOG_DIR` (rotated weekly by `deploy/musicbot-logrotate`, not in-process) |
 | `LOG_DIR` | `logs` | Log file directory |
-| `MAX_QUEUE_SIZE` | `100` | Maximum queued tracks |
-| `MAX_PLAYLIST_SIZE` | `25` | Maximum tracks loaded from a playlist URL |
-| `IDLE_TIMEOUT_SECONDS` | `180` | Disconnect after idle this long |
-| `EMPTY_CHANNEL_TIMEOUT_SECONDS` | `60` | Disconnect when alone this long |
-| `YTDLP_SOCKET_TIMEOUT` | `15` | yt-dlp socket timeout (seconds) |
-| `YTDLP_SEARCH_RESULTS` | `5` | Candidates fetched per search |
-| `YTDLP_RESOLVE_CACHE_SIZE` | `128` | Stream URL cache size |
-| `YTDLP_RESOLVE_CACHE_TTL_SECONDS` | `1800` | Stream URL cache TTL |
-| `YTDLP_EXTRACT_TIMEOUT_SECONDS` | `45` | Abort yt-dlp after this long |
-| `RESTORE_QUEUE_ON_RESTART` | `true` | Restore queue from DB snapshot on startup |
-| `YTDLP_CONCURRENT_EXTRACTS` | `1` | Max simultaneous yt-dlp extractions — keep at `1` on single-core hosts |
-| `OPUS_BITRATE_KBPS` | `64` | Opus encoding bitrate |
-| `NP_AUTO_REFRESH` | `false` | Auto-refresh NP embed on a timer |
-| `NP_AUTO_REFRESH_INTERVAL` | `30` | Seconds between auto-refresh edits |
+| `MAX_QUEUE_SIZE` | `100` | Maximum queue length per guild |
+| `MAX_QUEUE_SIZE_PER_USER` | `0` | Per-user track limit; `0` disables the limit |
+| `MAX_PLAYLIST_SIZE` | `25` | Maximum tracks loaded from a single playlist URL |
+| `IDLE_TIMEOUT_SECONDS` | `180` | Disconnect after this many seconds idle (no tracks, no listeners) |
+| `EMPTY_CHANNEL_TIMEOUT_SECONDS` | `60` | Disconnect after this many seconds alone in a voice channel |
+| `YTDLP_CONCURRENT_EXTRACTS` | `1` | Global yt-dlp extraction concurrency limit |
+| `YTDLP_PREFETCH_COUNT` | `1` | Tracks to pre-resolve ahead of the current position |
+| `YTDLP_CURATION_CONCURRENCY` | `3` | Concurrent per-guild resolutions during `!vibe` / `!vibe-load` |
+| `YTDLP_SEARCH_RESULTS` | `5` | Candidate count passed to the scoring engine per query |
+| `YTDLP_RESOLVE_CACHE_SIZE` | `128` | Maximum cached stream URL entries |
+| `YTDLP_RESOLVE_CACHE_TTL_SECONDS` | `1800` | Stream URL cache TTL (30 min) |
+| `YTDLP_EXTRACT_TIMEOUT_SECONDS` | `45` | Per-extraction timeout |
+| `YTDLP_SOCKET_TIMEOUT` | `15` | yt-dlp socket timeout |
+| `NEAR_END_PREFETCH_SECONDS` | `30` | Trigger stream URL refresh this many seconds before track end |
 | `YTDLP_COOKIES_FILE` | — | Path to Netscape cookies file |
 | `YTDLP_JS_RUNTIME_PATH` | — | Path to a Node.js binary, for sites requiring JS signature decryption |
-| `YTDLP_PREFETCH_COUNT` | `1` | Queue positions to pre-resolve in the background pipeline |
-| `YTDLP_CURATION_CONCURRENCY` | `3` | Concurrent yt-dlp resolutions during `!vibe` and `!vibe-load` (max 6) |
-| `MAX_QUEUE_SIZE_PER_USER` | `0` | Per-user track limit; `0` disables the limit |
-| `NEAR_END_PREFETCH_SECONDS` | `30` | Trigger safety-net URL refresh this many seconds before track end |
+| `OPUS_BITRATE_KBPS` | `64` | Opus encoding bitrate (64–256) |
+| `NP_AUTO_REFRESH` | `false` | Auto-refresh the now-playing panel on a timer |
+| `NP_AUTO_REFRESH_INTERVAL` | `30` | Auto-refresh interval in seconds |
 | `ERROR_ANNOUNCE` | `true` | Post playback errors to the announce channel |
+| `RESTORE_QUEUE_ON_RESTART` | `true` | Restore queue from snapshot after bot restart |
 
 ---
 
@@ -247,68 +237,74 @@ All settings are read from `.env`. Every value has a default.
 
 | Command | Aliases | Description |
 |---|---|---|
-| `!play <query>` | `p` | Queue a URL, playlist, or search query |
-| `!playnext <query>` | `pn` | Insert next in queue (DJ) |
-| `!search <query>` | `find`, `s` | Browse results and pick manually |
-| `!skip` | `next` | Vote-skip or instant skip |
-| `!forceskip` | `fs` | Immediate skip (DJ) |
-| `!prev` | `previous`, `back` | Return to last completed track |
+| `!join` | `summon` | Join your voice channel |
+| `!leave` | `disconnect` | Leave the voice channel |
+| `!play <query>` | `p` | Queue a URL, playlist, or search query. Cooldown: 2 uses / 4s per user |
+| `!playnext <query>` | `pn` | Queue a track immediately after the current one |
 | `!pause` | — | Pause playback |
 | `!resume` | — | Resume playback |
-| `!stop` | — | Stop and clear loop mode (DJ) |
-| `!nowplaying` | `np` | Open the live control panel |
-| `!loop` | — | Cycle loop mode (DJ) |
-| `!replay` | — | Re-queue current track (DJ) |
-| `!repeat` | `rp` | Toggle single-track repeat |
-| `!join` | `summon` | Join your voice channel |
-| `!leave` | `disconnect` | Disconnect and clear session |
+| `!skip` | `next` | Vote-skip (instant if you're the requester or a DJ; requires ≥50% of listeners otherwise) |
+| `!forceskip` | `fs` | Immediate skip, DJ-only |
+| `!skipto <position>` | — | Jump to a queue position, dropping everything before it (DJ-only) |
+| `!prev` | `previous`, `back` | Requeue the last-played track |
+| `!stop` | — | Clear the queue and disconnect |
+| `!loop` | — | Cycle loop mode: Off → Single track → Entire queue (DJ-only) |
+| `!repeat` | `rp` | Toggle single-track loop on/off for the current track |
+| `!replay` | — | Re-queue the current track to play immediately next (DJ-only) |
+| `!nowplaying` | `np` | Show the now-playing embed |
 
 ### Queue
 
 | Command | Aliases | Description |
 |---|---|---|
-| `!queue` | `q` | Show current queue |
-| `!remove <index>` | — | Remove a track by position |
-| `!clear` | — | Flush the queue (DJ) |
-| `!shuffle` | — | Randomise the queue (DJ) |
-| `!move <from> <to>` | — | Reorder by position (DJ) |
-| `!skipto <position>` | — | Jump ahead, dropping earlier tracks (DJ) |
+| `!queue` | `q` | Show the current queue |
+| `!clear` | — | Clear the entire queue (DJ-only) |
+| `!shuffle` | — | Shuffle the queue (DJ-only) |
+| `!move <from> <to>` | — | Move a track to a different queue position (DJ-only) |
+| `!remove <position>` | — | Remove a track (requester or DJ) |
 | `!qsearch <keyword>` | `qs` | Search within the current queue |
-| `!history` | — | Show recently played tracks |
-| `!toptracks` | `top` | Show the most-played tracks for this server |
+| `!history` | — | Show recently played tracks (session only) |
+| `!toptracks` | `top` | Show the all-time most-played tracks for this server |
+
+### Search
+
+| Command | Aliases | Description |
+|---|---|---|
+| `!search <query>` | `find`, `s` | Browse up to 10 interactive results before queuing. Cooldown: 1 use / 6s per user |
+| `!why` | `searchdebug`, `scorewhy` | Show the score breakdown for the last search result |
 
 ### Playlists
 
-| Command | Description |
-|---|---|
-| `!playlist save <name>` | Save current queue as a named playlist |
-| `!playlist load <name>` | Load a saved playlist into the queue |
-| `!playlist list` | List all server playlists |
-| `!playlist show <name>` | Show tracks in a saved playlist |
-| `!playlist delete <name>` | Delete a playlist (DJ) |
+| Command | Aliases | Description |
+|---|---|---|
+| `!playlist save <name>` | — | Save the current queue as a named server playlist |
+| `!playlist load <name>` | — | Load a saved playlist into the queue |
+| `!playlist list` | — | List saved playlists for this server |
+| `!playlist show <name>` | — | Preview the tracks in a saved playlist |
+| `!playlist delete <name>` | — | Delete a saved playlist |
 
 ### Curation
 
 | Command | Aliases | Description |
 |---|---|---|
-| `!vibe <query>` | `vb` | Discover similar tracks via Last.fm |
-| `!vibe-save <name>` | `vsave` | Save current curation session |
-| `!vibe-load <name>` | `vload` | Queue a saved curated playlist |
-| `!vibe-list` | `vlist` | List saved curated playlists |
+| `!vibe <query>` | `vb` | Discover similar tracks via Last.fm and queue them interactively. Cooldown: 1 use / 15s per guild |
+| `!vibe-save <name>` | `vsave` | Save the current vibe session's tracks as a named playlist |
+| `!vibe-load <name>` | `vload` | Load and re-queue a saved vibe playlist |
+| `!vibe-list` | `vlist` | List saved vibe playlists for this server |
 
-### Admin & Debug
+### Admin & Settings
 
 | Command | Aliases | Description |
 |---|---|---|
-| `!why` | `searchdebug`, `scorewhy` | Show last search score breakdown |
-| `!setdj <role>` | — | Set the DJ role |
-| `!cleardj` | — | Remove the DJ role |
-| `!dj` | — | Show current DJ role |
-| `!setprefix <prefix>` | — | Change the command prefix for this server |
-| `!stay` | — | Toggle 24/7 mode (stay connected when queue empties) |
-| `!autoplay` | — | Toggle per-server autoplay (queue a similar track when the queue empties) |
-| `!stats` | — | Show bot process stats (owner only) |
+| `!setprefix <prefix>` | — | Change the command prefix for this server (Manage Server) |
+| `!setdj <role>` | — | Set the DJ role (Manage Server) |
+| `!cleardj` | — | Remove the DJ role (Manage Server) |
+| `!dj` | — | Show the current DJ role |
+| `!stay` | — | Toggle 24/7 mode — bot stays connected when the queue empties (Manage Server) |
+| `!autoplay` | — | Toggle per-server autoplay — queues a similar track when the queue empties (Manage Server) |
+| `!stats` | — | Show bot process stats: versions, guild count, voice connections, RSS, latency (owner only) |
 | `!ping` | — | Check gateway latency |
+| `!commands` | `cmds` | Open the command help menu |
 
 ---
 
@@ -316,58 +312,69 @@ All settings are read from `.env`. Every value has a default.
 
 ```
 PyxeeBot/
-├── bot.py
-├── pyproject.toml       — pytest config
-├── tests/
-│   ├── conftest.py      — shared fixtures
-│   ├── test_scoring.py  — scoring engine unit tests
-│   └── test_player.py   — player state-transition tests
-└── musicbot/
-    ├── bot.py           — MusicBot, help command, logging, shutdown
-    ├── config.py        — Settings dataclass, .env loader
-    ├── database.py      — Async SQLite: prefixes, playlists, snapshots
-    └── cogs/
-        ├── admin.py     — Ping, DJ role management
-        ├── curation.py  — Last.fm vibe/curation, auto-refill
-        └── music/
-            ├── cog.py                  — MusicCog: composes all mixins, init, lifecycle hooks
-            ├── _lifecycle.py           — LifecycleMixin: player create/restore/cleanup, snapshots
-            ├── _helpers.py             — CommandHelpersMixin: permission checks, shared utilities
-            ├── _events.py              — EventsMixin: bot/player event listeners
-            ├── _playback_commands.py   — PlaybackCommandsMixin: join/play/skip/pause/loop/etc.
-            ├── _queue_commands.py      — QueueCommandsMixin: queue/remove/clear/shuffle/move
-            ├── _search_commands.py     — SearchCommandsMixin: search, why
-            ├── _playlist_commands.py   — PlaylistCommandsMixin: playlist save/load/list/show/delete
-            ├── _extraction.py          — ExtractionMixin: yt-dlp, audio source, search
-            ├── _resolver.py            — ResolverMixin: stream-URL cache and pipeline
-            ├── _panel.py               — NPanelMixin: NP embed rendering and refresh
-            ├── _context.py             — Shared ContextVar (avoids circular imports)
-            ├── player.py               — Per-guild audio state machine
-            ├── scoring.py              — Pure search scoring (no Discord dependency)
-            ├── views.py                — Discord UI: NP panel, queue, search, debug
-            ├── models.py               — Pure dataclasses
-            └── constants.py            — FFmpeg options, scoring tables, timing
+├── bot.py                          # Entry point
+├── requirements.txt
+├── pyproject.toml                  # pytest (asyncio_mode=auto) and ruff (py311, E/F/W) config
+├── .github/
+│   └── workflows/
+│       └── deploy.yml              # CI: lint → test → SSH deploy to Oracle VPS
+├── deploy/
+│   ├── setup_oracle.sh             # Interactive one-run setup wizard for Ubuntu VPS
+│   ├── musicbot.service            # systemd unit (ProtectSystem=full, memory limits, logrotate)
+│   ├── musicbot-logrotate          # logrotate config (weekly, copytruncate)
+│   └── .env.example                # Annotated environment template
+├── musicbot/
+│   ├── __init__.py
+│   ├── bot.py                      # MusicBot subclass, help command, startup, owner resolution
+│   ├── config.py                   # Settings dataclass, env var loading
+│   ├── database.py                 # aiosqlite wrapper; all write methods hold a shared write lock
+│   └── cogs/
+│       ├── __init__.py
+│       ├── admin.py                # AdminCog: prefix, DJ, stay, autoplay, stats, ping, commands
+│       ├── curation.py             # CurationCog: !vibe family, autoplay queue trigger
+│       └── music/
+│           ├── __init__.py         # Public surface: exports MusicCog and EMBED_COLOUR
+│           ├── cog.py              # MusicCog: composes all mixins, owns shared state dicts
+│           ├── constants.py        # FFmpeg options, YTDL options, UI limits, scoring thresholds
+│           ├── models.py           # Track, ResolvedTrackData, NowPlayingController dataclasses
+│           ├── scoring.py          # Multi-signal search result scoring and ranking engine
+│           ├── views.py            # Discord UI views: SearchSelection, Queue, NowPlaying, ScoreDebug
+│           ├── player.py           # GuildPlayer: queue, playback loop, history, stay-connected flag
+│           ├── _context.py         # ContextVar for current guild ID, threaded into the yt-dlp pool
+│           ├── _extraction.py      # ExtractionMixin: yt-dlp wrapper, audio source construction
+│           ├── _resolver.py        # ResolverMixin: stream URL resolution, per-track TTL cache
+│           ├── _lifecycle.py       # LifecycleMixin: player creation (race-condition lock), snapshot restore
+│           ├── _panel.py           # NPanelMixin: now-playing embed, debounced refresh loop
+│           ├── _events.py          # EventsMixin: voice state and disconnect event handlers
+│           ├── _helpers.py         # CommandHelpersMixin: DJ checks, skip votes, owner checks
+│           ├── _playback_commands.py   # join, leave, play, playnext, pause, resume, skip, etc.
+│           ├── _queue_commands.py      # queue, clear, shuffle, move, remove, qsearch, history, toptracks
+│           ├── _search_commands.py     # search, why
+│           └── _playlist_commands.py  # playlist save/load/list/show/delete
+└── tests/
+    ├── __init__.py
+    ├── conftest.py                 # make_bot, make_guild, make_track, make_settings helpers
+    ├── test_player.py              # GuildPlayer: enqueue, capacity, duration, snapshot, skip, prev (30 tests)
+    ├── test_scoring.py             # Scoring engine: normalisation, signals, rank_entries() (41 tests)
+    ├── test_scoring_golden.py      # Golden ranking scenarios against real J-pop/anime fixtures (14 tests)
+    └── test_concurrency.py         # Concurrency and correctness regression tests (21 tests)
 ```
 
 ---
 
 ## Architecture Notes
 
-**Search scoring** is fully pure — `scoring.py` has no Discord or bot imports and can be unit tested in isolation. Scores are logged at `DEBUG` level; `!why` surfaces them in Discord.
+**Player loop.** Each guild has one `GuildPlayer` with a long-running `_player_loop` asyncio task. Creation is protected by a per-guild `asyncio.Lock` to prevent a TOCTOU race where two concurrent commands (`!join` and `!play`) could each create an independent player before either writes to `self.players`. The loop pre-resolves the next track's stream URL via `_resolve_track_data` and stores it in a TTL cache (128 entries, 30-min TTL). Stream URLs are also refreshed 30s before the current track ends (`NEAR_END_PREFETCH_SECONDS`), and any cached stream URL older than 4 hours (`STREAM_URL_REFRESH_AGE_SECONDS`) is considered stale and re-resolved before playback.
 
-**cog.py split** — `MusicCog` composes ten mixins: `ExtractionMixin`, `ResolverMixin`, `NPanelMixin`, `LifecycleMixin`, `CommandHelpersMixin`, `EventsMixin`, `PlaybackCommandsMixin`, `QueueCommandsMixin`, `SearchCommandsMixin`, and `PlaylistCommandsMixin`. `cog.py` itself only holds `__init__`, lifecycle hooks (`cog_load`/`cog_unload`/`shutdown`/`cog_command_error`), and `_bg_task`. All instance state still lives in `MusicCog.__init__`; no mixin carries state of its own. discord.py's `CogMeta` walks the full MRO when collecting commands and listeners, so `@commands.hybrid_command` and `@commands.Cog.listener()` decorators work identically whether defined directly on `MusicCog` or on any mixin it inherits from. `_context.py` holds the shared `_CURRENT_GUILD_ID` ContextVar to avoid circular imports between the mixin files.
+**Audio pipeline.** yt-dlp extracts a direct stream URL; FFmpeg reads it over HTTP and re-encodes to Opus. Copy mode (`-c:a copy`) is explicitly avoided — the fallback path that would normally use `FFmpegOpusAudio.from_probe()` instead probes for bitrate only and discards the detected codec, since discord.py's constructor silently maps any detected `opus`/`libopus` result to copy mode, which bypasses the libopus encoder and causes pacing irregularities audible as fast-forward artefacts at the start of a track.
 
-**Player loop** runs as a single long-lived `asyncio.Task` per guild. After each track finishes it re-evaluates loop mode, appends to history, and dispatches `musicbot_queue_updated` which triggers the snapshot debounce, NP refresh, and URL pipeline.
+**Database.** A single `aiosqlite.Connection` is shared across the process. All write methods hold a module-level `asyncio.Lock` before executing — SQLite transactions are connection-scoped, so a concurrent single-statement `commit()` from one guild can otherwise land inside and force-commit another guild's still-open `BEGIN IMMEDIATE` transaction silently. Tables: `guild_settings` (prefix, DJ role, stay-connected, autoplay per guild), `saved_playlists` + `saved_playlist_items` (named server playlists), `queue_snapshots` (queue restored on restart), `play_history` (backing `!toptracks`).
 
-**Debounce pattern** — snapshot writes, NP embed refreshes, and presence updates all use a deadline-timestamp + single-long-lived-task approach instead of spawning a new task on every event. Each loop re-checks its deadline after the async operation completes, so a deadline extension written during a slow await is never silently dropped. This avoids task churn on active queues.
+**Scoring engine.** `scoring.py` is the most complex module. It normalises query and candidate text, tokenises with stop-word removal, then assembles a weighted score from ~15 signals including fuzzy token overlap (RapidFuzz), anchor-phrase matching, live/cover/mix duration penalties, topic-channel and verified-channel bonuses, JP/anime bonuses, and recency. The final `rank_entries()` call sorts and returns the best candidate.
 
-**URL pipeline** keeps the top 3 queue positions pre-resolved at all times. Runs sequentially (never concurrently) and yields `asyncio.sleep(0)` between resolves so the audio thread isn't starved. The near-end task is a 20-second safety net only — in normal operation the next URL is already warm.
+**yt-dlp concurrency.** All extractions run in `ThreadPoolExecutor(max_workers=2)`. A global `asyncio.Semaphore(YTDLP_CONCURRENT_EXTRACTS)` gates concurrent work. A separate per-guild semaphore (`Semaphore(1)`) isolates playback-path extractions from other guilds. Curation (`!vibe`) uses its own per-guild semaphore sized by `YTDLP_CURATION_CONCURRENCY` so it doesn't compete with the playback semaphore. The thread pool is automatically recycled after 3 consecutive `asyncio.wait_for` timeouts, since a genuinely-stuck thread (e.g. blocked in DNS resolution outside a socket timeout) can't be force-killed and would otherwise permanently consume a worker slot.
 
-**Stream URL validation** — `_validate_stream_url` distinguishes between a server explicitly rejecting a URL (HTTP 4xx/5xx → returns `False`, triggers re-resolve) and a network error during the HEAD check (timeout / connection error → returns `True`, keeps the cached URL). Network unavailability does not mean the URL is stale.
-
-**Last.fm error handling** — `_lastfm` retries once on transient failures (5xx, timeout, network error) with a short backoff. 429 backs off 5 seconds before the retry. 403 logs at `ERROR` and returns immediately. JSON decode failures and API-level error payloads are both caught and logged.
-
-**Audio timing** — FFmpeg is always re-encoded through libopus and forced to `-frame_duration 20 -flush_packets 1` to produce exactly 20ms Opus frames matching `AudioPlayer.DELAY`. This eliminates the fast-forward and mid-track jitter caused by `codec="copy"` passthrough sending raw container packets at whatever cadence FFmpeg pre-buffered them. `_build_audio_source` deliberately skips `FFmpegOpusAudio.from_probe()`'s ffprobe subprocess for known-Opus streams (yt-dlp already reports `acodec`), but it must never pass `codec="copy"` to skip the encoder too — that reintroduces the fast-forward bug since `-frame_duration`/`-flush_packets` are libopus-only options with zero effect in copy mode.
+**Bot owner resolution.** `setup_hook` calls `application_info()` to populate `owner_id` (personal app) or `owner_ids` (team-owned app, admin/developer roles only) at startup. discord.py would otherwise only populate these lazily on first `is_owner()` call, which nothing in this codebase triggers — meaning owner-only commands would silently fail for anyone not listed in `BOT_OWNERS`.
 
 ---
 
@@ -375,13 +382,20 @@ PyxeeBot/
 
 ```bash
 pip install pytest pytest-asyncio
-pytest
+pytest tests/ -q
 ```
 
-Tests live in `tests/`. `test_scoring.py` covers the pure scoring engine (normalize, tokenize, signal tokens, overlap ratios, live/cover penalties, topic bonuses, anchor matching, rank ordering, debug record eviction). `test_scoring_golden.py` pins down real-world ranking outcomes end-to-end — one case per scoring bug found and fixed in production (JP original vs. romanized live, correct song vs. wrong songs on the preferred channel, Chinese vs. Japanese script detection, live-recording detection, discouraged-penalty cap, anchor disambiguation, and more) so a future scoring tweak can't silently reintroduce a solved bug. `test_player.py` covers `GuildPlayer` state transitions (enqueue duration tracking, replace_queue, snapshot fallback chain, pause/resume accounting, skip, play_previous).
+106 tests across four files:
+
+- **`test_player.py`** (30) — `GuildPlayer` state: enqueue, queue capacity, duration tracking, snapshot serialisation, pause/resume timing, skip, and prev
+- **`test_scoring.py`** (41) — scoring engine units: text normalisation, tokenisation, signal functions, and `rank_entries()` end-to-end
+- **`test_scoring_golden.py`** (14) — golden ranking scenarios against real J-pop/anime fixture data, each asserting a specific track wins over a distracting alternative
+- **`test_concurrency.py`** (21) — regression tests for concurrency bugs and correctness invariants: `_get_player` TOCTOU race, database write-lock covering all 7 write methods, `CancelledError` propagation through the shared-resolve shield, per-guild autoplay DB/command toggle, `setup_hook` owner population for personal and team-owned apps, reconnect announcement cooldown logic, and owner-check coverage for both `_is_authorized_owner` and `_is_bot_owner`
+
+All async tests use `pytest-asyncio` in `auto` mode (configured in `pyproject.toml`). Ruff is configured for `py311` with `E`, `F`, `W` rules at line length 110.
 
 ---
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT
