@@ -1,4 +1,12 @@
+<div align="center">
+
+<img src="https://github.com/Pylxyr/PyxeeBot-Page/blob/main/public/assets/logo.png" alt="PyxeeBot" width="120" />
+
 # PyxeeBot
+
+**A self-hosted Discord music bot built for music communities that care about getting the right track.**
+
+Stream from YouTube · Last.fm curation · Custom search scoring · Live controls
 
 [![Python](https://img.shields.io/badge/Python-3.11%2B-3572A5?style=flat-square&logo=python&logoColor=white)](https://python.org)
 [![discord.py](https://img.shields.io/badge/discord.py-2.7.1-5865F2?style=flat-square&logo=discord&logoColor=white)](https://github.com/Rapptz/discord.py)
@@ -6,6 +14,8 @@
 [![Tests](https://img.shields.io/badge/tests-106%20passing-22c55e?style=flat-square&logo=pytest&logoColor=white)](tests/)
 [![License](https://img.shields.io/badge/License-MIT-64748b?style=flat-square)](LICENSE)
 [![Website](https://img.shields.io/badge/Website-PyxeeBot-FFAA40?style=flat-square)](https://pylxyr.github.io/PyxeeBot-Page/)
+
+</div>
 
 A self-hosted Discord music bot built with [discord.py](https://github.com/Rapptz/discord.py), yt-dlp, aiosqlite, and RapidFuzz. Designed to run well on a single-core VPS (tested on Oracle Cloud free-tier AMD E2.1.Micro running Ubuntu).
 
@@ -49,7 +59,8 @@ The scoring engine ranks yt-dlp search candidates across multiple signals before
 - **Topic-channel bonus** — YouTube Music `- Topic` channels receive a bonus when title tokens also overlap
 - **Verified-channel bonus** — applies for channels with a checkmark when title tokens match
 - **JP/anime bonus** — CJK characters or hiragana/katakana in the title receive a small bonus; Latin-romanised query against a JP title gets an anchor-phrase bonus
-- **Duration filter** — very short clips (<60s) and very long mixes (>20min) are penalised unless the query implies otherwise
+- **Duration filter** — very short clips (<60s) and long mixes (>15min) are penalised unless the query implies otherwise
+- **View count** — log-scaled bonus, capped to avoid pure popularity bias
 - **Recency bonus** — tracks uploaded within the past two years receive a small boost, suppressed for heavily-penalised entries
 - **Uploader preference** — known label/distributor uploaders receive a small bonus
 
@@ -247,7 +258,7 @@ All settings are read from `.env`. Every value has a default. See `deploy/.env.e
 | `!join` | `summon` | Join your voice channel |
 | `!leave` | `disconnect` | Leave the voice channel |
 | `!play <query>` | `p` | Queue a URL, playlist, or search query. Cooldown: 2 uses / 4s per user |
-| `!playnext <query>` | `pn` | Queue a track immediately after the current one |
+| `!playnext <query>` | `pn` | Queue a track immediately after the current one (DJ-only) |
 | `!pause` | — | Pause playback |
 | `!resume` | — | Resume playback |
 | `!skip` | `next` | Vote-skip (instant if you're the requester or a DJ; requires ≥50% of listeners otherwise) |
