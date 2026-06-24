@@ -1,5 +1,12 @@
 # PyxeeBot
 
+[![Python](https://img.shields.io/badge/Python-3.11%2B-3572A5?style=flat-square&logo=python&logoColor=white)](https://python.org)
+[![discord.py](https://img.shields.io/badge/discord.py-2.7.1-5865F2?style=flat-square&logo=discord&logoColor=white)](https://github.com/Rapptz/discord.py)
+[![yt-dlp](https://img.shields.io/badge/yt--dlp-2026.06.09-CC0000?style=flat-square&logo=youtube&logoColor=white)](https://github.com/yt-dlp/yt-dlp)
+[![Tests](https://img.shields.io/badge/tests-106%20passing-22c55e?style=flat-square&logo=pytest&logoColor=white)](tests/)
+[![License](https://img.shields.io/badge/License-MIT-64748b?style=flat-square)](LICENSE)
+[![Website](https://img.shields.io/badge/Website-PyxeeBot-FFAA40?style=flat-square)](https://pylxyr.github.io/PyxeeBot-Page/)
+
 A self-hosted Discord music bot built with [discord.py](https://github.com/Rapptz/discord.py), yt-dlp, aiosqlite, and RapidFuzz. Designed to run well on a single-core VPS (tested on Oracle Cloud free-tier AMD E2.1.Micro running Ubuntu).
 
 ---
