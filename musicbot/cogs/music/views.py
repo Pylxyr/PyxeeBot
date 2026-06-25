@@ -107,7 +107,7 @@ class SearchSelectionView(discord.ui.View):
             else f"{int(SEARCH_SELECTION_TIMEOUT_SECONDS)} seconds"
         )
         embed = discord.Embed(
-            title="Pick A Search Result",
+            title="Search Results",
             description=(
                 f"{action} a result for `{discord.utils.escape_markdown(self.query_text)}`.\n"
                 f"Use the dropdown below within `{timeout_label}`."

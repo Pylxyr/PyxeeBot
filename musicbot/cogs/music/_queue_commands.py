@@ -27,7 +27,7 @@ class QueueCommandsMixin:
             await context.send("No tracks have been played this session.")
             return
         lines = [
-            f"`{i}.` [{t.escaped_title}]({t.webpage_url}) — <@{t.requester_id}>"
+            f"`{i}.` [{t.escaped_title}]({t.webpage_url}) `[{t.duration_label}]` — <@{t.requester_id}>"
             for i, t in enumerate(reversed(hist), start=1)
         ]
         embed = discord.Embed(title="Recent History", description="\n".join(lines[:20]), colour=EMBED_COLOUR)
@@ -42,10 +42,17 @@ class QueueCommandsMixin:
         if not rows:
             await context.send("No play history recorded yet.")
             return
+        medals = {1: "🥇", 2: "🥈", 3: "🥉"}
         lines = [
-            f"`{i}.` **{row['title']}** — played {row['play_count']}x" for i, row in enumerate(rows, start=1)
+            f"{medals.get(i, f'`{i}.`')} **{row['title']}** — {row['play_count']}× plays"
+            for i, row in enumerate(rows, start=1)
         ]
-        embed = discord.Embed(title="Most Played Tracks", description="\n".join(lines), colour=EMBED_COLOUR)
+        embed = discord.Embed(
+            title="Most Played Tracks",
+            description="\n".join(lines),
+            colour=EMBED_COLOUR,
+        )
+        embed.set_footer(text=f"{context.guild.name} · all-time")
         await context.send(embed=embed)
 
     @commands.hybrid_command(name="qsearch", aliases=["qs"])
