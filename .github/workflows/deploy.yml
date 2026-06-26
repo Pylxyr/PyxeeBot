@@ -36,8 +36,8 @@ jobs:
         run: ruff format --check musicbot/ tests/
         
       - name: Security audit
-        run: pip-audit --format json | python3 -c "import json,sys; [print(v['id'],'-',p['name'],p['version']) for p in json.load(sys.stdin)['dependencies'] for v in p['vulns']]"     
-      
+        run: pip-audit --ignore-vuln CVE-2025-69277  
+        
       - name: Tests
         run: pytest tests/ -q --tb=short
 
