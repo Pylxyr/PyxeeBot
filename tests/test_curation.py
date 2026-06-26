@@ -181,6 +181,6 @@ async def test_vibe_load_sends_not_found_for_missing_playlist():
     ctx.guild.id = 1
     ctx.send = AsyncMock()
 
-    await cog.vibe_load(ctx, name="nonexistent")
+    await cog.vibe_load.callback(cog, ctx, name="nonexistent")
     ctx.send.assert_called_once()
     assert "nonexistent" in ctx.send.call_args[0][0]

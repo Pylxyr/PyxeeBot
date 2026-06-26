@@ -62,13 +62,14 @@ class LifecycleMixin:
             )
             for row in rows
         ]
+        if not restored:
+            return
         player.replace_queue(restored)
-        if restored:
-            self._restored_guilds.add(player.guild.id)
-            self._bg_task(
-                self._warmup_restore(list(restored[:3]), guild_id=player.guild.id),
-                name="warmup-restore",
-            )
+        self._restored_guilds.add(player.guild.id)
+        self._bg_task(
+            self._warmup_restore(list(restored[:3]), guild_id=player.guild.id),
+            name="warmup-restore",
+        )
 
     async def _warmup_restore(self, tracks: list[Track], *, guild_id: int) -> None:
         sem = self._guild_extract_semaphores.setdefault(guild_id, asyncio.Semaphore(1))
