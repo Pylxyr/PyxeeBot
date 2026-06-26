@@ -36,16 +36,8 @@ jobs:
         run: ruff format --check musicbot/ tests/
         
       - name: Security audit
-        run: |
-          pip-audit --format json 2>&1 \
-            | python3 -c "
-      import json, sys
-      data = json.load(sys.stdin)
-      for pkg in data['dependencies']:
-          for v in pkg['vulns']:
-              print(v['id'], '-', pkg['name'], pkg['version'])
-"
-
+        run: pip-audit --format json 2>&1 | python3 -c "import json,sys; [print(v['id'],'-',p['name'],p['version']) for p in json.load(sys.stdin)['dependencies'] for v in p['vulns']]"
+     
       - name: Tests
         run: pytest tests/ -q --tb=short
 
