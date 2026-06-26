@@ -3,9 +3,9 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 from musicbot.cogs.music._lifecycle import LifecycleMixin
 from musicbot.cogs.music.models import Track
+
 from tests.conftest import make_bot, make_guild, make_track
 
 
@@ -26,6 +26,7 @@ class _FakeCog(LifecycleMixin):
 
     def _bg_task(self, coro, *, name: str = "") -> MagicMock:
         import asyncio
+
         task = asyncio.create_task(coro, name=name)
         return task
 
@@ -51,7 +52,10 @@ def _make_player(guild_id: int = 1) -> MagicMock:
 def _row(title: str = "T", url: str = "https://yt.be/x", query: str = "q", requester: int = 1) -> MagicMock:
     r = MagicMock()
     r.__getitem__ = lambda self, k: {
-        "title": title, "webpage_url": url, "query": query, "requester_id": str(requester)
+        "title": title,
+        "webpage_url": url,
+        "query": query,
+        "requester_id": str(requester),
     }[k]
     return r
 

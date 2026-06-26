@@ -124,9 +124,7 @@ class Database:
         await conn.commit()
 
     async def _run_migrations(self, conn: aiosqlite.Connection) -> None:
-        await conn.execute(
-            "CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)"
-        )
+        await conn.execute("CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)")
         async with conn.execute("SELECT version FROM schema_version") as cur:
             row = await cur.fetchone()
 
@@ -143,16 +141,12 @@ class Database:
                 current = 1
             else:
                 current = 0
-            await conn.execute(
-                "INSERT INTO schema_version (version) VALUES (?)", (current,)
-            )
+            await conn.execute("INSERT INTO schema_version (version) VALUES (?)", (current,))
         else:
             current = row["version"]
 
         if current < 1:
-            await conn.execute(
-                "ALTER TABLE guild_settings ADD COLUMN dj_role_id INTEGER"
-            )
+            await conn.execute("ALTER TABLE guild_settings ADD COLUMN dj_role_id INTEGER")
             current = 1
             await conn.execute("UPDATE schema_version SET version = ?", (current,))
 
@@ -164,9 +158,7 @@ class Database:
             await conn.execute("UPDATE schema_version SET version = ?", (current,))
 
         if current < 3:
-            await conn.execute(
-                "ALTER TABLE guild_settings ADD COLUMN autoplay INTEGER NOT NULL DEFAULT 0"
-            )
+            await conn.execute("ALTER TABLE guild_settings ADD COLUMN autoplay INTEGER NOT NULL DEFAULT 0")
             current = 3
             await conn.execute("UPDATE schema_version SET version = ?", (current,))
 

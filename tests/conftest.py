@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock
-import pytest
 
+import pytest
 from musicbot.cogs.music.models import Track
 from musicbot.cogs.music.player import GuildPlayer
 

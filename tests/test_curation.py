@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from musicbot.cogs.curation import CurationCog, CuratedTrack, CurationSession, _artist_key
+from musicbot.cogs.curation import CuratedTrack, CurationCog, CurationSession, _artist_key
 
 
 def _make_bot(*, lastfm_key: str | None = "testkey") -> MagicMock:
@@ -26,6 +26,7 @@ def _make_cog(bot: MagicMock | None = None) -> CurationCog:
 
 # ── _artist_key ───────────────────────────────────────────────────────────────
 
+
 def test_artist_key_strips_punctuation():
     assert _artist_key("YOASOBI") == "yoasobi"
 
@@ -45,6 +46,7 @@ def test_artist_key_collapses_spaces():
 
 # ── per-guild semaphore ───────────────────────────────────────────────────────
 
+
 def test_curation_sem_same_object_for_same_guild():
     cog = _make_cog()
     concurrency = 2
@@ -62,6 +64,7 @@ def test_curation_sem_different_for_different_guilds():
 
 
 # ── autoplay guard ────────────────────────────────────────────────────────────
+
 
 @pytest.mark.asyncio
 async def test_on_queue_updated_no_double_fire():
@@ -136,6 +139,7 @@ async def test_on_queue_updated_skips_disconnected_player():
 
 # ── CurationSession ───────────────────────────────────────────────────────────
 
+
 def test_session_stores_seed():
     session = CurationSession(
         guild_id=1,
@@ -150,14 +154,13 @@ def test_session_stores_seed():
 
 
 def test_session_tracks_mutable():
-    session = CurationSession(
-        guild_id=1, author_id=2, seed_query="q", seed_artist="A", seed_track="T"
-    )
+    session = CurationSession(guild_id=1, author_id=2, seed_query="q", seed_artist="A", seed_track="T")
     session.tracks.append(CuratedTrack(title="T", artist="A"))
     assert len(session.tracks) == 1
 
 
 # ── _lastfm no key ────────────────────────────────────────────────────────────
+
 
 @pytest.mark.asyncio
 async def test_lastfm_returns_none_without_key():
@@ -167,6 +170,7 @@ async def test_lastfm_returns_none_without_key():
 
 
 # ── vibe_load with empty playlist ─────────────────────────────────────────────
+
 
 @pytest.mark.asyncio
 async def test_vibe_load_sends_not_found_for_missing_playlist():

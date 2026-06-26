@@ -14,8 +14,9 @@ import discord
 from discord.ext import commands
 
 if TYPE_CHECKING:
-    from musicbot.bot import MusicBot
     from musicbot.cogs.music.cog import MusicCog
+
+    from musicbot.bot import MusicBot
 
 from musicbot.cogs.music.constants import EMBED_COLOUR
 

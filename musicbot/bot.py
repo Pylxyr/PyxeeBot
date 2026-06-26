@@ -9,9 +9,9 @@ from typing import Any
 
 import discord
 from discord.ext import commands
-
 from musicbot.cogs.admin import AdminCog
 from musicbot.cogs.music import MusicCog
+
 from musicbot.cogs.curation import CurationCog
 from musicbot.config import Settings, load_settings
 from musicbot.database import Database
@@ -325,11 +325,7 @@ class MusicBot(commands.Bot):
             music_cog = self.cogs.get("MusicCog")
             player = music_cog.players.get(guild.id) if music_cog else None  # type: ignore[union-attr]
             announce_id = player.announce_channel_id if player else None
-            channel = (
-                guild.get_channel(announce_id)
-                if announce_id
-                else guild.system_channel
-            )
+            channel = guild.get_channel(announce_id) if announce_id else guild.system_channel
             if channel is None:
                 continue
             with contextlib.suppress(discord.HTTPException):
