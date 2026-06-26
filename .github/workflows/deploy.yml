@@ -36,8 +36,7 @@ jobs:
         run: ruff format --check musicbot/ tests/
 
       - name: Security audit
-        run: pip-audit
-        continue-on-error: true
+        run: pip-audit --format json 2>&1 | tee audit.json; true
 
       - name: Tests
         run: pytest tests/ -q --tb=short
