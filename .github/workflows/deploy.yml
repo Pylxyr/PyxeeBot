@@ -34,9 +34,17 @@ jobs:
 
       - name: Format check
         run: ruff format --check musicbot/ tests/
-
+        
       - name: Security audit
-        run: pip-audit --format json 2>&1 | tee audit.json; true
+        run: |
+          pip-audit --format json 2>&1 \
+            | python3 -c "
+      import json, sys
+      data = json.load(sys.stdin)
+      for pkg in data['dependencies']:
+          for v in pkg['vulns']:
+              print(v['id'], '-', pkg['name'], pkg['version'])
+"
 
       - name: Tests
         run: pytest tests/ -q --tb=short
