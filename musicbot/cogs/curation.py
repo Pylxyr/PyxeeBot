@@ -285,6 +285,7 @@ class CurationCog(commands.Cog, name="CurationCog"):
         self._last_queue_len: dict[int, int] = {}
         self._refill_seeds: dict[int, tuple[str, str]] = {}
         self._refill_in_progress: set[int] = set()
+        self._curation_sem: dict[int, asyncio.Semaphore] = {}
 
     async def cog_load(self) -> None:
         connector = aiohttp.TCPConnector(limit=5, ttl_dns_cache=300)
@@ -545,7 +546,7 @@ class CurationCog(commands.Cog, name="CurationCog"):
         resolved_count = 0
 
         concurrency = max(1, getattr(self.bot.settings, "ytdlp_curation_concurrency", 3))
-        sem = asyncio.Semaphore(concurrency)
+        sem = self._curation_sem.setdefault(guild_id, asyncio.Semaphore(concurrency))
 
         async def _resolve_one(ct: CuratedTrack) -> None:
             nonlocal queued, failed, resolved_count
@@ -714,7 +715,7 @@ class CurationCog(commands.Cog, name="CurationCog"):
         failed = 0
         limit_hit = asyncio.Event()
         concurrency = max(1, getattr(self.bot.settings, "ytdlp_curation_concurrency", 3))
-        sem = asyncio.Semaphore(concurrency)
+        sem = self._curation_sem.setdefault(context.guild.id, asyncio.Semaphore(concurrency))
 
         async def _load_one(entry: dict[str, Any]) -> None:
             nonlocal queued, failed

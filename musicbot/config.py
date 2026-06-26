@@ -9,7 +9,6 @@ from dotenv import load_dotenv
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = BASE_DIR / "data"
-DATA_DIR.mkdir(exist_ok=True)
 
 load_dotenv(BASE_DIR / ".env")
 
@@ -62,6 +61,8 @@ def _int_env(name: str, default: int) -> int:
 
 
 def load_settings() -> Settings:
+    DATA_DIR.mkdir(exist_ok=True)
+
     token = os.getenv("DISCORD_TOKEN", "").strip()
     if not token:
         raise RuntimeError("DISCORD_TOKEN is not set. Add it to .env before starting the bot.")

@@ -7,6 +7,8 @@ from typing import Any
 
 import aiosqlite
 
+_CURRENT_SCHEMA_VERSION = 3
+
 
 class Database:
     def __init__(self, db_path: Path) -> None:
@@ -49,25 +51,18 @@ class Database:
 
     async def _create_tables(self) -> None:
         conn = self._require_conn()
+
         await conn.execute(
             """
             CREATE TABLE IF NOT EXISTS guild_settings (
-                guild_id   INTEGER PRIMARY KEY,
-                prefix     TEXT    NOT NULL,
-                dj_role_id INTEGER
+                guild_id       INTEGER PRIMARY KEY,
+                prefix         TEXT    NOT NULL,
+                dj_role_id     INTEGER,
+                stay_connected INTEGER NOT NULL DEFAULT 0,
+                autoplay       INTEGER NOT NULL DEFAULT 0
             )
             """
         )
-        async with conn.execute("PRAGMA table_info(guild_settings)") as cursor:
-            columns = {row["name"] async for row in cursor}
-        if "dj_role_id" not in columns:
-            await conn.execute("ALTER TABLE guild_settings ADD COLUMN dj_role_id INTEGER")
-        if "stay_connected" not in columns:
-            await conn.execute(
-                "ALTER TABLE guild_settings ADD COLUMN stay_connected INTEGER NOT NULL DEFAULT 0"
-            )
-        if "autoplay" not in columns:
-            await conn.execute("ALTER TABLE guild_settings ADD COLUMN autoplay INTEGER NOT NULL DEFAULT 0")
 
         await conn.execute(
             """
@@ -124,7 +119,56 @@ class Database:
         await conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_play_history_guild ON play_history(guild_id, played_at)"
         )
+
+        await self._run_migrations(conn)
         await conn.commit()
+
+    async def _run_migrations(self, conn: aiosqlite.Connection) -> None:
+        await conn.execute(
+            "CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)"
+        )
+        async with conn.execute("SELECT version FROM schema_version") as cur:
+            row = await cur.fetchone()
+
+        if row is None:
+            # First run under this migration system — detect current column
+            # state so we don't try to ADD columns that already exist.
+            async with conn.execute("PRAGMA table_info(guild_settings)") as cursor:
+                existing = {r["name"] async for r in cursor}
+            if "autoplay" in existing:
+                current = 3
+            elif "stay_connected" in existing:
+                current = 2
+            elif "dj_role_id" in existing:
+                current = 1
+            else:
+                current = 0
+            await conn.execute(
+                "INSERT INTO schema_version (version) VALUES (?)", (current,)
+            )
+        else:
+            current = row["version"]
+
+        if current < 1:
+            await conn.execute(
+                "ALTER TABLE guild_settings ADD COLUMN dj_role_id INTEGER"
+            )
+            current = 1
+            await conn.execute("UPDATE schema_version SET version = ?", (current,))
+
+        if current < 2:
+            await conn.execute(
+                "ALTER TABLE guild_settings ADD COLUMN stay_connected INTEGER NOT NULL DEFAULT 0"
+            )
+            current = 2
+            await conn.execute("UPDATE schema_version SET version = ?", (current,))
+
+        if current < 3:
+            await conn.execute(
+                "ALTER TABLE guild_settings ADD COLUMN autoplay INTEGER NOT NULL DEFAULT 0"
+            )
+            current = 3
+            await conn.execute("UPDATE schema_version SET version = ?", (current,))
 
     async def get_prefix(self, guild_id: int) -> str | None:
         if self._conn is None:

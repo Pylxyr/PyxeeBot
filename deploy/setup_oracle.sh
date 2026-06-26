@@ -56,8 +56,16 @@ fetch_bot_identity() {
   local token="$1" body
   body=$(curl -s --max-time 10 -H "Authorization: Bot ${token}" \
     "https://discord.com/api/v10/users/@me" 2>/dev/null) || body=""
-  DISCORD_CLIENT_ID=$(echo "$body" | grep -oP '"id":\s*"\K[0-9]+' | head -1) || DISCORD_CLIENT_ID=""
-  DISCORD_BOT_NAME=$(echo "$body" | grep -oP '"username":\s*"\K[^"]+' | head -1) || DISCORD_BOT_NAME=""
+  DISCORD_CLIENT_ID=$(echo "$body" | python3 -c "
+import json,sys
+try: print(json.load(sys.stdin).get('id',''))
+except Exception: print('')
+" 2>/dev/null) || DISCORD_CLIENT_ID=""
+  DISCORD_BOT_NAME=$(echo "$body" | python3 -c "
+import json,sys
+try: print(json.load(sys.stdin).get('username',''))
+except Exception: print('')
+" 2>/dev/null) || DISCORD_BOT_NAME=""
 }
 
 validate_lastfm_key() {

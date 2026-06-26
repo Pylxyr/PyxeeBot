@@ -322,7 +322,14 @@ class MusicBot(commands.Bot):
             if not rows:
                 continue
             self._reconnect_announced_at[guild.id] = now
-            channel = guild.system_channel
+            music_cog = self.cogs.get("MusicCog")
+            player = music_cog.players.get(guild.id) if music_cog else None  # type: ignore[union-attr]
+            announce_id = player.announce_channel_id if player else None
+            channel = (
+                guild.get_channel(announce_id)
+                if announce_id
+                else guild.system_channel
+            )
             if channel is None:
                 continue
             with contextlib.suppress(discord.HTTPException):

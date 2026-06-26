@@ -7,8 +7,18 @@ target-version = "py311"
 line-length = 110
 
 [tool.ruff.lint]
-select = ["E", "F", "W"]
+select = ["E", "F", "W", "I"]
 ignore = [
-    "E501",   # line too long — handled by formatter
-    "E402",   # module level import not at top (TYPE_CHECKING pattern)
+    "E501",
+    "E402",
 ]
+
+[tool.mypy]
+python_version = "3.11"
+ignore_missing_imports = true
+warn_return_any = true
+disallow_untyped_defs = true
+
+[[tool.mypy.overrides]]
+module = "tests.*"
+disallow_untyped_defs = false

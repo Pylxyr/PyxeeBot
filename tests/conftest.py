@@ -61,8 +61,6 @@ def make_bot(**settings_overrides) -> MagicMock:
 
 
 def make_guild(guild_id: int = 99999) -> MagicMock:
-    guild = MagicMock()
-    guild.id = guild_id
     return MagicMock(id=guild_id)
 
 
