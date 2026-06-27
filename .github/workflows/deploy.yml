@@ -27,13 +27,16 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends --fix-missing libsodium-dev
 
       - name: Install Python dependencies
-        run: pip install -r requirements.txt pytest pytest-asyncio ruff pip-audit
+        run: pip install -r requirements.txt pytest pytest-asyncio ruff pip-audit mypy
 
       - name: Lint
         run: ruff check musicbot/ tests/
 
       - name: Format check
         run: ruff format --check musicbot/ tests/
+
+      - name: Type check
+        run: mypy musicbot/
         
       - name: Security audit
         run: pip-audit --ignore-vuln CVE-2025-69277  
