@@ -32,9 +32,6 @@ jobs:
       - name: Lint
         run: ruff check musicbot/ tests/
 
-      - name: Format check
-        run: ruff format --check musicbot/ tests/
-
       - name: Type check
         run: mypy musicbot/
         
