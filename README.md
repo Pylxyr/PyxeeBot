@@ -196,6 +196,19 @@ LimitNOFILE=65536
 ProtectSystem=full
 PrivateTmp=yes
 NoNewPrivileges=yes
+ProtectHome=read-only
+ReadWritePaths=/home/ubuntu/musicbot/data /home/ubuntu/musicbot/logs
+CapabilityBoundingSet=
+AmbientCapabilities=
+LockPersonality=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+MemoryDenyWriteExecute=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
 StandardOutput=journal
 StandardError=journal
 
@@ -246,6 +259,7 @@ All settings are read from `.env`. Every value has a default. See `deploy/.env.e
 | `NP_AUTO_REFRESH_INTERVAL` | `30` | Auto-refresh interval in seconds |
 | `ERROR_ANNOUNCE` | `true` | Post playback errors to the announce channel |
 | `RESTORE_QUEUE_ON_RESTART` | `true` | Restore queue from snapshot after bot restart |
+| `BOT_ACTIVITY_URL` | `pylxyr.github.io/PyxeeBot-Page/` | Text shown in the bot's Discord status ("Watching …") |
 
 ---
 
@@ -257,7 +271,7 @@ All settings are read from `.env`. Every value has a default. See `deploy/.env.e
 |---|---|---|
 | `!join` | `summon` | Join your voice channel |
 | `!leave` | `disconnect` | Leave the voice channel |
-| `!play <query>` | `p` | Queue a URL, playlist, or search query. Cooldown: 2 uses / 4s per user |
+| `!play <query>` | `p` | Queue a URL, playlist, or search query |
 | `!playnext <query>` | `pn` | Queue a track immediately after the current one (DJ-only) |
 | `!pause` | — | Pause playback |
 | `!resume` | — | Resume playback |
@@ -283,12 +297,13 @@ All settings are read from `.env`. Every value has a default. See `deploy/.env.e
 | `!qsearch <keyword>` | `qs` | Search within the current queue |
 | `!history` | — | Show recently played tracks (session only) |
 | `!toptracks` | `top` | Show the all-time most-played tracks for this server |
+| `!toprequestors` | `topreqs` | Show the all-time top track requestors for this server |
 
 ### Search
 
 | Command | Aliases | Description |
 |---|---|---|
-| `!search <query>` | `find`, `s` | Browse up to 10 interactive results before queuing. Cooldown: 1 use / 6s per user |
+| `!search <query>` | `find`, `s` | Browse up to 10 interactive results before queuing |
 | `!why` | `searchdebug`, `scorewhy` | Show the score breakdown for the last search result |
 
 ### Playlists
@@ -338,7 +353,7 @@ PyxeeBot/
 │       └── deploy.yml              # CI: lint → test → SSH deploy to Oracle VPS
 ├── deploy/
 │   ├── setup_oracle.sh             # Interactive one-run setup wizard for Ubuntu VPS
-│   ├── musicbot.service            # systemd unit (ProtectSystem=full, memory limits, logrotate)
+│   ├── musicbot.service            # systemd unit (ProtectHome, MemoryMax, SystemCallFilter, logrotate)
 │   ├── musicbot-logrotate          # logrotate config (weekly, copytruncate)
 │   └── .env.example                # Annotated environment template
 ├── musicbot/
@@ -366,7 +381,7 @@ PyxeeBot/
 │           ├── _events.py          # EventsMixin: voice state and disconnect event handlers
 │           ├── _helpers.py         # CommandHelpersMixin: DJ checks, skip votes, owner checks
 │           ├── _playback_commands.py   # join, leave, play, playnext, pause, resume, skip, etc.
-│           ├── _queue_commands.py      # queue, clear, shuffle, move, remove, qsearch, history, toptracks
+│           ├── _queue_commands.py      # queue, clear, shuffle, move, remove, qsearch, history, toptracks, toprequestors
 │           ├── _search_commands.py     # search, why
 │           └── _playlist_commands.py  # playlist save/load/list/show/delete
 └── tests/
@@ -386,13 +401,13 @@ PyxeeBot/
 
 **Audio pipeline.** yt-dlp extracts a direct stream URL; FFmpeg reads it over HTTP and re-encodes to Opus. Copy mode (`-c:a copy`) is explicitly avoided — the fallback path that would normally use `FFmpegOpusAudio.from_probe()` instead probes for bitrate only and discards the detected codec, since discord.py's constructor silently maps any detected `opus`/`libopus` result to copy mode, which bypasses the libopus encoder and causes pacing irregularities audible as fast-forward artefacts at the start of a track.
 
-**Database.** A single `aiosqlite.Connection` is shared across the process. All write methods hold a module-level `asyncio.Lock` before executing — SQLite transactions are connection-scoped, so a concurrent single-statement `commit()` from one guild can otherwise land inside and force-commit another guild's still-open `BEGIN IMMEDIATE` transaction silently. Tables: `guild_settings` (prefix, DJ role, stay-connected, autoplay per guild), `saved_playlists` + `saved_playlist_items` (named server playlists), `queue_snapshots` (queue restored on restart), `play_history` (backing `!toptracks`).
+**Database.** A single `aiosqlite.Connection` is shared across the process. All write methods hold a module-level `asyncio.Lock` before executing — SQLite transactions are connection-scoped, so a concurrent single-statement `commit()` from one guild can otherwise land inside and force-commit another guild's still-open `BEGIN IMMEDIATE` transaction silently. Tables: `guild_settings` (prefix, DJ role, stay-connected, autoplay per guild), `saved_playlists` + `saved_playlist_items` (named server playlists), `queue_snapshots` (queue restored on restart), `play_history` (backing `!toptracks` and `!toprequestors`). `play_history` is capped at 5 000 rows per guild (trimmed on each insert). Two indexes cover it: `(guild_id, played_at)` for recency scans and `(guild_id, webpage_url, played_at)` for the `GROUP BY webpage_url` pattern used by `!toptracks`.
 
 **Scoring engine.** `scoring.py` is the most complex module. It normalises query and candidate text, tokenises with stop-word removal, then assembles a weighted score from ~15 signals including fuzzy token overlap (RapidFuzz), anchor-phrase matching, live/cover/mix duration penalties, topic-channel and verified-channel bonuses, JP/anime bonuses, and recency. The final `rank_entries()` call sorts and returns the best candidate.
 
 **yt-dlp concurrency.** All extractions run in `ThreadPoolExecutor(max_workers=2)`. A global `asyncio.Semaphore(YTDLP_CONCURRENT_EXTRACTS)` gates concurrent work. A separate per-guild semaphore (`Semaphore(1)`) isolates playback-path extractions from other guilds. Curation (`!vibe`) uses its own per-guild semaphore sized by `YTDLP_CURATION_CONCURRENCY` so it doesn't compete with the playback semaphore. The thread pool is automatically recycled after 3 consecutive `asyncio.wait_for` timeouts, since a genuinely-stuck thread (e.g. blocked in DNS resolution outside a socket timeout) can't be force-killed and would otherwise permanently consume a worker slot.
 
-**Bot owner resolution.** `setup_hook` calls `application_info()` to populate `owner_id` (personal app) or `owner_ids` (team-owned app, admin/developer roles only) at startup. discord.py would otherwise only populate these lazily on first `is_owner()` call, which nothing in this codebase triggers — meaning owner-only commands would silently fail for anyone not listed in `BOT_OWNERS`.
+**Bot owner resolution.** `setup_hook` calls `application_info()` to populate `owner_id` (personal app) or `owner_ids` (team-owned app, admin/developer roles only) at startup. If the Discord API is temporarily unavailable, the call is caught and the bot falls back to `BOT_OWNERS` only rather than aborting startup. discord.py would otherwise only populate these lazily on first `is_owner()` call, which nothing in this codebase triggers — meaning owner-only commands would silently fail for anyone not listed in `BOT_OWNERS`.
 
 ---
 
@@ -403,12 +418,14 @@ pip install pytest pytest-asyncio
 pytest tests/ -q
 ```
 
-106 tests across four files:
+124 tests across six files:
 
 - **`test_player.py`** (30) — `GuildPlayer` state: enqueue, queue capacity, duration tracking, snapshot serialisation, pause/resume timing, skip, and prev
 - **`test_scoring.py`** (41) — scoring engine units: text normalisation, tokenisation, signal functions, and `rank_entries()` end-to-end
 - **`test_scoring_golden.py`** (14) — golden ranking scenarios against real J-pop/anime fixture data, each asserting a specific track wins over a distracting alternative
 - **`test_concurrency.py`** (21) — regression tests for concurrency bugs and correctness invariants: `_get_player` TOCTOU race, database write-lock covering all 7 write methods, `CancelledError` propagation through the shared-resolve shield, per-guild autoplay DB/command toggle, `setup_hook` owner population for personal and team-owned apps, reconnect announcement cooldown logic, and owner-check coverage for both `_is_authorized_owner` and `_is_bot_owner`
+- **`test_curation.py`** (13) — curation cog: Last.fm session management, vibe-load queue limits, autoplay toggle
+- **`test_lifecycle.py`** (5) — player creation race-condition lock and snapshot restore path
 
 All async tests use `pytest-asyncio` in `auto` mode (configured in `pyproject.toml`). Ruff is configured for `py311` with `E`, `F`, `W` rules at line length 110.
 

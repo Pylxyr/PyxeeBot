@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import sqlite3
 from pathlib import Path
 from typing import Any
@@ -8,6 +10,7 @@ from typing import Any
 import aiosqlite
 
 _CURRENT_SCHEMA_VERSION = 3
+_HISTORY_MAX_ROWS = 5000
 
 
 class Database:
@@ -18,7 +21,7 @@ class Database:
         self._stay_connected_cache: dict[int, bool] = {}
         self._autoplay_cache: dict[int, bool] = {}
         self._conn: aiosqlite.Connection | None = None
-        self._snapshot_hashes: dict[int, int] = {}
+        self._snapshot_hashes: dict[int, str] = {}
         # Serialises every write (not just multi-statement transactions) — a
         # single-statement commit() from one guild can otherwise land inside
         # another guild's open BEGIN IMMEDIATE on this same shared connection
@@ -119,12 +122,22 @@ class Database:
         await conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_play_history_guild ON play_history(guild_id, played_at)"
         )
+        await conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_play_history_url ON play_history(guild_id, webpage_url, played_at)"
+        )
 
         await self._run_migrations(conn)
         await conn.commit()
 
     async def _run_migrations(self, conn: aiosqlite.Connection) -> None:
-        await conn.execute("CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)")
+        await conn.execute("CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL PRIMARY KEY)")
+        async with conn.execute("PRAGMA table_info(schema_version)") as cur:
+            rows = await cur.fetchall()
+        if rows and not rows[0]["pk"]:
+            await conn.execute("CREATE TABLE _sv_tmp (version INTEGER NOT NULL PRIMARY KEY)")
+            await conn.execute("INSERT OR IGNORE INTO _sv_tmp SELECT version FROM schema_version LIMIT 1")
+            await conn.execute("DROP TABLE schema_version")
+            await conn.execute("ALTER TABLE _sv_tmp RENAME TO schema_version")
         async with conn.execute("SELECT version FROM schema_version") as cur:
             row = await cur.fetchone()
 
@@ -315,21 +328,15 @@ class Database:
             await self._conn.commit()
         return deleted > 0
 
-    def _snapshot_hash(self, guild_id: int, entries: list[dict[str, Any]]) -> int:
-        return hash(
-            (
-                guild_id,
-                tuple(
-                    (
-                        e.get("query", ""),
-                        e.get("title", ""),
-                        e.get("webpage_url", ""),
-                        e.get("requester_id", ""),
-                    )
-                    for e in entries
-                ),
-            )
+    def _snapshot_hash(self, guild_id: int, entries: list[dict[str, Any]]) -> str:
+        payload = json.dumps(
+            [
+                (e.get("query", ""), e.get("title", ""), e.get("webpage_url", ""), e.get("requester_id", 0))
+                for e in entries
+            ],
+            separators=(",", ":"),
         )
+        return hashlib.sha256(f"{guild_id}:{payload}".encode()).hexdigest()[:16]
 
     async def save_queue_snapshot(self, guild_id: int, entries: list[dict[str, Any]]) -> None:
         if self._conn is None:
@@ -450,6 +457,16 @@ class Database:
                 VALUES (?, ?, ?, ?)
                 """,
                 (guild_id, title, webpage_url, requester_id),
+            )
+            await self._conn.execute(
+                """
+                DELETE FROM play_history
+                WHERE guild_id = ? AND id NOT IN (
+                    SELECT id FROM play_history WHERE guild_id = ?
+                    ORDER BY played_at DESC LIMIT ?
+                )
+                """,
+                (guild_id, guild_id, _HISTORY_MAX_ROWS),
             )
             await self._conn.commit()
 

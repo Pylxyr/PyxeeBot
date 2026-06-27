@@ -19,6 +19,7 @@ class QueueCommandsMixin:
 
     @commands.hybrid_command(name="history")
     @commands.guild_only()
+    @commands.cooldown(1, 3, commands.BucketType.user)
     async def history(self, context: commands.Context[Any]) -> None:
         """Show the last tracks played this session."""
         player = self.players.get(context.guild.id)
@@ -36,6 +37,7 @@ class QueueCommandsMixin:
 
     @commands.hybrid_command(name="toptracks", aliases=["top"])
     @commands.guild_only()
+    @commands.cooldown(1, 8, commands.BucketType.guild)
     async def toptracks(self, context: commands.Context[Any]) -> None:
         """Show the most-played tracks for this server, all-time."""
         rows = await self.bot.database.get_top_played(context.guild.id, limit=10)
@@ -55,8 +57,29 @@ class QueueCommandsMixin:
         embed.set_footer(text=f"{context.guild.name} · all-time")
         await context.send(embed=embed)
 
-    @commands.hybrid_command(name="qsearch", aliases=["qs"])
+    @commands.hybrid_command(name="toprequestors", aliases=["topreqs"])
     @commands.guild_only()
+    @commands.cooldown(1, 8, commands.BucketType.guild)
+    async def toprequestors(self, context: commands.Context[Any]) -> None:
+        """Show the top track requestors for this server, all-time."""
+        rows = await self.bot.database.get_top_requesters(context.guild.id, limit=10)
+        if not rows:
+            await context.send("No play history recorded yet.")
+            return
+        medals = {1: "🥇", 2: "🥈", 3: "🥉"}
+        lines = [
+            f"{medals.get(i, f'`{i}.`')} <@{row['requester_id']}> — {row['request_count']}× requests"
+            for i, row in enumerate(rows, start=1)
+        ]
+        embed = discord.Embed(
+            title="Top Requestors",
+            description="\n".join(lines),
+            colour=EMBED_COLOUR,
+        )
+        embed.set_footer(text=f"{context.guild.name} · all-time")
+        await context.send(embed=embed)
+    @commands.guild_only()
+    @commands.cooldown(2, 4, commands.BucketType.user)
     async def qsearch(self, context: commands.Context[Any], *, keyword: str) -> None:
         """Search within the current queue."""
         player = self.players.get(context.guild.id)
@@ -91,6 +114,7 @@ class QueueCommandsMixin:
 
     @commands.hybrid_command(name="queue", aliases=["q"])
     @commands.guild_only()
+    @commands.cooldown(1, 3, commands.BucketType.user)
     async def queue(self, context: commands.Context[Any]) -> None:
         """Inspect the current track stack."""
         player = self.players.get(context.guild.id)
@@ -105,6 +129,7 @@ class QueueCommandsMixin:
 
     @commands.hybrid_command(name="remove")
     @commands.guild_only()
+    @commands.cooldown(3, 5, commands.BucketType.user)
     async def remove(self, context: commands.Context[Any], index: int) -> None:
         """Pull one queued track by index."""
         player = self.players.get(context.guild.id)
@@ -126,6 +151,7 @@ class QueueCommandsMixin:
 
     @commands.hybrid_command(name="clear")
     @commands.guild_only()
+    @commands.cooldown(1, 5, commands.BucketType.guild)
     async def clear(self, context: commands.Context[Any]) -> None:
         """Flush the queued tracks."""
         await self._require_dj(context)
@@ -141,6 +167,7 @@ class QueueCommandsMixin:
 
     @commands.hybrid_command(name="shuffle")
     @commands.guild_only()
+    @commands.cooldown(1, 5, commands.BucketType.guild)
     async def shuffle(self, context: commands.Context[Any]) -> None:
         """Randomize the upcoming queue."""
         await self._require_dj(context)
@@ -158,6 +185,7 @@ class QueueCommandsMixin:
 
     @commands.hybrid_command(name="move")
     @commands.guild_only()
+    @commands.cooldown(3, 5, commands.BucketType.user)
     async def move(self, context: commands.Context[Any], from_index: int, to_index: int) -> None:
         """Move a track from one queue position to another."""
         await self._require_dj(context)

@@ -43,6 +43,7 @@ class AdminCog(commands.Cog):
         await context.send(content, **kwargs)
 
     @commands.hybrid_command(name="ping")
+    @commands.cooldown(1, 3, commands.BucketType.user)
     async def ping(self, context: commands.Context[Any]) -> None:
         """Check gateway latency."""
         latency_ms = round(self.bot.latency * 1000)
@@ -51,6 +52,7 @@ class AdminCog(commands.Cog):
     @commands.hybrid_command(name="stay")
     @commands.guild_only()
     @commands.has_guild_permissions(manage_guild=True)
+    @commands.cooldown(1, 5, commands.BucketType.guild)
     async def stay(self, context: commands.Context[Any]) -> None:
         """Toggle 24/7 mode — bot stays connected when the queue empties."""
         guild_id = context.guild.id
@@ -69,6 +71,7 @@ class AdminCog(commands.Cog):
     @commands.hybrid_command(name="autoplay")
     @commands.guild_only()
     @commands.has_guild_permissions(manage_guild=True)
+    @commands.cooldown(1, 5, commands.BucketType.guild)
     async def autoplay(self, context: commands.Context[Any]) -> None:
         """Toggle autoplay — queue a similar Last.fm track when the queue empties."""
         guild_id = context.guild.id
@@ -130,6 +133,7 @@ class AdminCog(commands.Cog):
     @commands.hybrid_command(name="setprefix")
     @commands.guild_only()
     @commands.has_guild_permissions(manage_guild=True)
+    @commands.cooldown(1, 5, commands.BucketType.guild)
     async def setprefix(self, context: commands.Context[Any], prefix: str) -> None:
         """Change the bot command prefix for this server."""
         prefix = prefix.strip()
@@ -146,6 +150,7 @@ class AdminCog(commands.Cog):
     @commands.hybrid_command(name="setdj")
     @commands.guild_only()
     @commands.has_guild_permissions(manage_guild=True)
+    @commands.cooldown(1, 5, commands.BucketType.guild)
     async def setdj(self, context: commands.Context[Any], role: discord.Role) -> None:
         """Assign the DJ role for protected controls."""
         await self.bot.database.set_dj_role_id(
@@ -158,6 +163,7 @@ class AdminCog(commands.Cog):
     @commands.hybrid_command(name="cleardj")
     @commands.guild_only()
     @commands.has_guild_permissions(manage_guild=True)
+    @commands.cooldown(1, 5, commands.BucketType.guild)
     async def cleardj(self, context: commands.Context[Any]) -> None:
         """Remove the configured DJ role."""
         await self.bot.database.set_dj_role_id(
@@ -169,6 +175,7 @@ class AdminCog(commands.Cog):
 
     @commands.hybrid_command(name="dj")
     @commands.guild_only()
+    @commands.cooldown(1, 3, commands.BucketType.user)
     async def dj(self, context: commands.Context[Any]) -> None:
         """Show the current DJ role."""
         role_id = await self.bot.database.get_dj_role_id(context.guild.id)

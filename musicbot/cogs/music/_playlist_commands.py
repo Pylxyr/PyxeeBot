@@ -28,6 +28,7 @@ class PlaylistCommandsMixin:
 
     @playlist.command(name="save")
     @commands.guild_only()
+    @commands.cooldown(1, 5, commands.BucketType.user)
     async def playlist_save(self, context: commands.Context[Any], name: str) -> None:
         """Save the current queue as a named playlist."""
         player = self.players.get(context.guild.id)
@@ -40,6 +41,7 @@ class PlaylistCommandsMixin:
 
     @playlist.command(name="list")
     @commands.guild_only()
+    @commands.cooldown(1, 4, commands.BucketType.user)
     async def playlist_list(self, context: commands.Context[Any]) -> None:
         """List all saved playlists for this server."""
         rows = await self.bot.database.list_playlists(context.guild.id)
@@ -62,6 +64,7 @@ class PlaylistCommandsMixin:
 
     @playlist.command(name="show")
     @commands.guild_only()
+    @commands.cooldown(1, 4, commands.BucketType.user)
     async def playlist_show(self, context: commands.Context[Any], name: str) -> None:
         """Show the tracks in a saved playlist."""
         rows = await self.bot.database.get_playlist_entries(context.guild.id, name.lower())
@@ -87,6 +90,7 @@ class PlaylistCommandsMixin:
 
     @playlist.command(name="load")
     @commands.guild_only()
+    @commands.cooldown(1, 10, commands.BucketType.user)
     async def playlist_load(self, context: commands.Context[Any], name: str) -> None:
         """Queue every track from a saved playlist."""
         player = await self._join_for_context(context)
@@ -133,6 +137,7 @@ class PlaylistCommandsMixin:
 
     @playlist.command(name="delete")
     @commands.guild_only()
+    @commands.cooldown(1, 5, commands.BucketType.user)
     async def playlist_delete(self, context: commands.Context[Any], name: str) -> None:
         """Delete a saved playlist."""
         await self._require_dj(context)

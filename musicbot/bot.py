@@ -63,6 +63,7 @@ class PyxeeHelpCommand(commands.HelpCommand):
         "replay": "Re-queue the current track to play again next.",
         "qsearch": "Search for a keyword within the current queue.",
         "toptracks": "Show the most-played tracks for this server, all-time.",
+        "toprequestors": "Show the top track requestors for this server, all-time.",
     }
 
     def get_command_signature(self, command: commands.Command[Any, ..., Any]) -> str:
@@ -247,13 +248,14 @@ class MusicBot(commands.Bot):
         await self.add_cog(CurationCog(self))
 
     async def _populate_owner_ids(self) -> None:
-        # discord.py only populates owner_id/owner_ids lazily, the first time
-        # something calls is_owner() — nothing in this codebase does, so without
-        # this, the admin-owner fallback in _is_authorized_owner would never
-        # actually trigger and !stats would be unusable unless BOT_OWNERS was
-        # set explicitly. Populate it the same way is_owner() would.
         if not self.owner_id and not self.owner_ids:
-            app_info = await self.application_info()
+            try:
+                app_info = await self.application_info()
+            except discord.HTTPException as exc:
+                logging.getLogger(__name__).warning(
+                    "Could not fetch application info (%s); owner checks will rely on BOT_OWNERS only.", exc
+                )
+                return
             if app_info.team:
                 self.owner_ids = {
                     member.id
@@ -289,7 +291,7 @@ class MusicBot(commands.Bot):
 
     async def on_ready(self) -> None:
         activity = discord.Activity(
-            type=discord.ActivityType.watching, name="pylxyr.github.io/PyxeeBot-Page/"
+            type=discord.ActivityType.watching, name=self.settings.bot_activity_url
         )
         await self.change_presence(activity=activity)
         logging.getLogger(__name__).info(
@@ -338,6 +340,9 @@ class MusicBot(commands.Bot):
             return
 
         if isinstance(error, commands.CommandNotFound):
+            return
+        if isinstance(error, commands.CommandOnCooldown):
+            await context.send(f"Slow down — retry in `{error.retry_after:.1f}s`.", delete_after=6)
             return
         if isinstance(error, commands.MissingRequiredArgument):
             await context.send(f"Missing argument: `{error.param.name}`.")

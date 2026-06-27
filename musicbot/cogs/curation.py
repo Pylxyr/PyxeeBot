@@ -551,7 +551,8 @@ class CurationCog(commands.Cog, name="CurationCog"):
 
         async def _resolve_one(ct: CuratedTrack) -> None:
             nonlocal queued, failed, resolved_count
-            query = f"ytsearch5:{ct.artist} - {ct.title} official audio"
+            n = self.bot.settings.ytdlp_search_results
+            query = f"ytsearch{n}:{ct.artist} - {ct.title} official audio"
             try:
                 resolved, _ = await music._extract_tracks(
                     query,
@@ -561,6 +562,8 @@ class CurationCog(commands.Cog, name="CurationCog"):
                 )
                 if resolved:
                     if music._check_per_user_limit(player, requester_id):
+                        return
+                    if len(player.queue) >= music.bot.settings.max_queue_size:
                         return
                     await player.enqueue(resolved[0])
                     added.append(
@@ -613,8 +616,15 @@ class CurationCog(commands.Cog, name="CurationCog"):
             text = f"`{bar}` {total}/{total} resolved — **{queued}** queued" + (
                 f"\n\n{recent}" if recent else ""
             )
-            with contextlib.suppress(discord.HTTPException):
+            try:
                 await interaction.edit_original_response(content=text)
+            except discord.NotFound:
+                channel = interaction.channel
+                if channel and hasattr(channel, "send"):
+                    with contextlib.suppress(discord.HTTPException):
+                        await channel.send(text)
+            except discord.HTTPException:
+                pass
 
         music._persist_snapshot(guild_id)
         return queued, failed
@@ -727,8 +737,9 @@ class CurationCog(commands.Cog, name="CurationCog"):
                     return
                 query = str(entry["query"])
                 try:
+                    n = music.bot.settings.ytdlp_search_results
                     tracks, _ = await music._extract_tracks(
-                        f"ytsearch5:{query}",
+                        f"ytsearch{n}:{query}",
                         requester_id=context.author.id,
                         guild_id=context.guild.id,
                         curation_mode=True,
@@ -737,6 +748,9 @@ class CurationCog(commands.Cog, name="CurationCog"):
                         failed += 1
                         return
                     if music._check_per_user_limit(player, context.author.id):
+                        limit_hit.set()
+                        return
+                    if len(player.queue) >= music.bot.settings.max_queue_size:
                         limit_hit.set()
                         return
                     await player.enqueue(tracks[0])
@@ -860,7 +874,8 @@ class CurationCog(commands.Cog, name="CurationCog"):
             return
 
         for ct in candidates:
-            query = f"ytsearch5:{ct.artist} - {ct.title}"
+            n = self.bot.settings.ytdlp_search_results
+            query = f"ytsearch{n}:{ct.artist} - {ct.title}"
             try:
                 resolved, _ = await music._extract_tracks(
                     query,
@@ -872,6 +887,8 @@ class CurationCog(commands.Cog, name="CurationCog"):
                 continue
             if not resolved:
                 continue
+            if len(player.queue) >= music.bot.settings.max_queue_size:
+                break
             await player.enqueue(resolved[0])
             self._refill_seeds[guild.id] = (ct.artist, ct.title)
             break
