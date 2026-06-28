@@ -5,9 +5,9 @@ and is called both from hybrid commands and from NowPlayingView button callbacks
 """
 
 from __future__ import annotations
+from musicbot.cogs.music._context import GuildContext
 
 import math
-from typing import Any
 
 import discord
 from discord.ext import commands
@@ -18,13 +18,16 @@ from musicbot.cogs.music.player import GuildPlayer
 from musicbot.cogs.music.views import QueueView, SearchSelectionView
 
 
-class CommandHelpersMixin:
+from musicbot.cogs.music._base import MusicCogBase
+
+
+class CommandHelpersMixin(MusicCogBase):
     """Permission checks and shared utilities used across commands and view callbacks."""
 
     # ── Permission helpers ──────────────────────────────────────────────────
 
     async def _ensure_author_voice(
-        self, context: commands.Context[Any]
+        self, context: GuildContext
     ) -> discord.VoiceChannel | discord.StageChannel:
         voice_state = context.author.voice
         if not voice_state or not voice_state.channel:
@@ -39,7 +42,8 @@ class CommandHelpersMixin:
             return True
         if self.bot.owner_id is not None and user.id == self.bot.owner_id:
             return True
-        return bool(self.bot.owner_ids) and user.id in self.bot.owner_ids
+        owner_ids = self.bot.owner_ids
+        return owner_ids is not None and user.id in owner_ids
 
     async def _is_dj(self, member: discord.Member) -> bool:
         if self._is_bot_owner(member):
@@ -49,11 +53,11 @@ class CommandHelpersMixin:
         role_id = await self.bot.database.get_dj_role_id(member.guild.id)
         return bool(role_id and any(r.id == role_id for r in member.roles))
 
-    async def _require_dj(self, context: commands.Context[Any]) -> None:
+    async def _require_dj(self, context: GuildContext) -> None:
         if not await self._is_dj(context.author):
             raise commands.CheckFailure("DJ role or Manage Server permission required.")
 
-    async def _join_for_context(self, context: commands.Context[Any]) -> GuildPlayer:
+    async def _join_for_context(self, context: GuildContext) -> GuildPlayer:
         channel = await self._ensure_author_voice(context)
         player = await self._get_player(context.guild)
         self._remember_channel(player, context.channel)
@@ -84,7 +88,7 @@ class CommandHelpersMixin:
 
     async def _prompt_for_search_selection(
         self,
-        context: commands.Context[Any],
+        context: GuildContext,
         query: str,
         candidates: list[Track],
         *,
@@ -162,7 +166,9 @@ class CommandHelpersMixin:
         if not player.current and not player.queue:
             return "Nothing is loaded."
         prev_label = LOOP_LABELS.get(player.loop_mode, "Off")
-        player.loop_mode = LOOP_CYCLE.get(player.loop_mode, "off")
+        new_mode = LOOP_CYCLE.get(player.loop_mode, "off")
+        if new_mode in ("off", "one", "all"):
+            player.loop_mode = new_mode  # type: ignore[assignment]
         self._persist_snapshot(member.guild.id)
         label = LOOP_LABELS.get(player.loop_mode, "Off")
         icon = LOOP_ICONS.get(player.loop_mode, "→")

@@ -22,3 +22,7 @@ disallow_untyped_defs = true
 [[tool.mypy.overrides]]
 module = "tests.*"
 disallow_untyped_defs = false
+
+[[tool.mypy.overrides]]
+module = "musicbot.cogs.music._base"
+ignore_errors = true

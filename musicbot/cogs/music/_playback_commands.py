@@ -5,10 +5,10 @@ ExtractionMixin, and ResolverMixin methods via self.
 """
 
 from __future__ import annotations
+from musicbot.cogs.music._context import GuildContext
 
 import dataclasses
 import time
-from typing import Any
 
 import discord
 from discord.ext import commands
@@ -23,13 +23,16 @@ from musicbot.cogs.music.constants import (
 from musicbot.cogs.music.models import NowPlayingController
 
 
-class PlaybackCommandsMixin:
+from musicbot.cogs.music._base import MusicCogBase
+
+
+class PlaybackCommandsMixin(MusicCogBase):
     """Join/leave, transport control, and now-playing panel commands."""
 
-    @commands.hybrid_command(name="join", aliases=["summon"])
+    @commands.hybrid_command(name="join", aliases=["summon"])  # type: ignore[arg-type]
     @commands.guild_only()
     @commands.cooldown(2, 5, commands.BucketType.user)
-    async def join(self, context: commands.Context[Any]) -> None:
+    async def join(self, context: GuildContext) -> None:
         """Dock into your current voice channel."""
         player = await self._join_for_context(context)
         if player.queue:
@@ -37,10 +40,10 @@ class PlaybackCommandsMixin:
         await context.send("Connected to your voice channel.")
         await self._refresh_now_playing_message(context.guild.id)
 
-    @commands.hybrid_command(name="leave", aliases=["disconnect"])
+    @commands.hybrid_command(name="leave", aliases=["disconnect"])  # type: ignore[arg-type]
     @commands.guild_only()
     @commands.cooldown(1, 5, commands.BucketType.guild)
-    async def leave(self, context: commands.Context[Any]) -> None:
+    async def leave(self, context: GuildContext) -> None:
         """Disconnect and wipe the active session."""
         await self._require_dj(context)
         if not self.players.get(context.guild.id):
@@ -51,10 +54,10 @@ class PlaybackCommandsMixin:
         await context.send("Disconnected and cleared the queue.")
         await self._refresh_now_playing_message(gid)
 
-    @commands.hybrid_command(name="skipto")
+    @commands.hybrid_command(name="skipto")  # type: ignore[arg-type]
     @commands.guild_only()
     @commands.cooldown(2, 5, commands.BucketType.user)
-    async def skipto(self, context: commands.Context[Any], position: int) -> None:
+    async def skipto(self, context: GuildContext, position: int) -> None:
         """Skip ahead to a specific queue position."""
         await self._require_dj(context)
         player = self.players.get(context.guild.id)
@@ -87,10 +90,10 @@ class PlaybackCommandsMixin:
         await context.send(embed=embed)
         await self._refresh_now_playing_message(context.guild.id)
 
-    @commands.hybrid_command(name="replay")
+    @commands.hybrid_command(name="replay")  # type: ignore[arg-type]
     @commands.guild_only()
     @commands.cooldown(2, 5, commands.BucketType.user)
-    async def replay(self, context: commands.Context[Any]) -> None:
+    async def replay(self, context: GuildContext) -> None:
         """Re-queue the current track to play next."""
         await self._require_dj(context)
         player = self.players.get(context.guild.id)
@@ -113,10 +116,10 @@ class PlaybackCommandsMixin:
         await self._refresh_now_playing_message(context.guild.id)
         await context.send(f"Re-queued **{player.current.escaped_title}** to play next.")
 
-    @commands.hybrid_command(name="play", aliases=["p"])
+    @commands.hybrid_command(name="play", aliases=["p"])  # type: ignore[arg-type]
     @commands.guild_only()
     @commands.cooldown(2, 4, commands.BucketType.user)
-    async def play(self, context: commands.Context[Any], *, query: str) -> None:
+    async def play(self, context: GuildContext, *, query: str) -> None:
         """Queue a URL, playlist, or search query."""
         player = await self._join_for_context(context)
         self._kick_pipeline(context.guild.id)
@@ -178,10 +181,10 @@ class PlaybackCommandsMixin:
             self._restored_guilds.discard(context.guild.id)
         await (fetch_msg.edit(content=result) if fetch_msg else context.send(result))
 
-    @commands.hybrid_command(name="playnext", aliases=["pn"])
+    @commands.hybrid_command(name="playnext", aliases=["pn"])  # type: ignore[arg-type]
     @commands.guild_only()
     @commands.cooldown(2, 4, commands.BucketType.user)
-    async def playnext(self, context: commands.Context[Any], *, query: str) -> None:
+    async def playnext(self, context: GuildContext, *, query: str) -> None:
         """Insert a track next in queue."""
         await self._require_dj(context)
         player = await self._join_for_context(context)
@@ -207,10 +210,10 @@ class PlaybackCommandsMixin:
         await self._refresh_now_playing_message(context.guild.id)
         await fetch_msg.edit(content=f"Queued next: [{track.escaped_title}]({track.webpage_url}).")
 
-    @commands.hybrid_command(name="repeat", aliases=["rp"])
+    @commands.hybrid_command(name="repeat", aliases=["rp"])  # type: ignore[arg-type]
     @commands.guild_only()
     @commands.cooldown(2, 4, commands.BucketType.user)
-    async def repeat(self, context: commands.Context[Any]) -> None:
+    async def repeat(self, context: GuildContext) -> None:
         """Toggle single-track repeat."""
         player = self.players.get(context.guild.id)
         if not player or not player.current:
@@ -225,10 +228,10 @@ class PlaybackCommandsMixin:
         await context.send(f"Loop changed: **{prev_label}** → {icon} **{label}**")
         await self._refresh_now_playing_message(context.guild.id)
 
-    @commands.hybrid_command(name="skip", aliases=["next"])
+    @commands.hybrid_command(name="skip", aliases=["next"])  # type: ignore[arg-type]
     @commands.guild_only()
     @commands.cooldown(3, 5, commands.BucketType.user)
-    async def skip(self, context: commands.Context[Any]) -> None:
+    async def skip(self, context: GuildContext) -> None:
         """Vote-skip or instantly skip if you have control."""
         player = self.players.get(context.guild.id)
         if not player:
@@ -238,10 +241,10 @@ class PlaybackCommandsMixin:
         await context.send(await self._skip_for_member(player, context.author))
         await self._refresh_now_playing_message(context.guild.id)
 
-    @commands.hybrid_command(name="prev", aliases=["previous", "back"])
+    @commands.hybrid_command(name="prev", aliases=["previous", "back"])  # type: ignore[arg-type]
     @commands.guild_only()
     @commands.cooldown(2, 5, commands.BucketType.user)
-    async def previous(self, context: commands.Context[Any]) -> None:
+    async def previous(self, context: GuildContext) -> None:
         """Jump back to the last completed track."""
         player = self.players.get(context.guild.id)
         if not player:
@@ -251,10 +254,10 @@ class PlaybackCommandsMixin:
         await context.send(await self._previous_for_member(player, context.author))
         await self._refresh_now_playing_message(context.guild.id)
 
-    @commands.hybrid_command(name="forceskip", aliases=["fs"])
+    @commands.hybrid_command(name="forceskip", aliases=["fs"])  # type: ignore[arg-type]
     @commands.guild_only()
     @commands.cooldown(2, 4, commands.BucketType.user)
-    async def forceskip(self, context: commands.Context[Any]) -> None:
+    async def forceskip(self, context: GuildContext) -> None:
         """DJ-only immediate skip."""
         await self._require_dj(context)
         player = self.players.get(context.guild.id)
@@ -266,10 +269,10 @@ class PlaybackCommandsMixin:
         await context.send("Force skipped the current track.")
         await self._refresh_now_playing_message(context.guild.id)
 
-    @commands.hybrid_command(name="stop")
+    @commands.hybrid_command(name="stop")  # type: ignore[arg-type]
     @commands.guild_only()
     @commands.cooldown(1, 5, commands.BucketType.guild)
-    async def stop(self, context: commands.Context[Any]) -> None:
+    async def stop(self, context: GuildContext) -> None:
         """Stop playback and drop loop mode."""
         await self._require_dj(context)
         player = self.players.get(context.guild.id)
@@ -282,10 +285,10 @@ class PlaybackCommandsMixin:
         await context.send("Stopped playback and cleared loop mode.")
         await self._refresh_now_playing_message(context.guild.id)
 
-    @commands.hybrid_command(name="pause")
+    @commands.hybrid_command(name="pause")  # type: ignore[arg-type]
     @commands.guild_only()
     @commands.cooldown(3, 5, commands.BucketType.user)
-    async def pause(self, context: commands.Context[Any]) -> None:
+    async def pause(self, context: GuildContext) -> None:
         """Freeze playback in place."""
         player = self.players.get(context.guild.id)
         if not player or not player.voice_client or not player.voice_client.is_playing():
@@ -299,10 +302,10 @@ class PlaybackCommandsMixin:
         await context.send("Paused playback.")
         await self._refresh_now_playing_message(context.guild.id)
 
-    @commands.hybrid_command(name="resume")
+    @commands.hybrid_command(name="resume")  # type: ignore[arg-type]
     @commands.guild_only()
     @commands.cooldown(3, 5, commands.BucketType.user)
-    async def resume(self, context: commands.Context[Any]) -> None:
+    async def resume(self, context: GuildContext) -> None:
         """Resume the paused track."""
         player = self.players.get(context.guild.id)
         if not player or not player.voice_client or not player.voice_client.is_paused():
@@ -316,10 +319,10 @@ class PlaybackCommandsMixin:
         await context.send("Resumed playback.")
         await self._refresh_now_playing_message(context.guild.id)
 
-    @commands.hybrid_command(name="nowplaying", aliases=["np"])
+    @commands.hybrid_command(name="nowplaying", aliases=["np"])  # type: ignore[arg-type]
     @commands.guild_only()
     @commands.cooldown(1, 3, commands.BucketType.user)
-    async def nowplaying(self, context: commands.Context[Any]) -> None:
+    async def nowplaying(self, context: GuildContext) -> None:
         """Open the live control panel."""
         player = self.players.get(context.guild.id)
         if player:
@@ -335,10 +338,10 @@ class PlaybackCommandsMixin:
         )
         await context.send(embed=self._render_now_playing_embed(context.guild, None, controller))
 
-    @commands.hybrid_command(name="loop")
+    @commands.hybrid_command(name="loop")  # type: ignore[arg-type]
     @commands.guild_only()
     @commands.cooldown(2, 4, commands.BucketType.user)
-    async def loop(self, context: commands.Context[Any]) -> None:
+    async def loop(self, context: GuildContext) -> None:
         """Cycle loop mode: off → single track → full queue → off."""
         await self._require_dj(context)
         player = self.players.get(context.guild.id)
@@ -347,7 +350,9 @@ class PlaybackCommandsMixin:
             return
         self._remember_channel(player, context.channel)
         prev_label = LOOP_LABELS.get(player.loop_mode, "Off")
-        player.loop_mode = LOOP_CYCLE.get(player.loop_mode, "off")
+        new_mode = LOOP_CYCLE.get(player.loop_mode, "off")
+        if new_mode in ("off", "one", "all"):
+            player.loop_mode = new_mode  # type: ignore[assignment]
         self._persist_snapshot(context.guild.id)
         label = LOOP_LABELS.get(player.loop_mode, "Off")
         icon = LOOP_ICONS.get(player.loop_mode, "→")

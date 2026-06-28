@@ -4,9 +4,9 @@ Mixed into MusicCog.  Depends on CommandHelpersMixin and ExtractionMixin methods
 """
 
 from __future__ import annotations
+from musicbot.cogs.music._context import GuildContext
 
 import time
-from typing import Any
 
 import discord
 from discord.ext import commands
@@ -16,12 +16,15 @@ from musicbot.cogs.music.constants import EMBED_COLOUR
 from musicbot.cogs.music.views import ScoreDebugView
 
 
-class SearchCommandsMixin:
+from musicbot.cogs.music._base import MusicCogBase
+
+
+class SearchCommandsMixin(MusicCogBase):
     """Search browsing and score-debug commands."""
 
-    @commands.hybrid_command(name="why", aliases=["searchdebug", "scorewhy"])
+    @commands.hybrid_command(name="why", aliases=["searchdebug", "scorewhy"])  # type: ignore[arg-type]
     @commands.guild_only()
-    async def why(self, context: commands.Context[Any]) -> None:
+    async def why(self, context: GuildContext) -> None:
         """Show how the last search's results were scored."""
         record = self._last_search.get(context.guild.id)
         if record is None:
@@ -55,10 +58,10 @@ class SearchCommandsMixin:
         embed.set_footer(text="Press the button for a full per-component DM breakdown.")
         await context.send(embed=embed, view=ScoreDebugView(author_id=context.author.id, record=record))
 
-    @commands.hybrid_command(name="search", aliases=["find", "s"])
+    @commands.hybrid_command(name="search", aliases=["find", "s"])  # type: ignore[arg-type]
     @commands.guild_only()
     @commands.cooldown(1, 6, commands.BucketType.user)
-    async def search(self, context: commands.Context[Any], *, query: str) -> None:
+    async def search(self, context: GuildContext, *, query: str) -> None:
         """Browse search results and pick one to queue."""
         player = await self._join_for_context(context)
         if len(player.queue) >= self.bot.settings.max_queue_size:

@@ -132,8 +132,8 @@ class Database:
     async def _run_migrations(self, conn: aiosqlite.Connection) -> None:
         await conn.execute("CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL PRIMARY KEY)")
         async with conn.execute("PRAGMA table_info(schema_version)") as cur:
-            rows = await cur.fetchall()
-        if rows and not rows[0]["pk"]:
+            col_info = await cur.fetchone()
+        if col_info is not None and not col_info["pk"]:
             await conn.execute("CREATE TABLE _sv_tmp (version INTEGER NOT NULL PRIMARY KEY)")
             await conn.execute("INSERT OR IGNORE INTO _sv_tmp SELECT version FROM schema_version LIMIT 1")
             await conn.execute("DROP TABLE schema_version")

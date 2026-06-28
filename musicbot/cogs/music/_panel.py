@@ -25,7 +25,10 @@ from musicbot.cogs.music.models import NowPlayingController
 from musicbot.cogs.music.player import GuildPlayer
 
 
-class NPanelMixin:
+from musicbot.cogs.music._base import MusicCogBase
+
+
+class NPanelMixin(MusicCogBase):
     """NowPlaying embed rendering, message send/edit, and debounced refresh loop."""
 
     # ── Formatting helpers ──────────────────────────────────────────────────

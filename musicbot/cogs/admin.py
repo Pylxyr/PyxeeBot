@@ -1,4 +1,5 @@
 from __future__ import annotations
+from musicbot.cogs.music._context import GuildContext
 
 from typing import TYPE_CHECKING, Any
 
@@ -42,18 +43,18 @@ class AdminCog(commands.Cog):
             kwargs["ephemeral"] = True
         await context.send(content, **kwargs)
 
-    @commands.hybrid_command(name="ping")
+    @commands.hybrid_command(name="ping")  # type: ignore[arg-type]
     @commands.cooldown(1, 3, commands.BucketType.user)
-    async def ping(self, context: commands.Context[Any]) -> None:
+    async def ping(self, context: GuildContext) -> None:
         """Check gateway latency."""
         latency_ms = round(self.bot.latency * 1000)
         await context.send(f"Pong. `{latency_ms}ms`")
 
-    @commands.hybrid_command(name="stay")
+    @commands.hybrid_command(name="stay")  # type: ignore[arg-type]
     @commands.guild_only()
     @commands.has_guild_permissions(manage_guild=True)
     @commands.cooldown(1, 5, commands.BucketType.guild)
-    async def stay(self, context: commands.Context[Any]) -> None:
+    async def stay(self, context: GuildContext) -> None:
         """Toggle 24/7 mode — bot stays connected when the queue empties."""
         guild_id = context.guild.id
         current = await self.bot.database.get_stay_connected(guild_id)
@@ -62,17 +63,17 @@ class AdminCog(commands.Cog):
             guild_id, new_value, default_prefix=self.bot.settings.default_prefix
         )
         music = self.bot.get_cog("MusicCog")
-        player = music.players.get(guild_id) if music else None
+        player = music.players.get(guild_id) if music else None  # type: ignore[attr-defined]
         if player is not None:
             player.stay_connected = new_value
         state = "enabled" if new_value else "disabled"
         await context.send(f"24/7 mode {state}.")
 
-    @commands.hybrid_command(name="autoplay")
+    @commands.hybrid_command(name="autoplay")  # type: ignore[arg-type]
     @commands.guild_only()
     @commands.has_guild_permissions(manage_guild=True)
     @commands.cooldown(1, 5, commands.BucketType.guild)
-    async def autoplay(self, context: commands.Context[Any]) -> None:
+    async def autoplay(self, context: GuildContext) -> None:
         """Toggle autoplay — queue a similar Last.fm track when the queue empties."""
         guild_id = context.guild.id
         current = await self.bot.database.get_autoplay(guild_id)
@@ -86,9 +87,9 @@ class AdminCog(commands.Cog):
             message += " Note: LASTFM_API_KEY isn't set, so autoplay won't find any tracks yet."
         await context.send(message)
 
-    @commands.hybrid_command(name="stats")
+    @commands.hybrid_command(name="stats")  # type: ignore[arg-type]
     @_bot_owner_check()
-    async def stats(self, context: commands.Context[Any]) -> None:
+    async def stats(self, context: GuildContext) -> None:
         """Show bot process stats (owner only)."""
         import platform
         import sys
@@ -97,8 +98,8 @@ class AdminCog(commands.Cog):
         import yt_dlp
 
         music = self.bot.get_cog("MusicCog")
-        active_players = len(music.players) if music else 0
-        playing = sum(1 for p in music.players.values() if p.current is not None) if music else 0
+        active_players = len(music.players) if music else 0  # type: ignore[attr-defined]
+        playing = sum(1 for p in music.players.values() if p.current is not None) if music else 0  # type: ignore[attr-defined, misc]
 
         lines = [
             f"discord.py: `{discord_module.__version__}`",
@@ -126,15 +127,15 @@ class AdminCog(commands.Cog):
         await context.send(embed=embed)
 
     @commands.command(name="commands", aliases=["cmds"])
-    async def commands_list(self, context: commands.Context[Any]) -> None:
+    async def commands_list(self, context: GuildContext) -> None:
         """Open the styled command atlas."""
         await context.send_help()
 
-    @commands.hybrid_command(name="setprefix")
+    @commands.hybrid_command(name="setprefix")  # type: ignore[arg-type]
     @commands.guild_only()
     @commands.has_guild_permissions(manage_guild=True)
     @commands.cooldown(1, 5, commands.BucketType.guild)
-    async def setprefix(self, context: commands.Context[Any], prefix: str) -> None:
+    async def setprefix(self, context: GuildContext, prefix: str) -> None:
         """Change the bot command prefix for this server."""
         prefix = prefix.strip()
         if not prefix or " " in prefix:
@@ -147,11 +148,11 @@ class AdminCog(commands.Cog):
         self.bot.invalidate_prefix_cache(context.guild.id)
         await context.send(f"Prefix set to `{prefix}` for this server.")
 
-    @commands.hybrid_command(name="setdj")
+    @commands.hybrid_command(name="setdj")  # type: ignore[arg-type]
     @commands.guild_only()
     @commands.has_guild_permissions(manage_guild=True)
     @commands.cooldown(1, 5, commands.BucketType.guild)
-    async def setdj(self, context: commands.Context[Any], role: discord.Role) -> None:
+    async def setdj(self, context: GuildContext, role: discord.Role) -> None:
         """Assign the DJ role for protected controls."""
         await self.bot.database.set_dj_role_id(
             context.guild.id,
@@ -160,11 +161,11 @@ class AdminCog(commands.Cog):
         )
         await context.send(f"DJ role set to {role.mention}.")
 
-    @commands.hybrid_command(name="cleardj")
+    @commands.hybrid_command(name="cleardj")  # type: ignore[arg-type]
     @commands.guild_only()
     @commands.has_guild_permissions(manage_guild=True)
     @commands.cooldown(1, 5, commands.BucketType.guild)
-    async def cleardj(self, context: commands.Context[Any]) -> None:
+    async def cleardj(self, context: GuildContext) -> None:
         """Remove the configured DJ role."""
         await self.bot.database.set_dj_role_id(
             context.guild.id,
@@ -173,10 +174,10 @@ class AdminCog(commands.Cog):
         )
         await context.send("DJ role cleared. Members with Manage Server still count as DJs.")
 
-    @commands.hybrid_command(name="dj")
+    @commands.hybrid_command(name="dj")  # type: ignore[arg-type]
     @commands.guild_only()
     @commands.cooldown(1, 3, commands.BucketType.user)
-    async def dj(self, context: commands.Context[Any]) -> None:
+    async def dj(self, context: GuildContext) -> None:
         """Show the current DJ role."""
         role_id = await self.bot.database.get_dj_role_id(context.guild.id)
         if not role_id:

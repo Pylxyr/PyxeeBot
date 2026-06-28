@@ -84,7 +84,7 @@ class MusicCog(
     async def cog_load(self) -> None:
         self._http_session = aiohttp.ClientSession()
 
-    def cog_unload(self) -> None:
+    def cog_unload(self) -> None:  # type: ignore[override]
         self.now_playing_messages.clear()
         for player in self.players.values():
             self._bg_task(player.destroy(), name="cog-unload-destroy")

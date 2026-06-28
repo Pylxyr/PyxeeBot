@@ -1,6 +1,7 @@
 """curation.py — Playlist Curation Cog."""
 
 from __future__ import annotations
+from musicbot.cogs.music._context import GuildContext
 
 import asyncio
 import contextlib
@@ -83,17 +84,17 @@ class CurationView(discord.ui.View):
             for i, t in enumerate(tracks)
         ]
 
-        select = discord.ui.Select(
+        select: discord.ui.Select[Any] = discord.ui.Select(
             placeholder="Select tracks to remove…",
             min_values=0,
             max_values=len(options),
             options=options,
         )
-        select.callback = self._on_remove_select
+        select.callback = self._on_remove_select  # type: ignore[method-assign]
         self.add_item(select)
 
     async def _on_remove_select(self, interaction: discord.Interaction) -> None:
-        to_remove = set(int(v) for v in interaction.data.get("values", []))  # type: ignore[arg-type]
+        to_remove = set(int(v) for v in interaction.data.get("values", []))  # type: ignore[union-attr]
         if not to_remove:
             await interaction.response.defer()
             return
@@ -215,18 +216,18 @@ class RefillView(discord.ui.View):
             )
             for i, t in enumerate(self.tracks)
         ]
-        select = discord.ui.Select(
+        select: discord.ui.Select[Any] = discord.ui.Select(
             placeholder="Select tracks to remove before adding…",
             min_values=0,
             max_values=len(options),
             options=options,
         )
-        select.callback = self._on_exclude_select
+        select.callback = self._on_exclude_select  # type: ignore[method-assign]
         self.add_item(select)
 
     async def _on_exclude_select(self, interaction: discord.Interaction) -> None:
         """Give immediate ephemeral feedback so the two-step UX is clear."""
-        count = len(interaction.data.get("values", []))  # type: ignore[union-attr]
+        count = len(interaction.data.get("values", []))  # type: ignore[union-attr, arg-type]
         if count:
             msg = f"{count} track{'s' if count != 1 else ''} marked for exclusion — click **Add All** to confirm."
         else:
@@ -327,7 +328,7 @@ class CurationCog(commands.Cog, name="CurationCog"):
                                 data.get("message"),
                             )
                             return None
-                        return data
+                        return data  # type: ignore[no-any-return]
                     if resp.status == 429:
                         log.warning("Last.fm rate-limited (429) on %s — backing off 5 s", method)
                         await asyncio.sleep(5)
@@ -533,6 +534,8 @@ class CurationCog(commands.Cog, name="CurationCog"):
                 await interaction.followup.send("Join a voice channel first, then try again.", ephemeral=True)
                 return 0, len(tracks)
             try:
+                if guild is None:
+                    return 0, len(tracks)
                 player = await music._get_player(guild)
                 await player.connect(vc)
             except Exception as exc:
@@ -629,10 +632,10 @@ class CurationCog(commands.Cog, name="CurationCog"):
         music._persist_snapshot(guild_id)
         return queued, failed
 
-    @commands.hybrid_command(name="vibe", aliases=["vb"])
+    @commands.hybrid_command(name="vibe", aliases=["vb"])  # type: ignore[arg-type]
     @commands.guild_only()
     @commands.cooldown(1, 15, commands.BucketType.guild)
-    async def vibe(self, context: commands.Context[Any], *, query: str) -> None:
+    async def vibe(self, context: GuildContext, *, query: str) -> None:
         """Discover similar songs via Last.fm and curate a playlist. Max 25 tracks."""
         if not self._key:
             await context.send("Last.fm API key is not configured.")
@@ -671,9 +674,9 @@ class CurationCog(commands.Cog, name="CurationCog"):
         msg = await context.send(embed=embed, view=view)
         session.panel_msg = msg
 
-    @commands.hybrid_command(name="vibe-save", aliases=["vsave"])
+    @commands.hybrid_command(name="vibe-save", aliases=["vsave"])  # type: ignore[arg-type]
     @commands.guild_only()
-    async def vibe_save(self, context: commands.Context[Any], *, name: str) -> None:
+    async def vibe_save(self, context: GuildContext, *, name: str) -> None:
         """Save the active curation session as a named playlist."""
         session = self._sessions.get(context.guild.id)
         if session is None:
@@ -692,9 +695,9 @@ class CurationCog(commands.Cog, name="CurationCog"):
             f"Saved {len(selected)} tracks as **{discord.utils.escape_markdown(name.strip())}**."
         )
 
-    @commands.hybrid_command(name="vibe-load", aliases=["vload"])
+    @commands.hybrid_command(name="vibe-load", aliases=["vload"])  # type: ignore[arg-type]
     @commands.guild_only()
-    async def vibe_load(self, context: commands.Context[Any], *, name: str) -> None:
+    async def vibe_load(self, context: GuildContext, *, name: str) -> None:
         """Load a saved curated playlist into the queue."""
         entries = await self.bot.database.get_playlist_entries(context.guild.id, name.strip())
         if not entries:
@@ -758,7 +761,7 @@ class CurationCog(commands.Cog, name="CurationCog"):
                 except Exception:
                     failed += 1
 
-        await asyncio.gather(*(_load_one(entry) for entry in entries), return_exceptions=True)
+        await asyncio.gather(*(_load_one(dict(entry)) for entry in entries), return_exceptions=True)
 
         music._persist_snapshot(context.guild.id)
         await msg.edit(
@@ -766,9 +769,9 @@ class CurationCog(commands.Cog, name="CurationCog"):
             + (f" ({failed} failed.)" if failed else "")
         )
 
-    @commands.hybrid_command(name="vibe-list", aliases=["vlist"])
+    @commands.hybrid_command(name="vibe-list", aliases=["vlist"])  # type: ignore[arg-type]
     @commands.guild_only()
-    async def vibe_list(self, context: commands.Context[Any]) -> None:
+    async def vibe_list(self, context: GuildContext) -> None:
         """List all saved curated playlists for this server."""
         rows = await self.bot.database.list_playlists(context.guild.id)
         if not rows:

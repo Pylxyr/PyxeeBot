@@ -17,7 +17,10 @@ from musicbot.cogs.music.constants import STREAM_URL_REFRESH_AGE_SECONDS
 from musicbot.cogs.music.models import ResolvedTrackData, Track
 
 
-class ResolverMixin:
+from musicbot.cogs.music._base import MusicCogBase
+
+
+class ResolverMixin(MusicCogBase):
     """Stream-URL resolution cache, pre-resolution pipeline, and safety-net refresh."""
 
     # ── Resolve cache ───────────────────────────────────────────────────────

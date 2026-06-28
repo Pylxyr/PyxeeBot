@@ -14,7 +14,10 @@ from discord.ext import commands
 from musicbot.cogs.music.models import Track
 
 
-class EventsMixin:
+from musicbot.cogs.music._base import MusicCogBase
+
+
+class EventsMixin(MusicCogBase):
     """Bot and player event listeners."""
 
     # ── Event listeners ─────────────────────────────────────────────────────

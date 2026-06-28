@@ -22,7 +22,7 @@ from musicbot.cogs.music.constants import (
 from musicbot.cogs.music.models import SearchDebugRecord, Track
 
 if TYPE_CHECKING:
-    from musicbot.cogs.music.cog import MusicCog
+    from musicbot.cogs.music._base import MusicCogBase
     from musicbot.cogs.music.player import GuildPlayer
 
 
@@ -187,7 +187,7 @@ class SearchSelectionView(discord.ui.View):
 class QueueView(discord.ui.View):
     def __init__(
         self,
-        cog: "MusicCog",
+        cog: "MusicCogBase",
         guild_id: int,
         player: "GuildPlayer",
         *,
@@ -248,7 +248,11 @@ class QueueView(discord.ui.View):
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         player = self.cog.players.get(self.guild_id)
-        if player and self.cog._is_in_player_voice(player, interaction.user):
+        if (
+            player
+            and isinstance(interaction.user, discord.Member)
+            and self.cog._is_in_player_voice(player, interaction.user)
+        ):
             return True
         if interaction.user and interaction.user.id == self.author_id:
             return True
@@ -294,7 +298,7 @@ class QueueView(discord.ui.View):
 
 
 class NowPlayingView(discord.ui.View):
-    def __init__(self, cog: "MusicCog", guild_id: int) -> None:
+    def __init__(self, cog: "MusicCogBase", guild_id: int) -> None:
         super().__init__(timeout=NOW_PLAYING_TIMEOUT_SECONDS)
         self.cog = cog
         self.guild_id = guild_id
@@ -302,7 +306,11 @@ class NowPlayingView(discord.ui.View):
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         player = self.cog.players.get(self.guild_id)
-        if player and self.cog._is_in_player_voice(player, interaction.user):
+        if (
+            player
+            and isinstance(interaction.user, discord.Member)
+            and self.cog._is_in_player_voice(player, interaction.user)
+        ):
             return True
         await interaction.response.send_message("Join my voice channel to use the controls.", ephemeral=True)
         return False
@@ -338,6 +346,8 @@ class NowPlayingView(discord.ui.View):
         if player is None:
             await interaction.response.send_message("Nothing is playing.", ephemeral=True)
             return
+        if not isinstance(interaction.user, discord.Member):
+            return
         msg = await self.cog._previous_for_member(player, interaction.user)
         await self._respond(interaction, msg)
 
@@ -349,6 +359,8 @@ class NowPlayingView(discord.ui.View):
         player = self.cog.players.get(self.guild_id)
         if player is None:
             await interaction.response.send_message("Nothing is playing.", ephemeral=True)
+            return
+        if not isinstance(interaction.user, discord.Member):
             return
         msg = await self.cog._skip_for_member(player, interaction.user)
         await self._respond(interaction, msg)
@@ -362,6 +374,8 @@ class NowPlayingView(discord.ui.View):
         if player is None:
             await interaction.response.send_message("Nothing is playing.", ephemeral=True)
             return
+        if not isinstance(interaction.user, discord.Member):
+            return
         msg = await self.cog._toggle_pause_for_member(player, interaction.user)
         await self._respond(interaction, msg)
 
@@ -372,6 +386,8 @@ class NowPlayingView(discord.ui.View):
         player = self.cog.players.get(self.guild_id)
         if player is None:
             await interaction.response.send_message("Nothing is playing.", ephemeral=True)
+            return
+        if not isinstance(interaction.user, discord.Member):
             return
         msg = await self.cog._toggle_loop_for_member(player, interaction.user)
         await self._respond(interaction, msg)

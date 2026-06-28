@@ -34,7 +34,10 @@ from musicbot.cogs.music.models import Track
 from musicbot.cogs.music.scoring import rank_entries, signal_tokens
 
 
-class ExtractionMixin:
+from musicbot.cogs.music._base import MusicCogBase
+
+
+class ExtractionMixin(MusicCogBase):
     """yt-dlp extraction, stream-URL validation, and FFmpeg audio-source construction."""
 
     # ── yt-dlp option builders ──────────────────────────────────────────────
@@ -73,7 +76,10 @@ class ExtractionMixin:
                 (False, True): fs,
                 (True, True): fps,
             }
-        return self._ytdl_variants[(flat_playlist, flat_search)]  # type: ignore[attr-defined]
+        variants = self._ytdl_variants  # type: ignore[attr-defined]
+        if variants is None:
+            return dict(base)
+        return variants[(flat_playlist, flat_search)]
 
     # ── Stream-URL validation ───────────────────────────────────────────────
 
@@ -221,12 +227,12 @@ class ExtractionMixin:
                     def _run() -> dict[str, Any] | None:
                         tlocal = self._ytdl_tlocal  # type: ignore[attr-defined]
                         if not hasattr(tlocal, "instances"):
-                            tlocal.instances: dict[tuple[bool, bool], YoutubeDL] = {}
+                            tlocal.instances = {}  # type: ignore[attr-defined]
                         ydl = tlocal.instances.get(key)
                         if ydl is None:
                             ydl = YoutubeDL(options)
                             tlocal.instances[key] = ydl
-                        return ydl.extract_info(query, download=False)
+                        return ydl.extract_info(query, download=False)  # type: ignore[no-any-return]
 
                     result = await asyncio.wait_for(
                         loop.run_in_executor(self._ytdl_executor, _run),  # type: ignore[attr-defined]

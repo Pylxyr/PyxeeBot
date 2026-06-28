@@ -18,7 +18,10 @@ from musicbot.cogs.music.models import Track
 from musicbot.cogs.music.player import GuildPlayer
 
 
-class LifecycleMixin:
+from musicbot.cogs.music._base import MusicCogBase
+
+
+class LifecycleMixin(MusicCogBase):
     """Player creation/restore/cleanup and debounced queue-snapshot persistence."""
 
     # ── Player lifecycle ────────────────────────────────────────────────────

@@ -104,7 +104,7 @@ class PyxeeHelpCommand(commands.HelpCommand):
         blurb = self._blurb_for(command)
         return f"`{sig}` — {blurb}"
 
-    async def send_bot_help(
+    async def send_bot_help(  # type: ignore[override]
         self, mapping: dict[commands.Cog | None, list[commands.Command[Any, ..., Any]]]
     ) -> None:
         prefix = self.context.clean_prefix
@@ -119,7 +119,9 @@ class PyxeeHelpCommand(commands.HelpCommand):
 
         all_fields: list[tuple[str, str]] = []
 
-        ordered_cogs = [cog for cog in self.context.bot.cogs.values() if cog in mapping]
+        ordered_cogs: list[commands.Cog | None] = [
+            cog for cog in self.context.bot.cogs.values() if cog in mapping
+        ]
         if None in mapping:
             ordered_cogs.append(None)
 
@@ -270,7 +272,7 @@ class MusicBot(commands.Bot):
         if message.guild:
             guild_id = message.guild.id
             if guild_id in self._prefix_cache:
-                custom = self._prefix_cache[guild_id]
+                custom: str | None = self._prefix_cache[guild_id]
             else:
                 custom = await self.database.get_prefix(guild_id)
                 self._prefix_cache[guild_id] = custom or ""
@@ -290,9 +292,7 @@ class MusicBot(commands.Bot):
         self._prefix_cache.pop(guild_id, None)
 
     async def on_ready(self) -> None:
-        activity = discord.Activity(
-            type=discord.ActivityType.watching, name=self.settings.bot_activity_url
-        )
+        activity = discord.Activity(type=discord.ActivityType.watching, name=self.settings.bot_activity_url)
         await self.change_presence(activity=activity)
         logging.getLogger(__name__).info(
             "Logged in as %s (%s)", self.user, self.user.id if self.user else "unknown"
@@ -325,13 +325,13 @@ class MusicBot(commands.Bot):
                 continue
             self._reconnect_announced_at[guild.id] = now
             music_cog = self.cogs.get("MusicCog")
-            player = music_cog.players.get(guild.id) if music_cog else None  # type: ignore[union-attr]
+            player = music_cog.players.get(guild.id) if music_cog else None  # type: ignore[attr-defined]
             announce_id = player.announce_channel_id if player else None
             channel = guild.get_channel(announce_id) if isinstance(announce_id, int) else guild.system_channel
             if channel is None:
                 continue
             with contextlib.suppress(discord.HTTPException):
-                await channel.send(
+                await channel.send(  # type: ignore[union-attr]
                     "🔌 Reconnected — your queue has been preserved and will resume on `!join`."
                 )
 

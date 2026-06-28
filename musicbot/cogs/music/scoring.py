@@ -235,12 +235,12 @@ def _derive_anchor_phrases(
 
     for size in range(max_phrase_size, 0, -1):
         matches: list[tuple[int, str]] = []
-        seen: set[str] = set()
+        seen2: set[str] = set()
         for start in range(len(query_tokens) - size + 1):
             phrase = " ".join(query_tokens[start : start + size])
-            if phrase in seen:
+            if phrase in seen2:
                 continue
-            seen.add(phrase)
+            seen2.add(phrase)
             if size == 1 and len(phrase) <= 2:
                 continue
             count = sum(1 for text in uploader_texts if _word_boundary_match(phrase, text))
@@ -669,7 +669,7 @@ def rank_entries(
         scored.append((sc, orig_i, item, ectx, bd))
     scored.sort(key=lambda t: (t[0], -t[1]), reverse=True)
 
-    if need_debug:
+    if guild_id is not None:
         records: list[ScoreBreakdown] = []
         for rank, (sc, _oi, item, ectx, bd) in enumerate(scored[:8], start=1):
             if bd is None:

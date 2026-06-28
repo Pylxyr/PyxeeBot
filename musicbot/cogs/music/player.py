@@ -372,6 +372,8 @@ class GuildPlayer:
 
                     self.started_at = time.monotonic()
                     self._pause_started = self._total_paused = 0.0
+                    if self.voice_client is None:
+                        break
                     self.voice_client.play(source, after=after_playback)
 
                     # Safety-net only: the URL pipeline (in cog.py) keeps the
