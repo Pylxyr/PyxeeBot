@@ -32,8 +32,11 @@ jobs:
       - name: Lint
         run: ruff check musicbot/ tests/
 
-      #- name: Type check
-      #  run: mypy musicbot/
+      - name: Format check
+        run: ruff format --check musicbot/ tests/
+
+      - name: Type check
+        run: mypy musicbot/
         
       - name: Security audit
         run: pip-audit --ignore-vuln CVE-2025-69277  
