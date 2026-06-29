@@ -11,7 +11,7 @@ Stream from YouTube · Last.fm curation · Custom search scoring · Live control
 [![Python](https://img.shields.io/badge/Python-3.11%2B-3572A5?style=flat-square&logo=python&logoColor=white)](https://python.org)
 [![discord.py](https://img.shields.io/badge/discord.py-2.7.1-5865F2?style=flat-square&logo=discord&logoColor=white)](https://github.com/Rapptz/discord.py)
 [![yt-dlp](https://img.shields.io/badge/yt--dlp-2026.06.09-CC0000?style=flat-square&logo=youtube&logoColor=white)](https://github.com/yt-dlp/yt-dlp)
-[![Tests](https://img.shields.io/badge/tests-106%20passing-22c55e?style=flat-square&logo=pytest&logoColor=white)](tests/)
+[![Tests](https://img.shields.io/badge/tests-124%20passing-22c55e?style=flat-square&logo=pytest&logoColor=white)](tests/)
 [![License](https://img.shields.io/badge/License-MIT-64748b?style=flat-square)](LICENSE)
 [![Website](https://img.shields.io/badge/Website-PyxeeBot-FFAA40?style=flat-square)](https://pylxyr.github.io/PyxeeBot-Page/)
 
@@ -347,10 +347,10 @@ All settings are read from `.env`. Every value has a default. See `deploy/.env.e
 PyxeeBot/
 ├── bot.py                          # Entry point
 ├── requirements.txt
-├── pyproject.toml                  # pytest (asyncio_mode=auto) and ruff (py311, E/F/W) config
+├── pyproject.toml                  # pytest (asyncio_mode=auto), ruff (py311, E/F/W), and mypy (strict) config
 ├── .github/
 │   └── workflows/
-│       └── deploy.yml              # CI: lint → test → SSH deploy to Oracle VPS
+│       └── deploy.yml              # CI: lint → type-check → test → SSH deploy to Oracle VPS
 ├── deploy/
 │   ├── setup_oracle.sh             # Interactive one-run setup wizard for Ubuntu VPS
 │   ├── musicbot.service            # systemd unit (ProtectHome, MemoryMax, SystemCallFilter, logrotate)
@@ -368,12 +368,13 @@ PyxeeBot/
 │       └── music/
 │           ├── __init__.py         # Public surface: exports MusicCog and EMBED_COLOUR
 │           ├── cog.py              # MusicCog: composes all mixins, owns shared state dicts
-│           ├── constants.py        # FFmpeg options, YTDL options, UI limits, scoring thresholds
+│           ├── _base.py            # MusicCogBase: shared attribute and method stubs for all mixins
+│           ├── constants.py        # FFmpeg options, YTDL options, LoopMode, UI limits, scoring thresholds
 │           ├── models.py           # Track, ResolvedTrackData, NowPlayingController dataclasses
 │           ├── scoring.py          # Multi-signal search result scoring and ranking engine
 │           ├── views.py            # Discord UI views: SearchSelection, Queue, NowPlaying, ScoreDebug
 │           ├── player.py           # GuildPlayer: queue, playback loop, history, stay-connected flag
-│           ├── _context.py         # ContextVar for current guild ID, threaded into the yt-dlp pool
+│           ├── _context.py         # _CURRENT_GUILD_ID ContextVar for yt-dlp pool; GuildContext type
 │           ├── _extraction.py      # ExtractionMixin: yt-dlp wrapper, audio source construction
 │           ├── _resolver.py        # ResolverMixin: stream URL resolution, per-track TTL cache
 │           ├── _lifecycle.py       # LifecycleMixin: player creation (race-condition lock), snapshot restore
@@ -399,9 +400,9 @@ PyxeeBot/
 
 **Player loop.** Each guild has one `GuildPlayer` with a long-running `_player_loop` asyncio task. Creation is protected by a per-guild `asyncio.Lock` to prevent a TOCTOU race where two concurrent commands (`!join` and `!play`) could each create an independent player before either writes to `self.players`. The loop pre-resolves the next track's stream URL via `_resolve_track_data` and stores it in a TTL cache (128 entries, 30-min TTL). Stream URLs are also refreshed 30s before the current track ends (`NEAR_END_PREFETCH_SECONDS`), and any cached stream URL older than 4 hours (`STREAM_URL_REFRESH_AGE_SECONDS`) is considered stale and re-resolved before playback.
 
-**Audio pipeline.** yt-dlp extracts a direct stream URL; FFmpeg reads it over HTTP and re-encodes to Opus. Copy mode (`-c:a copy`) is explicitly avoided — the fallback path that would normally use `FFmpegOpusAudio.from_probe()` instead probes for bitrate only and discards the detected codec, since discord.py's constructor silently maps any detected `opus`/`libopus` result to copy mode, which bypasses the libopus encoder and causes pacing irregularities audible as fast-forward artefacts at the start of a track.
+**Audio pipeline.** yt-dlp extracts a direct stream URL; FFmpeg reads it over HTTP and re-encodes to Opus at the configured bitrate. Copy mode (`-c:a copy`) is explicitly avoided — discord.py's constructor maps any detected `opus`/`libopus` codec to copy mode, which bypasses the libopus encoder and causes pacing irregularities. The bitrate is read from yt-dlp's `abr` field (available in the manifest), so no second probe connection is ever made. The FFmpeg subprocess is created immediately before `voice_client.play()` — after the voice connection has stabilised and any reconnect delay has elapsed — to prevent pre-buffered audio causing fast-forward at the start of the first track in a session.
 
-**Database.** A single `aiosqlite.Connection` is shared across the process. All write methods hold a module-level `asyncio.Lock` before executing — SQLite transactions are connection-scoped, so a concurrent single-statement `commit()` from one guild can otherwise land inside and force-commit another guild's still-open `BEGIN IMMEDIATE` transaction silently. Tables: `guild_settings` (prefix, DJ role, stay-connected, autoplay per guild), `saved_playlists` + `saved_playlist_items` (named server playlists), `queue_snapshots` (queue restored on restart), `play_history` (backing `!toptracks` and `!toprequestors`). `play_history` is capped at 5 000 rows per guild (trimmed on each insert). Two indexes cover it: `(guild_id, played_at)` for recency scans and `(guild_id, webpage_url, played_at)` for the `GROUP BY webpage_url` pattern used by `!toptracks`.
+**Database.** A single `aiosqlite.Connection` is shared across the process. All write methods hold a module-level `asyncio.Lock` before executing — SQLite transactions are connection-scoped, so a concurrent single-statement `commit()` from one guild can otherwise land inside and force-commit another guild's still-open `BEGIN IMMEDIATE` transaction silently. Tables: `guild_settings` (prefix, DJ role, stay-connected, autoplay per guild), `saved_playlists` + `saved_playlist_items` (named server playlists), `queue_snapshots` (queue restored on restart), `play_history` (backing `!toptracks` and `!toprequestors`). `play_history` is capped at 5 000 rows per guild (trimmed on each insert). Two indexes cover it: `(guild_id, played_at)` for recency scans and `(guild_id, webpage_url, played_at)` for the `GROUP BY webpage_url` pattern used by `!toptracks`. A `PRAGMA wal_checkpoint(PASSIVE)` runs every 100 play-history writes to prevent WAL file growth on long sessions.
 
 **Scoring engine.** `scoring.py` is the most complex module. It normalises query and candidate text, tokenises with stop-word removal, then assembles a weighted score from ~15 signals including fuzzy token overlap (RapidFuzz), anchor-phrase matching, live/cover/mix duration penalties, topic-channel and verified-channel bonuses, JP/anime bonuses, and recency. The final `rank_entries()` call sorts and returns the best candidate.
 
@@ -427,7 +428,7 @@ pytest tests/ -q
 - **`test_curation.py`** (13) — curation cog: Last.fm session management, vibe-load queue limits, autoplay toggle
 - **`test_lifecycle.py`** (5) — player creation race-condition lock and snapshot restore path
 
-All async tests use `pytest-asyncio` in `auto` mode (configured in `pyproject.toml`). Ruff is configured for `py311` with `E`, `F`, `W` rules at line length 110.
+All async tests use `pytest-asyncio` in `auto` mode (configured in `pyproject.toml`). Ruff is configured for `py311` with `E`, `F`, `W` rules at line length 110. mypy runs with `disallow_untyped_defs` and `warn_return_any` across all source files; the mixin base class (`_base.py`) is the only module with `ignore_errors = true` since its stub bodies are intentionally empty.
 
 ---
 
