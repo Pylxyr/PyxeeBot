@@ -7,13 +7,14 @@ import contextlib
 import logging
 import time
 from collections import deque
-from typing import Any, Awaitable, Callable, Literal, TYPE_CHECKING
+from typing import Any, Awaitable, Callable, TYPE_CHECKING
 
 import discord
 
 from musicbot.cogs.music.constants import (
     STREAM_URL_REFRESH_AGE_SECONDS,
     VOICE_RECONNECT_ATTEMPTS,
+    LoopMode,
 )
 from musicbot.cogs.music.models import Track
 
@@ -46,7 +47,7 @@ class GuildPlayer:
         self._total_duration: int = 0  # sum of durations of queued tracks (not current)
 
         self.announce_channel_id: int | None = None
-        self.loop_mode: Literal["off", "one", "all"] = "off"
+        self.loop_mode: LoopMode = "off"
         self.rewind_requested = False
         self.stay_connected = False
         self._connected_at: float = 0.0
@@ -341,20 +342,6 @@ class GuildPlayer:
                             continue
                         self.current = re_resolved
 
-                    source = await self.audio_source_factory(self.current)
-                    finished = asyncio.Event()
-                    _loop = asyncio.get_running_loop()
-
-                    def after_playback(error: Exception | None) -> None:
-                        if error:
-                            _loop.call_soon_threadsafe(
-                                self.bot.dispatch,
-                                "musicbot_playback_error",
-                                self.guild,
-                                error,
-                            )
-                        _loop.call_soon_threadsafe(finished.set)
-
                     if not self.voice_client or not self.voice_client.is_connected():
                         reconnected = await self._try_reconnect()
                         if not reconnected:
@@ -369,6 +356,20 @@ class GuildPlayer:
                         if wait > 0:
                             await asyncio.sleep(wait)
                         self._connected_at = 0.0
+
+                    source = await self.audio_source_factory(self.current)
+                    finished = asyncio.Event()
+                    _loop = asyncio.get_running_loop()
+
+                    def after_playback(error: Exception | None) -> None:
+                        if error:
+                            _loop.call_soon_threadsafe(
+                                self.bot.dispatch,
+                                "musicbot_playback_error",
+                                self.guild,
+                                error,
+                            )
+                        _loop.call_soon_threadsafe(finished.set)
 
                     self.started_at = time.monotonic()
                     self._pause_started = self._total_paused = 0.0

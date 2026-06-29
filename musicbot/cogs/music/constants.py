@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import re
+from typing import Literal
+
 import discord
 
 FFMPEG_BEFORE_OPTIONS = (
@@ -45,7 +47,9 @@ NP_REFRESH_DEBOUNCE_SECONDS = 0.8
 _SEARCH_RESULT_COUNT_LONG = 8  # floor for ≥4 signal tokens
 _SEARCH_RESULT_COUNT_MED = 6  # floor for ≥3 signal tokens
 
-LOOP_CYCLE: dict[str, str] = {"off": "one", "one": "all", "all": "off"}
+LoopMode = Literal["off", "one", "all"]
+
+LOOP_CYCLE: dict[LoopMode, LoopMode] = {"off": "one", "one": "all", "all": "off"}
 LOOP_LABELS: dict[str, str] = {"off": "Off", "one": "Single track", "all": "Entire queue"}
 LOOP_ICONS: dict[str, str] = {"off": "→", "one": "↻¹", "all": "↻"}
 

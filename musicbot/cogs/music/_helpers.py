@@ -166,9 +166,7 @@ class CommandHelpersMixin(MusicCogBase):
         if not player.current and not player.queue:
             return "Nothing is loaded."
         prev_label = LOOP_LABELS.get(player.loop_mode, "Off")
-        new_mode = LOOP_CYCLE.get(player.loop_mode, "off")
-        if new_mode in ("off", "one", "all"):
-            player.loop_mode = new_mode  # type: ignore[assignment]
+        player.loop_mode = LOOP_CYCLE[player.loop_mode]
         self._persist_snapshot(member.guild.id)
         label = LOOP_LABELS.get(player.loop_mode, "Off")
         icon = LOOP_ICONS.get(player.loop_mode, "→")

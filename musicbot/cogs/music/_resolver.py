@@ -65,6 +65,7 @@ class ResolverMixin(MusicCogBase):
         track.query = data.query
         track.resolved_at = data.resolved_at
         track.acodec = data.acodec
+        track.abr = data.abr
         if data.thumbnail_url:
             track.thumbnail_url = data.thumbnail_url
         if data.tags:
@@ -100,6 +101,7 @@ class ResolverMixin(MusicCogBase):
                     thumbnail_url=resolved.thumbnail_url,
                     tags=resolved.tags,
                     acodec=resolved.acodec,
+                    abr=resolved.abr,
                 )
                 self._store_cached_track_data(data)
                 return data

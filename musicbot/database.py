@@ -22,11 +22,7 @@ class Database:
         self._autoplay_cache: dict[int, bool] = {}
         self._conn: aiosqlite.Connection | None = None
         self._snapshot_hashes: dict[int, str] = {}
-        # Serialises every write (not just multi-statement transactions) — a
-        # single-statement commit() from one guild can otherwise land inside
-        # another guild's open BEGIN IMMEDIATE on this same shared connection
-        # and force-commit it early, since SQLite transactions are connection-
-        # scoped rather than statement-scoped.
+        self._write_count = 0
         self._write_lock = asyncio.Lock()
 
     async def initialize(self) -> None:
@@ -373,7 +369,10 @@ class Database:
             except Exception:
                 await self._conn.rollback()
                 raise
-        self._snapshot_hashes[guild_id] = new_hash
+        if entries:
+            self._snapshot_hashes[guild_id] = new_hash
+        else:
+            self._snapshot_hashes.pop(guild_id, None)
 
     async def load_queue_snapshot(self, guild_id: int) -> list[sqlite3.Row]:
         if self._conn is None:
@@ -469,6 +468,9 @@ class Database:
                 (guild_id, guild_id, _HISTORY_MAX_ROWS),
             )
             await self._conn.commit()
+            self._write_count += 1
+            if self._write_count % 100 == 0:
+                await self._conn.execute("PRAGMA wal_checkpoint(PASSIVE)")
 
     async def get_top_played(self, guild_id: int, limit: int = 10) -> list[sqlite3.Row]:
         if self._conn is None:
