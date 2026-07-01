@@ -450,6 +450,7 @@ class Database:
         if self._conn is None:
             return
         async with self._write_lock:
+            self._write_count += 1
             await self._conn.execute(
                 """
                 INSERT INTO play_history (guild_id, title, webpage_url, requester_id)
@@ -457,18 +458,18 @@ class Database:
                 """,
                 (guild_id, title, webpage_url, requester_id),
             )
-            await self._conn.execute(
-                """
-                DELETE FROM play_history
-                WHERE guild_id = ? AND id NOT IN (
-                    SELECT id FROM play_history WHERE guild_id = ?
-                    ORDER BY played_at DESC LIMIT ?
+            if self._write_count % 50 == 0:
+                await self._conn.execute(
+                    """
+                    DELETE FROM play_history
+                    WHERE guild_id = ? AND id NOT IN (
+                        SELECT id FROM play_history WHERE guild_id = ?
+                        ORDER BY played_at DESC LIMIT ?
+                    )
+                    """,
+                    (guild_id, guild_id, _HISTORY_MAX_ROWS),
                 )
-                """,
-                (guild_id, guild_id, _HISTORY_MAX_ROWS),
-            )
             await self._conn.commit()
-            self._write_count += 1
             if self._write_count % 100 == 0:
                 await self._conn.execute("PRAGMA wal_checkpoint(PASSIVE)")
 

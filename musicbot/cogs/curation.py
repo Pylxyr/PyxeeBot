@@ -769,22 +769,6 @@ class CurationCog(commands.Cog, name="CurationCog"):
             + (f" ({failed} failed.)" if failed else "")
         )
 
-    @commands.hybrid_command(name="vibe-list", aliases=["vlist"])  # type: ignore[arg-type]
-    @commands.guild_only()
-    async def vibe_list(self, context: GuildContext) -> None:
-        """List all saved curated playlists for this server."""
-        rows = await self.bot.database.list_playlists(context.guild.id)
-        if not rows:
-            await context.send("No saved playlists yet. Use `!vibe <query>` to create one.")
-            return
-        lines = [f"`{r['name']}` — {r['track_count']} tracks" for r in rows]
-        embed = discord.Embed(
-            title="Saved Playlists",
-            description="\n".join(lines),
-            colour=EMBED_COLOUR,
-        )
-        await context.send(embed=embed)
-
     @commands.Cog.listener()
     async def on_musicbot_queue_updated(self, guild: discord.Guild) -> None:
         """Trigger autoplay when the queue empties, or a refill prompt when it's low."""

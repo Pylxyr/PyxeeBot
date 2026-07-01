@@ -61,7 +61,6 @@ class PyxeeHelpCommand(commands.HelpCommand):
         "history": "Show the last tracks played this session.",
         "skipto": "Jump to a specific queue position, dropping tracks before it.",
         "replay": "Re-queue the current track to play again next.",
-        "qsearch": "Search for a keyword within the current queue.",
         "toptracks": "Show the most-played tracks for this server, all-time.",
         "toprequestors": "Show the top track requestors for this server, all-time.",
     }
@@ -345,13 +344,13 @@ class MusicBot(commands.Bot):
             await context.send(f"Slow down — retry in `{error.retry_after:.1f}s`.", delete_after=6)
             return
         if isinstance(error, commands.MissingRequiredArgument):
-            await context.send(f"Missing argument: `{error.param.name}`.")
+            await context.send(f"Missing argument: `{error.param.name}`.", delete_after=8)
             return
         if isinstance(error, commands.BadArgument):
-            await context.send(str(error))
+            await context.send(str(error), delete_after=8)
             return
         if isinstance(error, commands.CheckFailure):
-            await context.send("You do not have permission to use this command.")
+            await context.send("You do not have permission to use this command.", delete_after=8)
             return
 
         logging.getLogger(__name__).exception("Unhandled command error", exc_info=error)

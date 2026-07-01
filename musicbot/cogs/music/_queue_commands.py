@@ -82,40 +82,6 @@ class QueueCommandsMixin(MusicCogBase):
         embed.set_footer(text=f"{context.guild.name} · all-time")
         await context.send(embed=embed)
 
-    @commands.guild_only()
-    @commands.cooldown(2, 4, commands.BucketType.user)
-    async def qsearch(self, context: GuildContext, *, keyword: str) -> None:
-        """Search within the current queue."""
-        player = self.players.get(context.guild.id)
-        if not player or not player.queue:
-            await context.send("Queue is empty.")
-            return
-        kw = keyword.strip().lower()
-        matches = [
-            (i + 1, t)
-            for i, t in enumerate(player.queue)
-            if kw in t.title.lower() or kw in (t.uploader or "").lower()
-        ]
-        if not matches:
-            await context.send(f"No tracks matching `{discord.utils.escape_markdown(keyword)}`.")
-            return
-        lines = [
-            f"`{pos}.` [{discord.utils.escape_markdown(t.title)}]({t.webpage_url})" for pos, t in matches[:20]
-        ]
-        embed = discord.Embed(
-            title=f"Queue Search: {discord.utils.escape_markdown(keyword)}",
-            description="\n".join(lines),
-            colour=EMBED_COLOUR,
-        )
-        embed.set_footer(
-            text=(
-                f"Showing first 20 of {len(matches)} matches."
-                if len(matches) > 20
-                else f"{len(matches)} match(es) found."
-            )
-        )
-        await context.send(embed=embed)
-
     @commands.hybrid_command(name="queue", aliases=["q"])  # type: ignore[arg-type]
     @commands.guild_only()
     @commands.cooldown(1, 3, commands.BucketType.user)

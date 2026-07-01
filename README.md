@@ -294,7 +294,6 @@ All settings are read from `.env`. Every value has a default. See `deploy/.env.e
 | `!shuffle` | — | Shuffle the queue (DJ-only) |
 | `!move <from> <to>` | — | Move a track to a different queue position (DJ-only) |
 | `!remove <position>` | — | Remove a track (requester or DJ) |
-| `!qsearch <keyword>` | `qs` | Search within the current queue |
 | `!history` | — | Show recently played tracks (session only) |
 | `!toptracks` | `top` | Show the all-time most-played tracks for this server |
 | `!toprequestors` | `topreqs` | Show the all-time top track requestors for this server |
@@ -323,7 +322,6 @@ All settings are read from `.env`. Every value has a default. See `deploy/.env.e
 | `!vibe <query>` | `vb` | Discover similar tracks via Last.fm and queue them interactively. Cooldown: 1 use / 15s per guild |
 | `!vibe-save <name>` | `vsave` | Save the current vibe session's tracks as a named playlist |
 | `!vibe-load <name>` | `vload` | Load and re-queue a saved vibe playlist |
-| `!vibe-list` | `vlist` | List saved vibe playlists for this server |
 
 ### Admin & Settings
 
@@ -382,7 +380,7 @@ PyxeeBot/
 │           ├── _events.py          # EventsMixin: voice state and disconnect event handlers
 │           ├── _helpers.py         # CommandHelpersMixin: DJ checks, skip votes, owner checks
 │           ├── _playback_commands.py   # join, leave, play, playnext, pause, resume, skip, etc.
-│           ├── _queue_commands.py      # queue, clear, shuffle, move, remove, qsearch, history, toptracks, toprequestors
+│           ├── _queue_commands.py      # queue, clear, shuffle, move, remove, history, toptracks, toprequestors
 │           ├── _search_commands.py     # search, why
 │           └── _playlist_commands.py  # playlist save/load/list/show/delete
 └── tests/
@@ -402,7 +400,7 @@ PyxeeBot/
 
 **Audio pipeline.** yt-dlp extracts a direct stream URL; FFmpeg reads it over HTTP and re-encodes to Opus at the configured bitrate. Copy mode (`-c:a copy`) is explicitly avoided — discord.py's constructor maps any detected `opus`/`libopus` codec to copy mode, which bypasses the libopus encoder and causes pacing irregularities. The bitrate is read from yt-dlp's `abr` field (available in the manifest), so no second probe connection is ever made. The FFmpeg subprocess is created immediately before `voice_client.play()` — after the voice connection has stabilised and any reconnect delay has elapsed — to prevent pre-buffered audio causing fast-forward at the start of the first track in a session.
 
-**Database.** A single `aiosqlite.Connection` is shared across the process. All write methods hold a module-level `asyncio.Lock` before executing — SQLite transactions are connection-scoped, so a concurrent single-statement `commit()` from one guild can otherwise land inside and force-commit another guild's still-open `BEGIN IMMEDIATE` transaction silently. Tables: `guild_settings` (prefix, DJ role, stay-connected, autoplay per guild), `saved_playlists` + `saved_playlist_items` (named server playlists), `queue_snapshots` (queue restored on restart), `play_history` (backing `!toptracks` and `!toprequestors`). `play_history` is capped at 5 000 rows per guild (trimmed on each insert). Two indexes cover it: `(guild_id, played_at)` for recency scans and `(guild_id, webpage_url, played_at)` for the `GROUP BY webpage_url` pattern used by `!toptracks`. A `PRAGMA wal_checkpoint(PASSIVE)` runs every 100 play-history writes to prevent WAL file growth on long sessions.
+**Database.** A single `aiosqlite.Connection` is shared across the process. All write methods hold a module-level `asyncio.Lock` before executing — SQLite transactions are connection-scoped, so a concurrent single-statement `commit()` from one guild can otherwise land inside and force-commit another guild's still-open `BEGIN IMMEDIATE` transaction silently. Tables: `guild_settings` (prefix, DJ role, stay-connected, autoplay per guild), `saved_playlists` + `saved_playlist_items` (named server playlists), `queue_snapshots` (queue restored on restart), `play_history` (backing `!toptracks` and `!toprequestors`). `play_history` is capped at 5 000 rows per guild (trimmed every 50 inserts). Two indexes cover it: `(guild_id, played_at)` for recency scans and `(guild_id, webpage_url, played_at)` for the `GROUP BY webpage_url` pattern used by `!toptracks`. A `PRAGMA wal_checkpoint(PASSIVE)` runs every 100 play-history writes to prevent WAL file growth on long sessions.
 
 **Scoring engine.** `scoring.py` is the most complex module. It normalises query and candidate text, tokenises with stop-word removal, then assembles a weighted score from ~15 signals including fuzzy token overlap (RapidFuzz), anchor-phrase matching, live/cover/mix duration penalties, topic-channel and verified-channel bonuses, JP/anime bonuses, and recency. The final `rank_entries()` call sorts and returns the best candidate.
 

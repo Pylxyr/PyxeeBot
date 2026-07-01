@@ -6,6 +6,7 @@ ResolverMixin, ExtractionMixin, and LifecycleMixin.
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 
 import discord
@@ -19,6 +20,18 @@ from musicbot.cogs.music._base import MusicCogBase
 
 class EventsMixin(MusicCogBase):
     """Bot and player event listeners."""
+
+    async def _schedule_rejoin(
+        self,
+        guild: discord.Guild,
+        channel: discord.VoiceChannel | discord.StageChannel,
+    ) -> None:
+        await asyncio.sleep(5.0)
+        player = self.players.get(guild.id)
+        if player is None or not player.stay_connected:
+            return
+        with contextlib.suppress(Exception):
+            await player.connect(channel)
 
     # ── Event listeners ─────────────────────────────────────────────────────
 
@@ -85,7 +98,13 @@ class EventsMixin(MusicCogBase):
         tracked_channel = player.voice_client.channel
         if self.bot.user is not None and member.id == self.bot.user.id:
             if before.channel is not None and after.channel is None:
-                await self._cleanup_guild(member.guild.id)
+                if player.stay_connected:
+                    self._bg_task(
+                        self._schedule_rejoin(member.guild, before.channel),
+                        name=f"rejoin-{member.guild.id}",
+                    )
+                else:
+                    await self._cleanup_guild(member.guild.id)
             elif after.channel is not None and after.channel != before.channel:
                 player.voice_client = member.guild.voice_client  # type: ignore[assignment]
                 await player.refresh_empty_channel_state()
