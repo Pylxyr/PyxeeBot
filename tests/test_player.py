@@ -493,6 +493,7 @@ async def test_rearm_idle_timer_creates_new_task_when_done():
     assert old_task is not None
     old_task.cancel()
     import contextlib
+
     with contextlib.suppress(asyncio.CancelledError):
         await old_task
 
@@ -509,5 +510,6 @@ async def test_rearm_idle_timer_does_not_duplicate_running_task():
     assert p.idle_task is first
     first.cancel()
     import contextlib
+
     with contextlib.suppress(asyncio.CancelledError):
         await first

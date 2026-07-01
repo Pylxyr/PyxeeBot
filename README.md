@@ -11,7 +11,7 @@ Stream from YouTube · Last.fm curation · Custom search scoring · Live control
 [![Python](https://img.shields.io/badge/Python-3.11%2B-3572A5?style=flat-square&logo=python&logoColor=white)](https://python.org)
 [![discord.py](https://img.shields.io/badge/discord.py-2.7.1-5865F2?style=flat-square&logo=discord&logoColor=white)](https://github.com/Rapptz/discord.py)
 [![yt-dlp](https://img.shields.io/badge/yt--dlp-2026.06.09-CC0000?style=flat-square&logo=youtube&logoColor=white)](https://github.com/yt-dlp/yt-dlp)
-[![Tests](https://img.shields.io/badge/tests-124%20passing-22c55e?style=flat-square&logo=pytest&logoColor=white)](tests/)
+[![Tests](https://img.shields.io/badge/tests-134%20passing-22c55e?style=flat-square&logo=pytest&logoColor=white)](tests/)
 [![License](https://img.shields.io/badge/License-MIT-64748b?style=flat-square)](LICENSE)
 [![Website](https://img.shields.io/badge/Website-PyxeeBot-FFAA40?style=flat-square)](https://pylxyr.github.io/PyxeeBot-Page/)
 
@@ -388,7 +388,7 @@ PyxeeBot/
 └── tests/
     ├── __init__.py
     ├── conftest.py                 # make_bot, make_guild, make_track, make_settings helpers
-    ├── test_player.py              # GuildPlayer: enqueue, capacity, duration, snapshot, skip, prev (30 tests)
+    ├── test_player.py              # GuildPlayer: enqueue, capacity, duration, snapshot, skip, prev, stale-client reconnect, stay guard (40 tests)
     ├── test_scoring.py             # Scoring engine: normalisation, signals, rank_entries() (41 tests)
     ├── test_scoring_golden.py      # Golden ranking scenarios against real J-pop/anime fixtures (14 tests)
     └── test_concurrency.py         # Concurrency and correctness regression tests (21 tests)
@@ -419,9 +419,9 @@ pip install pytest pytest-asyncio
 pytest tests/ -q
 ```
 
-124 tests across six files:
+134 tests across six files:
 
-- **`test_player.py`** (30) — `GuildPlayer` state: enqueue, queue capacity, duration tracking, snapshot serialisation, pause/resume timing, skip, and prev
+- **`test_player.py`** (40) — `GuildPlayer` state: enqueue, queue capacity, duration tracking, snapshot serialisation, pause/resume timing, skip, prev, stale-client reconnect, `_disconnect_when_empty` stay guard, `_total_duration` eviction at queue capacity, and `rearm_idle_timer`
 - **`test_scoring.py`** (41) — scoring engine units: text normalisation, tokenisation, signal functions, and `rank_entries()` end-to-end
 - **`test_scoring_golden.py`** (14) — golden ranking scenarios against real J-pop/anime fixture data, each asserting a specific track wins over a distracting alternative
 - **`test_concurrency.py`** (21) — regression tests for concurrency bugs and correctness invariants: `_get_player` TOCTOU race, database write-lock covering all 7 write methods, `CancelledError` propagation through the shared-resolve shield, per-guild autoplay DB/command toggle, `setup_hook` owner population for personal and team-owned apps, reconnect announcement cooldown logic, and owner-check coverage for both `_is_authorized_owner` and `_is_bot_owner`
