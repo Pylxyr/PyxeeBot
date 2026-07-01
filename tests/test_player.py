@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -318,3 +319,195 @@ def test_user_queue_count_zero_for_unknown_user():
 def test_user_queue_count_empty_queue():
     p = _player()
     assert sum(1 for t in p.queue if t.requester_id == 111) == 0
+
+
+# ── connect (stale-client cleanup) ───────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_connect_returns_existing_when_connected():
+    p = _player()
+    vc = MagicMock()
+    vc.is_connected = MagicMock(return_value=True)
+    vc.channel = MagicMock()
+    p.voice_client = vc
+    channel = MagicMock()
+    channel.__eq__ = lambda self, other: other is vc.channel
+
+    with patch.object(p, "refresh_empty_channel_state", new_callable=AsyncMock):
+        result = await p.connect(vc.channel)
+
+    assert result is vc
+
+
+@pytest.mark.asyncio
+async def test_connect_purges_stale_client_before_reconnecting():
+    """When voice_client exists but is_connected() is False (stale WS), connect()
+    must force-disconnect it before calling channel.connect().  Without this,
+    discord.py raises ClientException('Already connected to a voice channel.')."""
+    p = _player()
+    stale_vc = MagicMock()
+    stale_vc.is_connected = MagicMock(return_value=False)
+    stale_vc.disconnect = AsyncMock()
+    p.voice_client = stale_vc
+
+    new_vc = MagicMock()
+    new_vc.is_connected = MagicMock(return_value=True)
+    channel = AsyncMock()
+    channel.connect = AsyncMock(return_value=new_vc)
+
+    with patch.object(p, "refresh_empty_channel_state", new_callable=AsyncMock):
+        result = await p.connect(channel)
+
+    stale_vc.disconnect.assert_awaited_once_with(force=True)
+    assert result is new_vc
+    assert p.voice_client is new_vc
+
+
+@pytest.mark.asyncio
+async def test_connect_still_succeeds_when_stale_disconnect_raises():
+    """Even if force-disconnecting the stale client itself throws, connect()
+    must absorb the error and carry on with the fresh channel.connect() call."""
+    p = _player()
+    stale_vc = MagicMock()
+    stale_vc.is_connected = MagicMock(return_value=False)
+    stale_vc.disconnect = AsyncMock(side_effect=Exception("ws dead"))
+    p.voice_client = stale_vc
+
+    new_vc = MagicMock()
+    new_vc.is_connected = MagicMock(return_value=True)
+    channel = AsyncMock()
+    channel.connect = AsyncMock(return_value=new_vc)
+
+    with patch.object(p, "refresh_empty_channel_state", new_callable=AsyncMock):
+        result = await p.connect(channel)
+
+    assert result is new_vc
+
+
+# ── _disconnect_when_empty (stay_connected guard) ────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_disconnect_when_empty_honours_stay_connected():
+    """With stay_connected=True, _disconnect_when_empty must return without
+    touching the voice client, even after the timeout elapses."""
+    p = _player()
+    p.bot.settings.empty_channel_timeout_seconds = 0.01
+    p.stay_connected = True
+
+    vc = MagicMock()
+    vc.is_connected = MagicMock(return_value=True)
+    p.voice_client = vc
+
+    with patch.object(p, "stop", new_callable=AsyncMock) as mock_stop:
+        await p._disconnect_when_empty()
+
+    mock_stop.assert_not_awaited()
+    assert p.voice_client is vc
+
+
+@pytest.mark.asyncio
+async def test_disconnect_when_empty_disconnects_without_stay():
+    """Without stay_connected, _disconnect_when_empty should call stop() and
+    disconnect() when no humans are present."""
+    p = _player()
+    p.bot.settings.empty_channel_timeout_seconds = 0.01
+    p.stay_connected = False
+
+    vc = MagicMock()
+    vc.is_connected = MagicMock(return_value=True)
+    vc.channel = MagicMock()
+    vc.channel.members = []  # no humans
+    p.voice_client = vc
+
+    with (
+        patch.object(p, "stop", new_callable=AsyncMock) as mock_stop,
+        patch.object(p, "disconnect", new_callable=AsyncMock) as mock_disc,
+    ):
+        await p._disconnect_when_empty()
+
+    mock_stop.assert_awaited_once()
+    mock_disc.assert_awaited_once()
+
+
+# ── play_previous _total_duration eviction ────────────────────────────────────
+
+
+def test_play_previous_total_duration_correct_when_queue_full():
+    """appendleft silently evicts the last track when the deque is at maxlen;
+    play_previous must subtract the evicted track's duration from _total_duration."""
+    p = _player(max_queue_size=2)
+    t1 = make_track(title="A", duration=10)
+    t2 = make_track(title="B", duration=20)
+    p.queue.append(t1)
+    p.queue.append(t2)
+    p._total_duration = 30  # 10 + 20
+
+    prev = make_track(title="Prev", duration=50)
+    p.history.append(prev)
+    p.voice_client = _vc(playing=False)
+    p.play_previous()
+
+    # appendleft(prev) with full queue evicts t2 (duration=20) from the back.
+    # Expected: 30 - 20 + 50 = 60, matching queue [prev(50), t1(10)].
+    assert p._total_duration == sum(t.duration for t in p.queue)
+
+
+def test_play_previous_total_duration_correct_when_queue_not_full():
+    """When the queue is below maxlen no eviction happens — basic accounting."""
+    p = _player(max_queue_size=10)
+    t1 = make_track(title="A", duration=10)
+    p.queue.append(t1)
+    p._total_duration = 10
+
+    prev = make_track(title="Prev", duration=50)
+    current = make_track(title="Cur", duration=30)
+    p.history.append(prev)
+    p.current = current
+    p.voice_client = _vc(playing=False)
+    p.play_previous()
+
+    assert p._total_duration == sum(t.duration for t in p.queue)
+
+
+# ── rearm_idle_timer ──────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_rearm_idle_timer_creates_task_when_none():
+    p = _player()
+    assert p.idle_task is None
+    p.rearm_idle_timer()
+    assert p.idle_task is not None
+    p.idle_task.cancel()
+    with pytest.raises((asyncio.CancelledError, Exception)):
+        await p.idle_task
+
+
+@pytest.mark.asyncio
+async def test_rearm_idle_timer_creates_new_task_when_done():
+    p = _player()
+    p.rearm_idle_timer()
+    old_task = p.idle_task
+    assert old_task is not None
+    old_task.cancel()
+    import contextlib
+    with contextlib.suppress(asyncio.CancelledError):
+        await old_task
+
+    p.rearm_idle_timer()
+    assert p.idle_task is not old_task
+
+
+@pytest.mark.asyncio
+async def test_rearm_idle_timer_does_not_duplicate_running_task():
+    p = _player()
+    p.rearm_idle_timer()
+    first = p.idle_task
+    p.rearm_idle_timer()  # already running — must not replace
+    assert p.idle_task is first
+    first.cancel()
+    import contextlib
+    with contextlib.suppress(asyncio.CancelledError):
+        await first

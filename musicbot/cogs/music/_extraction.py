@@ -75,11 +75,7 @@ class ExtractionMixin(MusicCogBase):
                 (False, True): fs,
                 (True, True): fps,
             }
-        variants = self._ytdl_variants  # type: ignore[attr-defined]
-        if variants is None:
-            self._ytdl_base_options = None  # type: ignore[attr-defined]
-            return self._build_ytdl_options(flat_playlist=flat_playlist, flat_search=flat_search)
-        return variants[(flat_playlist, flat_search)]
+        return self._ytdl_variants[(flat_playlist, flat_search)]  # type: ignore[attr-defined, index]
 
     # ── Stream-URL validation ───────────────────────────────────────────────
 

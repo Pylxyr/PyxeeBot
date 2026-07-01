@@ -66,6 +66,8 @@ class AdminCog(commands.Cog):
         player = music.players.get(guild_id) if music else None  # type: ignore[attr-defined]
         if player is not None:
             player.stay_connected = new_value
+            if not new_value and not player.current and not player.queue:
+                player.rearm_idle_timer()
         state = "enabled" if new_value else "disabled"
         await context.send(f"24/7 mode {state}.")
 

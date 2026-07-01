@@ -86,6 +86,13 @@ class GuildPlayer:
                 await self.voice_client.move_to(channel)
                 await self.refresh_empty_channel_state()
             return self.voice_client
+        # Stale client: is_connected() is False but it may still be registered in
+        # discord.py's ConnectionState, causing channel.connect() to raise
+        # ClientException("Already connected to a voice channel.").  Force-clean it first.
+        if self.voice_client is not None:
+            with contextlib.suppress(Exception):
+                await self.voice_client.disconnect(force=True)
+            self.voice_client = None
         self.voice_client = await channel.connect(self_deaf=True)
         self._connected_at = time.monotonic()
         await self.refresh_empty_channel_state()
@@ -162,8 +169,12 @@ class GuildPlayer:
             return False
         previous_track = self.history.pop()
         if self.current:
+            if len(self.queue) == self.queue.maxlen:
+                self._total_duration = max(0, self._total_duration - self.queue[-1].duration)
             self._total_duration += self.current.duration
             self.queue.appendleft(self.current)
+        if len(self.queue) == self.queue.maxlen:
+            self._total_duration = max(0, self._total_duration - self.queue[-1].duration)
         self._total_duration += previous_track.duration
         self.queue.appendleft(previous_track)
         self.rewind_requested = True
@@ -278,6 +289,8 @@ class GuildPlayer:
 
     async def _disconnect_when_empty(self) -> None:
         await asyncio.sleep(self.bot.settings.empty_channel_timeout_seconds)
+        if self.stay_connected:
+            return
         if self.voice_client and self.voice_client.is_connected() and not self._has_human_listeners():
             await self.stop()
             await self.disconnect()
@@ -417,10 +430,16 @@ class GuildPlayer:
                             if played_track.resolved_at > 0 and age >= STREAM_URL_REFRESH_AGE_SECONDS:
                                 played_track.stream_url = ""
                                 played_track.resolved_at = 0.0
+                            if len(self.queue) == self.queue.maxlen:
+                                self._total_duration = max(0, self._total_duration - self.queue[-1].duration)
+                            self._total_duration += played_track.duration
                             self.queue.appendleft(played_track)
                         elif self.loop_mode == "all":
                             played_track.stream_url = ""
                             played_track.resolved_at = 0.0
+                            if len(self.queue) == self.queue.maxlen:
+                                self._total_duration = max(0, self._total_duration - self.queue[0].duration)
+                            self._total_duration += played_track.duration
                             self.queue.append(played_track)
                     self.rewind_requested = False
                     self.bot.dispatch("musicbot_queue_updated", self.guild)
@@ -452,6 +471,15 @@ class GuildPlayer:
         self._total_duration = max(0, self._total_duration - self.current.duration)
         self.bot.dispatch("musicbot_queue_updated", self.guild)
 
+    def rearm_idle_timer(self) -> None:
+        """Schedule an idle-disconnect task if the player is currently sitting idle.
+
+        Call this after disabling stay_connected so the bot doesn't linger forever
+        in an empty channel with nothing queued.
+        """
+        if self.idle_task is None or self.idle_task.done():
+            self.idle_task = asyncio.create_task(self._disconnect_when_idle())
+
     async def _disconnect_when_idle(self) -> None:
         await asyncio.sleep(self.bot.settings.idle_timeout_seconds)
         if self.stay_connected:
@@ -465,6 +493,12 @@ class GuildPlayer:
         channel = self.voice_client.channel if self.voice_client else None
         if channel is None:
             return False
+        # Purge the stale client from ConnectionState before calling channel.connect();
+        # without this, discord.py raises ClientException("Already connected").
+        if self.voice_client is not None:
+            with contextlib.suppress(Exception):
+                await self.voice_client.disconnect(force=True)
+            self.voice_client = None
         for attempt in range(1, VOICE_RECONNECT_ATTEMPTS + 1):
             try:
                 self.logger.warning(
