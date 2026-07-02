@@ -200,6 +200,9 @@ class PlaybackCommandsMixin(MusicCogBase):
         if track is None:
             await fetch_msg.edit(content="No playable result found.")
             return
+        if len(player.queue) >= self.bot.settings.max_queue_size:
+            await fetch_msg.edit(content="Queue is full.")
+            return
         if self._check_per_user_limit(player, context.author.id):
             limit = self.bot.settings.max_queue_size_per_user
             await fetch_msg.edit(content=f"You already have `{limit}` tracks in the queue.")
