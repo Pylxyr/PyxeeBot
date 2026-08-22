@@ -276,7 +276,7 @@ fi
 
 echo "[5/9] Installing Python dependencies"
 source .venv/bin/activate
-python -m pip install --upgrade pip
+python -m pip install --upgrade pip "setuptools>=83.0.0"
 python -m pip install -r requirements.txt
 deactivate
 
