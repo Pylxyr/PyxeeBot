@@ -27,7 +27,9 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends --fix-missing libsodium-dev
 
       - name: Install Python dependencies
-        run: pip install -r requirements.txt ruff pip-audit
+        run: |
+          pip install --upgrade pip "setuptools>=83.0.0"
+          pip install -r requirements.txt ruff pip-audit
 
       - name: Lint
         run: ruff check musicbot/ bot.py
@@ -63,7 +65,7 @@ jobs:
 
             git reset --hard origin/main
 
-            ~/musicbot/.venv/bin/pip install --upgrade pip -q
+            ~/musicbot/.venv/bin/pip install --upgrade pip "setuptools>=83.0.0" -q
             ~/musicbot/.venv/bin/pip install -r requirements.txt -q
 
             sudo systemctl stop musicbot
