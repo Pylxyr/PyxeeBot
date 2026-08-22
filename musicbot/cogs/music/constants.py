@@ -8,6 +8,8 @@ FFMPEG_BEFORE_OPTIONS = (
     "-nostdin "
     "-threads 1 "
     "-thread_queue_size 512 "
+    "-re "
+    "-readrate_initial_burst 2 "
     "-reconnect 1 "
     "-reconnect_streamed 1 "
     "-reconnect_delay_max 5 "
@@ -16,7 +18,7 @@ FFMPEG_BEFORE_OPTIONS = (
     "-probesize 128k "
     "-analyzeduration 0"
 )
-FFMPEG_OPTIONS = "-vn -ar 48000 -ac 2 -application lowdelay -frame_duration 20 -flush_packets 1"
+FFMPEG_OPTIONS = "-vn -application lowdelay -frame_duration 20 -flush_packets 1"
 
 YTDL_OPTIONS: dict[str, object] = {
     "format": "bestaudio[ext=webm]/bestaudio[ext=m4a]/bestaudio/best[height<=480]",
