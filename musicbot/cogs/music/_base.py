@@ -1,12 +1,3 @@
-"""_base.py — MusicCogBase: shared attribute and method declarations for MusicCog mixins.
-
-Inheriting from commands.Cog achieves two things:
-  1. discord.py command decorators type-check correctly (mixin is a Cog subclass).
-  2. Cross-mixin attribute access is statically visible to mypy.
-
-Never instantiated directly; MusicCog provides all concrete implementations.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -21,7 +12,7 @@ import discord
 from discord.ext import commands
 
 from musicbot.cogs.music.constants import NP_REFRESH_DEBOUNCE_SECONDS
-from musicbot.cogs.music.models import NowPlayingController, ResolvedTrackData, SearchDebugRecord, Track
+from musicbot.cogs.music.models import NowPlayingController, ResolvedTrackData, Track
 from musicbot.cogs.music.player import GuildPlayer
 
 if TYPE_CHECKING:
@@ -31,9 +22,6 @@ if TYPE_CHECKING:
 
 
 class MusicCogBase(commands.Cog):
-    """Shared type declarations inherited by every MusicCog mixin."""
-
-    # ── Instance variables (initialised in MusicCog.__init__) ──────────────
     bot: MusicBot
     logger: logging.Logger
     players: dict[int, GuildPlayer]
@@ -56,14 +44,10 @@ class MusicCogBase(commands.Cog):
     _guild_extract_semaphores: dict[int, asyncio.Semaphore]
     _curation_semaphores: dict[int, asyncio.Semaphore]
     extract_semaphore: asyncio.Semaphore
-    _last_search: OrderedDict[int, SearchDebugRecord]
-    _last_search_max: int
     _restored_guilds: set[int]
 
-    # ── MusicCog ────────────────────────────────────────────────────────────
     def _bg_task(self, coro: Any, *, name: str | None = None) -> asyncio.Task[Any]: ...
 
-    # ── LifecycleMixin ──────────────────────────────────────────────────────
     async def _get_player(self, guild: discord.Guild) -> GuildPlayer: ...
     def _persist_snapshot(self, guild_id: int) -> None: ...
     async def _flush_snapshot(
@@ -74,7 +58,6 @@ class MusicCogBase(commands.Cog):
     async def _restore_snapshot(self, player: GuildPlayer) -> None: ...
     async def _warmup_restore(self, tracks: list[Track], *, guild_id: int) -> None: ...
 
-    # ── CommandHelpersMixin ─────────────────────────────────────────────────
     async def _require_dj(self, context: GuildContext) -> None: ...
     async def _is_dj(self, member: discord.Member) -> bool: ...
     def _is_bot_owner(self, user: discord.User | discord.Member) -> bool: ...
@@ -104,7 +87,6 @@ class MusicCogBase(commands.Cog):
     ) -> discord.VoiceChannel | discord.StageChannel: ...
     def _user_queue_count(self, player: GuildPlayer, user_id: int) -> int: ...
 
-    # ── ExtractionMixin ─────────────────────────────────────────────────────
     async def _extract_tracks(
         self,
         query: str,
@@ -126,14 +108,12 @@ class MusicCogBase(commands.Cog):
     def _is_playlist_query(self, query: str) -> bool: ...
     def _preprocess_query(self, raw_query: str) -> str: ...
     def _search_text(self, query: str) -> str: ...
-    def _search_result_count(self, query: str) -> int: ...
     async def _validate_stream_url(self, track: Track) -> bool: ...
     async def _build_audio_source(self, track: Track) -> discord.AudioSource: ...
     def _build_ytdl_options(
         self, *, flat_playlist: bool = False, flat_search: bool = False
     ) -> dict[str, Any]: ...
 
-    # ── ResolverMixin ───────────────────────────────────────────────────────
     async def _resolve_track(self, track: Track) -> Track | None: ...
     def _kick_pipeline(self, guild_id: int) -> None: ...
     async def _safety_net_refresh(self, guild_id: int) -> None: ...
@@ -142,7 +122,6 @@ class MusicCogBase(commands.Cog):
     def _apply_resolved_track_data(self, track: Track, data: ResolvedTrackData) -> Track: ...
     async def _materialize_track(self, query: str, requester_id: int) -> Track | None: ...
 
-    # ── NPanelMixin ─────────────────────────────────────────────────────────
     async def _send_now_playing_panel(
         self,
         guild: discord.Guild,

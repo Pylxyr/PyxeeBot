@@ -1,5 +1,3 @@
-"""cog.py — MusicCog: composes all music-subsystem mixins, lifecycle hooks, and the bg-task helper."""
-
 from __future__ import annotations
 
 import asyncio
@@ -8,7 +6,7 @@ import logging
 import threading
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import aiohttp
 from discord.ext import commands
@@ -23,13 +21,12 @@ from musicbot.cogs.music._playlist_commands import PlaylistCommandsMixin
 from musicbot.cogs.music._queue_commands import QueueCommandsMixin
 from musicbot.cogs.music._resolver import ResolverMixin
 from musicbot.cogs.music._search_commands import SearchCommandsMixin
-from musicbot.cogs.music.models import NowPlayingController, ResolvedTrackData, SearchDebugRecord
+from musicbot.cogs.music.models import NowPlayingController, ResolvedTrackData
 from musicbot.cogs.music.player import GuildPlayer
 
 if TYPE_CHECKING:
     from musicbot.bot import MusicBot
 
-# Keeps strong references to fire-and-forget tasks so they aren't GC'd mid-run.
 _bg_tasks: set[asyncio.Task[Any]] = set()
 
 
@@ -77,14 +74,12 @@ class MusicCog(
         self._curation_semaphores: dict[int, asyncio.Semaphore] = {}
         self.extract_semaphore = asyncio.Semaphore(self.bot.settings.ytdlp_concurrent_extracts)
 
-        self._last_search: OrderedDict[int, SearchDebugRecord] = OrderedDict()
-        self._last_search_max: int = 50
         self._restored_guilds: set[int] = set()
 
     async def cog_load(self) -> None:
         self._http_session = aiohttp.ClientSession()
 
-    def cog_unload(self) -> None:  # type: ignore[override]
+    def cog_unload(self) -> None:
         self.now_playing_messages.clear()
         for player in self.players.values():
             self._bg_task(player.destroy(), name="cog-unload-destroy")

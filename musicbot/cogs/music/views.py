@@ -1,5 +1,3 @@
-"""views.py — SearchSelectionView, QueueView, NowPlayingView, ScoreDebugView."""
-
 from __future__ import annotations
 
 import asyncio
@@ -19,7 +17,7 @@ from musicbot.cogs.music.constants import (
     SEARCH_SELECTION_PAGE_SIZE,
     SEARCH_SELECTION_TIMEOUT_SECONDS,
 )
-from musicbot.cogs.music.models import SearchDebugRecord, Track
+from musicbot.cogs.music.models import Track
 
 if TYPE_CHECKING:
     from musicbot.cogs.music._base import MusicCogBase
@@ -141,7 +139,7 @@ class SearchSelectionView(discord.ui.View):
         else:
             self.selection.set_result(None)
         self.stop()
-        self.candidates = []  # release Track refs; the selection future holds the chosen one
+        self.candidates = []
         _disable_view_items(self)
         with contextlib.suppress(discord.HTTPException):
             await interaction.response.edit_message(view=self)
@@ -177,7 +175,7 @@ class SearchSelectionView(discord.ui.View):
     async def on_timeout(self) -> None:
         if not self.selection.done():
             self.selection.set_result(None)
-        self.candidates = []  # release Track refs
+        self.candidates = []
         _disable_view_items(self)
         if self.message:
             with contextlib.suppress(discord.HTTPException, discord.NotFound):
@@ -234,7 +232,6 @@ class QueueView(discord.ui.View):
         summary: list[str] = [f"{len(tracks)} track(s)"]
         if self._page_count() > 1:
             summary.append(f"Page {self.page_index + 1}/{self._page_count()}")
-        # Use the running total from GuildPlayer rather than iterating the whole queue.
         total_secs = self.player._total_duration + (
             self.player.current.duration if self.player.current else 0
         )
@@ -302,7 +299,7 @@ class NowPlayingView(discord.ui.View):
         super().__init__(timeout=NOW_PLAYING_TIMEOUT_SECONDS)
         self.cog = cog
         self.guild_id = guild_id
-        self._pause_btn: discord.ui.Button | None = getattr(self, "pause_resume", None)  # type: ignore[assignment]
+        self._pause_btn: discord.ui.Button | None = getattr(self, "pause_resume", None)
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         player = self.cog.players.get(self.guild_id)
@@ -409,7 +406,7 @@ class NowPlayingView(discord.ui.View):
         channel = self.cog.bot.get_channel(controller.channel_id)
         if channel is None or not isinstance(channel, discord.abc.Messageable):
             return
-        partial = channel.get_partial_message(controller.message_id)  # type: ignore[attr-defined]
+        partial = channel.get_partial_message(controller.message_id)
         with contextlib.suppress(discord.HTTPException, discord.NotFound):
             await partial.edit(view=self)
 
@@ -425,75 +422,3 @@ class NowPlayingView(discord.ui.View):
                 await interaction.response.send_message(
                     "That control failed. Try the command again.", ephemeral=True
                 )
-
-
-class ScoreDebugView(discord.ui.View):
-    def __init__(self, author_id: int, record: SearchDebugRecord) -> None:
-        super().__init__(timeout=120)
-        self.author_id = author_id
-        self.record = record
-
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if interaction.user and interaction.user.id == self.author_id:
-            return True
-        await interaction.response.send_message(
-            "Only the person who ran `!why` can use this button.", ephemeral=True
-        )
-        return False
-
-    @discord.ui.button(label="DM me full breakdown", style=discord.ButtonStyle.secondary)
-    async def dm_breakdown(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
-        await interaction.response.defer(ephemeral=True)
-        lines: list[str] = [
-            f"**Search score breakdown** — `{discord.utils.escape_markdown(self.record.query_text)}`\n"
-        ]
-        for c in self.record.candidates:
-            sel = " ← **queued**" if c.selected else ""
-            dur_m, dur_s = divmod(c.duration, 60)
-            dur_label = f"{dur_m}:{dur_s:02d}" if c.duration else "?"
-            lines.append(
-                f"**#{c.rank}** [{discord.utils.escape_markdown(c.title[:80])}]({c.webpage_url})"
-                f" `{dur_label}`{sel}\n"
-                f"```\n"
-                f"FINAL          {c.final_score:+.4f}\n"
-                f"title_overlap  {c.title_overlap:+.3f}\n"
-                f"upldr_overlap  {c.uploader_overlap:+.3f}\n"
-                f"seq_ratio      {c.ratio:+.3f}\n"
-                f"topic_bonus    {c.topic_bonus:+.3f}\n"
-                f"upldr_pref     {c.uploader_pref_bonus:+.3f}\n"
-                f"strong_upldr   {c.strong_uploader_bonus:+.3f}\n"
-                f"anchor         {c.anchor_score:+.3f}\n"
-                f"artist_match   {c.artist_match_bonus:+.3f}\n"
-                f"completion     {c.artist_completion_bonus:+.3f}\n"
-                f"synergy        {c.title_uploader_synergy:+.3f}\n"
-                f"preferred      {c.preferred_bonus:+.3f}\n"
-                f"discouraged   {-c.discouraged_penalty:+.3f}\n"
-                f"jp_original    {c.jp_original_bonus:+.3f}\n"
-                f"view_count     {c.view_bonus:+.3f}\n"
-                f"verified       {c.verified_bonus:+.3f}\n"
-                f"recency        {c.recency_bonus:+.3f}\n"
-                f"duration       {c.duration_bonus:+.3f}\n"
-                f"```\n"
-            )
-        chunks: list[str] = []
-        current = ""
-        for block in lines:
-            if len(current) + len(block) > 1900:
-                chunks.append(current)
-                current = block
-            else:
-                current += block
-        if current:
-            chunks.append(current)
-        try:
-            for chunk in chunks:
-                await interaction.user.send(chunk)
-            await interaction.followup.send("Sent to your DMs.", ephemeral=True)
-        except discord.Forbidden:
-            await interaction.followup.send(
-                "Couldn't DM you — enable DMs from server members in your privacy settings.",
-                ephemeral=True,
-            )
-
-    async def on_timeout(self) -> None:
-        _disable_view_items(self)

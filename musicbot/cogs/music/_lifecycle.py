@@ -1,9 +1,3 @@
-"""_lifecycle.py — LifecycleMixin: player creation/restore/cleanup and debounced snapshot persistence.
-
-Mixed into MusicCog.  Depends on bot, players, now_playing_messages, _bg_task, _resolve_track,
-_build_audio_source, _validate_stream_url, and the snapshot/pipeline/np-refresh task dicts.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -13,19 +7,13 @@ from typing import Any
 
 import discord
 
+from musicbot.cogs.music._base import MusicCogBase
 from musicbot.cogs.music.constants import SNAPSHOT_DEBOUNCE_SECONDS
 from musicbot.cogs.music.models import Track
 from musicbot.cogs.music.player import GuildPlayer
 
 
-from musicbot.cogs.music._base import MusicCogBase
-
-
 class LifecycleMixin(MusicCogBase):
-    """Player creation/restore/cleanup and debounced queue-snapshot persistence."""
-
-    # ── Player lifecycle ────────────────────────────────────────────────────
-
     async def _get_player(self, guild: discord.Guild) -> GuildPlayer:
         player = self.players.get(guild.id)
         if player:
@@ -94,8 +82,6 @@ class LifecycleMixin(MusicCogBase):
         self._curation_semaphores.pop(guild_id, None)
         self._player_create_locks.pop(guild_id, None)
         self.now_playing_messages.pop(guild_id, None)
-
-    # ── Snapshot persistence ────────────────────────────────────────────────
 
     def _persist_snapshot(self, guild_id: int) -> None:
         self._snapshot_deadlines[guild_id] = time.monotonic() + SNAPSHOT_DEBOUNCE_SECONDS

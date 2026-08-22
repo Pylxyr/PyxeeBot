@@ -9,15 +9,13 @@ from typing import Any
 
 import discord
 from discord.ext import commands
-from musicbot.cogs.admin import AdminCog
-from musicbot.cogs.music import MusicCog
 
+from musicbot.cogs.admin import AdminCog
 from musicbot.cogs.curation import CurationCog
+from musicbot.cogs.music import MusicCog
 from musicbot.config import Settings, load_settings
 from musicbot.database import Database
 
-# Module-level set to keep strong references to fire-and-forget tasks (SIGTERM
-# handler) so the event loop doesn't garbage-collect them mid-run.
 _bg_tasks: set[asyncio.Task[Any]] = set()
 
 
@@ -63,6 +61,15 @@ class PyxeeHelpCommand(commands.HelpCommand):
         "replay": "Re-queue the current track to play again next.",
         "toptracks": "Show the most-played tracks for this server, all-time.",
         "toprequestors": "Show the top track requestors for this server, all-time.",
+        "repeat": "Toggle single-track repeat for the current track.",
+        "vibe": "Discover similar songs via Last.fm and curate a playlist.",
+        "vibe-save": "Save the active curation session as a named playlist.",
+        "vibe-load": "Load a saved curated playlist into the queue.",
+        "playlist save": "Save the current queue as a named server playlist.",
+        "playlist load": "Queue every track from a saved playlist.",
+        "playlist list": "List all saved playlists for this server.",
+        "playlist show": "Show the tracks in a saved playlist.",
+        "playlist delete": "Delete a saved playlist.",
     }
 
     def get_command_signature(self, command: commands.Command[Any, ..., Any]) -> str:
@@ -75,7 +82,8 @@ class PyxeeHelpCommand(commands.HelpCommand):
     def _blurb_for(self, command: commands.Command[Any, ..., Any]) -> str:
         if command.help:
             return command.help.strip().splitlines()[0]
-        return self.COMMAND_BLURBS.get(command.name, "No summary set yet.")
+        blurb = self.COMMAND_BLURBS.get(command.qualified_name) or self.COMMAND_BLURBS.get(command.name)
+        return blurb or "No summary set yet."
 
     def _base_embed(self, title: str, description: str) -> discord.Embed:
         bot_user = self.context.bot.user
@@ -103,7 +111,7 @@ class PyxeeHelpCommand(commands.HelpCommand):
         blurb = self._blurb_for(command)
         return f"`{sig}` — {blurb}"
 
-    async def send_bot_help(  # type: ignore[override]
+    async def send_bot_help(
         self, mapping: dict[commands.Cog | None, list[commands.Command[Any, ..., Any]]]
     ) -> None:
         prefix = self.context.clean_prefix
@@ -240,9 +248,9 @@ class MusicBot(commands.Bot):
         self.database = database
         self._prefix_cache: dict[int, str] = {}
         self._reconnect_announced_at: dict[int, float] = {}
+        self._shutting_down = False
 
     async def setup_hook(self) -> None:
-        self._shutting_down = False
         await self._populate_owner_ids()
         await self.add_cog(AdminCog(self))
         await self.add_cog(MusicCog(self))
@@ -299,20 +307,8 @@ class MusicBot(commands.Bot):
         await self._maybe_announce_reconnects()
 
     async def _maybe_announce_reconnects(self) -> None:
-        # A persisted queue snapshot existing for a guild is itself the signal
-        # that we're coming back from a restart (crash, OOM, deploy) with that
-        # guild's queue intact — fire on this process's first on_ready too, not
-        # just later gateway reconnects, since systemd's Restart=on-failure is
-        # exactly the case this is meant to surface. A per-guild cooldown stops
-        # repeated on_ready calls from gateway flakiness from spamming the
-        # channel, without permanently silencing a guild that had no snapshot
-        # at startup but genuinely reconnects later.
         now = time.monotonic()
         for guild in self.guilds:
-            # -inf sentinel, not 0.0: time.monotonic()'s absolute starting
-            # point is undefined and can itself be a small number (e.g. on a
-            # freshly booted container), which would make a guild that was
-            # never announced to look like it's still within the cooldown.
             last = self._reconnect_announced_at.get(guild.id, float("-inf"))
             if now - last < 60.0:
                 continue
@@ -324,18 +320,20 @@ class MusicBot(commands.Bot):
                 continue
             self._reconnect_announced_at[guild.id] = now
             music_cog = self.cogs.get("MusicCog")
-            player = music_cog.players.get(guild.id) if music_cog else None  # type: ignore[attr-defined]
+            player = music_cog.players.get(guild.id) if music_cog else None
             announce_id = player.announce_channel_id if player else None
             channel = guild.get_channel(announce_id) if isinstance(announce_id, int) else guild.system_channel
             if channel is None:
                 continue
             with contextlib.suppress(discord.HTTPException):
-                await channel.send(  # type: ignore[union-attr]
+                await channel.send(
                     "🔌 Reconnected — your queue has been preserved and will resume on `!join`."
                 )
 
     async def on_command_error(self, context: commands.Context[Any], error: commands.CommandError) -> None:
         if hasattr(context.command, "on_error"):
+            return
+        if self._shutting_down:
             return
 
         if isinstance(error, commands.CommandNotFound):
@@ -371,9 +369,6 @@ def configure_logging(settings: Settings) -> None:
     handlers[0].setFormatter(formatter)
 
     if settings.log_to_file:
-        # Use a plain FileHandler — logrotate (deploy/musicbot-logrotate) manages
-        # rotation via copytruncate.  Using RotatingFileHandler here in addition
-        # creates two independent rotators fighting over the same file.
         file_handler = logging.FileHandler(
             settings.log_dir / "musicbot.log",
             encoding="utf-8",

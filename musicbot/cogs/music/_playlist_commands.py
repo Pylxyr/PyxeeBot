@@ -1,39 +1,28 @@
-"""_playlist_commands.py — PlaylistCommandsMixin: saved server playlist commands.
-
-Mixed into MusicCog.  Depends on CommandHelpersMixin and LifecycleMixin methods via self.
-"""
-
 from __future__ import annotations
-from musicbot.cogs.music._context import GuildContext
 
 import math
 
 import discord
 from discord.ext import commands
 
+from musicbot.cogs.music._base import MusicCogBase
+from musicbot.cogs.music._context import GuildContext
 from musicbot.cogs.music.constants import EMBED_COLOUR
 from musicbot.cogs.music.models import Track
 
 
-from musicbot.cogs.music._base import MusicCogBase
-
-
 class PlaylistCommandsMixin(MusicCogBase):
-    """Saved server playlist commands."""
-
-    @commands.hybrid_group(name="playlist", invoke_without_command=True)  # type: ignore[arg-type]
+    @commands.hybrid_group(name="playlist", invoke_without_command=True)
     @commands.guild_only()
     async def playlist(self, context: GuildContext) -> None:
-        """Work with saved server playlists."""
         await context.send(
             "Use `playlist save`, `playlist load`, `playlist list`, `playlist show`, or `playlist delete`."
         )
 
-    @playlist.command(name="save")  # type: ignore[arg-type]
+    @playlist.command(name="save")
     @commands.guild_only()
     @commands.cooldown(1, 5, commands.BucketType.user)
     async def playlist_save(self, context: GuildContext, name: str) -> None:
-        """Save the current queue as a named playlist."""
         player = self.players.get(context.guild.id)
         if not player or (not player.current and not player.queue):
             await context.send("Nothing is loaded to save.")
@@ -42,11 +31,10 @@ class PlaylistCommandsMixin(MusicCogBase):
         await self.bot.database.save_playlist(context.guild.id, name.lower(), context.author.id, entries)
         await context.send(f"Saved `{len(entries)}` tracks to playlist `{name.lower()}`.")
 
-    @playlist.command(name="list")  # type: ignore[arg-type]
+    @playlist.command(name="list")
     @commands.guild_only()
     @commands.cooldown(1, 4, commands.BucketType.user)
     async def playlist_list(self, context: GuildContext) -> None:
-        """List all saved playlists for this server."""
         rows = await self.bot.database.list_playlists(context.guild.id)
         if not rows:
             await context.send("No saved playlists for this server.")
@@ -65,11 +53,10 @@ class PlaylistCommandsMixin(MusicCogBase):
             embed.set_footer(text=f"{len(rows)} playlist(s) total")
             await context.send(embed=embed)
 
-    @playlist.command(name="show")  # type: ignore[arg-type]
+    @playlist.command(name="show")
     @commands.guild_only()
     @commands.cooldown(1, 4, commands.BucketType.user)
     async def playlist_show(self, context: GuildContext, name: str) -> None:
-        """Show the tracks in a saved playlist."""
         rows = await self.bot.database.get_playlist_entries(context.guild.id, name.lower())
         if not rows:
             await context.send("Playlist not found.")
@@ -91,11 +78,10 @@ class PlaylistCommandsMixin(MusicCogBase):
             embed.set_footer(text=f"{len(rows)} track(s) total")
             await context.send(embed=embed)
 
-    @playlist.command(name="load")  # type: ignore[arg-type]
+    @playlist.command(name="load")
     @commands.guild_only()
     @commands.cooldown(1, 10, commands.BucketType.user)
     async def playlist_load(self, context: GuildContext, name: str) -> None:
-        """Queue every track from a saved playlist."""
         player = await self._join_for_context(context)
         rows = await self.bot.database.get_playlist_entries(context.guild.id, name.lower())
         if not rows:
@@ -104,9 +90,13 @@ class PlaylistCommandsMixin(MusicCogBase):
         cap_rows = list(rows[: self.bot.settings.max_playlist_size])
         truncated = len(rows) - len(cap_rows)
         added = 0
+        hit_user_limit = False
         async with context.typing():
             for row in cap_rows:
                 if len(player.queue) >= self.bot.settings.max_queue_size:
+                    break
+                if self._check_per_user_limit(player, context.author.id):
+                    hit_user_limit = True
                     break
                 query = row["query"]
                 webpage_url = row["webpage_url"] or query
@@ -128,7 +118,10 @@ class PlaylistCommandsMixin(MusicCogBase):
         self._persist_snapshot(context.guild.id)
         self._kick_pipeline(context.guild.id)
         parts: list[str] = [f"Loaded `{added}` tracks from playlist `{name.lower()}`."]
-        if queue_skipped:
+        if hit_user_limit:
+            limit = self.bot.settings.max_queue_size_per_user
+            parts.append(f"Stopped at your `{limit}`-track per-user limit.")
+        elif queue_skipped:
             parts.append(f"Skipped `{queue_skipped}` items (queue full).")
         if truncated:
             parts.append(
@@ -138,11 +131,10 @@ class PlaylistCommandsMixin(MusicCogBase):
         await context.send(" ".join(parts))
         await self._refresh_now_playing_message(context.guild.id)
 
-    @playlist.command(name="delete")  # type: ignore[arg-type]
+    @playlist.command(name="delete")
     @commands.guild_only()
     @commands.cooldown(1, 5, commands.BucketType.user)
     async def playlist_delete(self, context: GuildContext, name: str) -> None:
-        """Delete a saved playlist."""
         await self._require_dj(context)
         if not await self.bot.database.delete_playlist(context.guild.id, name.lower()):
             await context.send("Playlist not found.")

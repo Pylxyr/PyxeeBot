@@ -1,30 +1,20 @@
-"""_queue_commands.py — QueueCommandsMixin: queue inspection and mutation commands.
-
-Mixed into MusicCog.  Depends on CommandHelpersMixin and LifecycleMixin methods via self.
-"""
-
 from __future__ import annotations
-from musicbot.cogs.music._context import GuildContext
 
 import random
 
 import discord
 from discord.ext import commands
 
+from musicbot.cogs.music._base import MusicCogBase
+from musicbot.cogs.music._context import GuildContext
 from musicbot.cogs.music.constants import EMBED_COLOUR
 
 
-from musicbot.cogs.music._base import MusicCogBase
-
-
 class QueueCommandsMixin(MusicCogBase):
-    """Queue inspection and mutation commands."""
-
-    @commands.hybrid_command(name="history")  # type: ignore[arg-type]
+    @commands.hybrid_command(name="history")
     @commands.guild_only()
     @commands.cooldown(1, 3, commands.BucketType.user)
     async def history(self, context: GuildContext) -> None:
-        """Show the last tracks played this session."""
         player = self.players.get(context.guild.id)
         hist = list(player.history) if player else []
         if not hist:
@@ -38,11 +28,10 @@ class QueueCommandsMixin(MusicCogBase):
         embed.set_footer(text=f"{len(hist)} track(s) in session history.")
         await context.send(embed=embed)
 
-    @commands.hybrid_command(name="toptracks", aliases=["top"])  # type: ignore[arg-type]
+    @commands.hybrid_command(name="toptracks", aliases=["top"])
     @commands.guild_only()
     @commands.cooldown(1, 8, commands.BucketType.guild)
     async def toptracks(self, context: GuildContext) -> None:
-        """Show the most-played tracks for this server, all-time."""
         rows = await self.bot.database.get_top_played(context.guild.id, limit=10)
         if not rows:
             await context.send("No play history recorded yet.")
@@ -60,11 +49,10 @@ class QueueCommandsMixin(MusicCogBase):
         embed.set_footer(text=f"{context.guild.name} · all-time")
         await context.send(embed=embed)
 
-    @commands.hybrid_command(name="toprequestors", aliases=["topreqs"])  # type: ignore[arg-type]
+    @commands.hybrid_command(name="toprequestors", aliases=["topreqs"])
     @commands.guild_only()
     @commands.cooldown(1, 8, commands.BucketType.guild)
     async def toprequestors(self, context: GuildContext) -> None:
-        """Show the top track requestors for this server, all-time."""
         rows = await self.bot.database.get_top_requesters(context.guild.id, limit=10)
         if not rows:
             await context.send("No play history recorded yet.")
@@ -82,11 +70,10 @@ class QueueCommandsMixin(MusicCogBase):
         embed.set_footer(text=f"{context.guild.name} · all-time")
         await context.send(embed=embed)
 
-    @commands.hybrid_command(name="queue", aliases=["q"])  # type: ignore[arg-type]
+    @commands.hybrid_command(name="queue", aliases=["q"])
     @commands.guild_only()
     @commands.cooldown(1, 3, commands.BucketType.user)
     async def queue(self, context: GuildContext) -> None:
-        """Inspect the current track stack."""
         player = self.players.get(context.guild.id)
         if not player or (not player.current and not player.queue):
             await context.send("Queue is empty.")
@@ -97,11 +84,10 @@ class QueueCommandsMixin(MusicCogBase):
         if isinstance(message, discord.Message):
             view.message = message
 
-    @commands.hybrid_command(name="remove")  # type: ignore[arg-type]
+    @commands.hybrid_command(name="remove")
     @commands.guild_only()
     @commands.cooldown(3, 5, commands.BucketType.user)
     async def remove(self, context: GuildContext, index: int) -> None:
-        """Pull one queued track by index."""
         player = self.players.get(context.guild.id)
         if not player or not player.queue:
             await context.send("Queue is empty.")
@@ -119,11 +105,10 @@ class QueueCommandsMixin(MusicCogBase):
         await context.send(f"Removed **{removed.escaped_title}** from the queue.")
         await self._refresh_now_playing_message(context.guild.id)
 
-    @commands.hybrid_command(name="clear")  # type: ignore[arg-type]
+    @commands.hybrid_command(name="clear")
     @commands.guild_only()
     @commands.cooldown(1, 5, commands.BucketType.guild)
     async def clear(self, context: GuildContext) -> None:
-        """Flush the queued tracks."""
         await self._require_dj(context)
         player = self.players.get(context.guild.id)
         if not player or not player.queue:
@@ -135,11 +120,10 @@ class QueueCommandsMixin(MusicCogBase):
         await context.send("Cleared the queue.")
         await self._refresh_now_playing_message(context.guild.id)
 
-    @commands.hybrid_command(name="shuffle")  # type: ignore[arg-type]
+    @commands.hybrid_command(name="shuffle")
     @commands.guild_only()
     @commands.cooldown(1, 5, commands.BucketType.guild)
     async def shuffle(self, context: GuildContext) -> None:
-        """Randomize the upcoming queue."""
         await self._require_dj(context)
         player = self.players.get(context.guild.id)
         if not player or len(player.queue) < 2:
@@ -153,11 +137,10 @@ class QueueCommandsMixin(MusicCogBase):
         await context.send("Shuffled the queue.")
         await self._refresh_now_playing_message(context.guild.id)
 
-    @commands.hybrid_command(name="move")  # type: ignore[arg-type]
+    @commands.hybrid_command(name="move")
     @commands.guild_only()
     @commands.cooldown(3, 5, commands.BucketType.user)
     async def move(self, context: GuildContext, from_index: int, to_index: int) -> None:
-        """Move a track from one queue position to another."""
         await self._require_dj(context)
         player = self.players.get(context.guild.id)
         if not player or not player.queue:

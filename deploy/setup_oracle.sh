@@ -32,10 +32,6 @@ success() { echo "${GREEN}✓${RESET} $*"; }
 warn()    { echo "${YELLOW}!${RESET} $*"; }
 error()   { echo "${RED}✗${RESET} $*"; }
 
-# ── Live validation helpers ─────────────────────────────────────────────────
-# Each returns 0=valid, 1=confirmed invalid, 2=could not verify (network issue
-# or unexpected response) — callers decide whether 2 is acceptable to proceed on.
-
 validate_discord_token() {
   local token="$1" code
   code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 \
@@ -50,8 +46,6 @@ validate_discord_token() {
   fi
 }
 
-# Sets DISCORD_CLIENT_ID and DISCORD_BOT_NAME. Only call after a 200 from
-# validate_discord_token — does not re-check status itself.
 fetch_bot_identity() {
   local token="$1" body
   body=$(curl -s --max-time 10 -H "Authorization: Bot ${token}" \
@@ -90,7 +84,6 @@ validate_lastfm_key() {
   return 2
 }
 
-# ── curl must exist before the wizard can validate anything ────────────────
 if ! command -v curl >/dev/null 2>&1; then
   info "Installing curl (needed to verify your Discord token and Last.fm key)"
   sudo apt-get update -qq
@@ -119,9 +112,6 @@ if [[ -f "$ENV_PATH" ]] \
 fi
 
 if [[ ! -t 0 ]]; then
-  # No terminal attached to stdin — every `read` below would hit EOF
-  # immediately and, under set -e, silently kill the script with no
-  # explanation. Handle it explicitly instead.
   if [[ "$HAS_EXISTING_ENV" == true ]]; then
     RUN_WIZARD=false
     info "No interactive terminal detected — reusing the existing .env without prompting."
@@ -144,7 +134,6 @@ elif [[ "$HAS_EXISTING_ENV" == true ]]; then
 fi
 
 if [[ "$RUN_WIZARD" == true ]]; then
-  # ── 1. Discord Bot Token ───────────────────────────────────────────────
   echo ""
   echo "${BOLD}1. Discord Bot Token${RESET} (required)"
   echo "This is how the bot logs in to Discord. If you don't have one yet:"
@@ -185,7 +174,6 @@ if [[ "$RUN_WIZARD" == true ]]; then
     fi
   done
 
-  # ── 2. Bot Owner ────────────────────────────────────────────────────────
   echo ""
   echo "${BOLD}2. Bot Owner${RESET} (optional, recommended)"
   echo "Whoever created the application above is automatically treated as an"
@@ -214,14 +202,12 @@ if [[ "$RUN_WIZARD" == true ]]; then
     fi
   done
 
-  # ── 3. Default command prefix ────────────────────────────────────────────
   echo ""
   echo "${BOLD}3. Command Prefix${RESET} (optional, default: !)"
   echo "Any server can also override this later with !setprefix."
   read -rp "Default prefix [!]: " prefix_input
   DEFAULT_PREFIX_VALUE="${prefix_input:-!}"
 
-  # ── 4. Last.fm API key ───────────────────────────────────────────────────
   echo ""
   echo "${BOLD}4. Last.fm API Key${RESET} (optional)"
   echo "${BOLD}Needed for:${RESET} !vibe / !vibe-load (similar-track discovery) and the"

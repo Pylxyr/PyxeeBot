@@ -1,5 +1,3 @@
-"""player.py — GuildPlayer: per-guild audio state machine."""
-
 from __future__ import annotations
 
 import asyncio
@@ -7,7 +5,7 @@ import contextlib
 import logging
 import time
 from collections import deque
-from typing import Any, Awaitable, Callable, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
 import discord
 
@@ -23,8 +21,6 @@ if TYPE_CHECKING:
 
 
 class GuildPlayer:
-    """Per-guild voice + queue state machine."""
-
     def __init__(
         self,
         bot: "MusicBot",
@@ -44,7 +40,7 @@ class GuildPlayer:
         self.queue: deque[Track] = deque(maxlen=bot.settings.max_queue_size)
         self.history: deque[Track] = deque(maxlen=20)
         self.current: Track | None = None
-        self._total_duration: int = 0  # sum of durations of queued tracks (not current)
+        self._total_duration: int = 0
 
         self.announce_channel_id: int | None = None
         self.loop_mode: LoopMode = "off"
@@ -75,7 +71,6 @@ class GuildPlayer:
         audio_source_factory: Callable[[Track], Awaitable[discord.AudioSource]],
         validate_stream_url: Callable[[Track], Awaitable[bool]],
     ) -> "GuildPlayer":
-        """Preferred constructor — creates the player and starts its loop task."""
         player = cls(bot, guild, track_resolver, audio_source_factory, validate_stream_url)
         player.player_task = asyncio.create_task(player._player_loop(), name=f"player-{guild.id}")
         return player
@@ -86,9 +81,6 @@ class GuildPlayer:
                 await self.voice_client.move_to(channel)
                 await self.refresh_empty_channel_state()
             return self.voice_client
-        # Stale client: is_connected() is False but it may still be registered in
-        # discord.py's ConnectionState, causing channel.connect() to raise
-        # ClientException("Already connected to a voice channel.").  Force-clean it first.
         if self.voice_client is not None:
             with contextlib.suppress(Exception):
                 await self.voice_client.disconnect(force=True)
@@ -99,11 +91,6 @@ class GuildPlayer:
         return self.voice_client
 
     def replace_queue(self, tracks: list[Track]) -> None:
-        """Replace the entire queue and recalculate the running duration total.
-
-        All direct assignments to self.queue from outside the player should
-        use this method to keep _total_duration accurate.
-        """
         cap = self.queue.maxlen
         trimmed = tracks[:cap] if cap is not None else tracks
         self.queue = deque(trimmed, maxlen=cap)
@@ -224,8 +211,6 @@ class GuildPlayer:
         entries.extend(self.queue)
         return [
             {
-                # Prefer the original search query; fall back to URL then title so
-                # restored tracks are re-fetchable even when query is empty.
                 "query": track.query or track.webpage_url or track.title,
                 "title": track.title,
                 "webpage_url": track.webpage_url or "",
@@ -390,10 +375,6 @@ class GuildPlayer:
                         break
                     self.voice_client.play(source, after=after_playback)
 
-                    # Safety-net only: the URL pipeline (in cog.py) keeps the
-                    # top-3 queue positions warm eagerly. This task is a last
-                    # resort — it fires near_end_prefetch_seconds before the end
-                    # and force-refreshes position 0 only if its URL is stale.
                     if self.current.duration > self.bot.settings.near_end_prefetch_seconds and (
                         self.queue or self.loop_mode != "off"
                     ):
@@ -472,11 +453,6 @@ class GuildPlayer:
         self.bot.dispatch("musicbot_queue_updated", self.guild)
 
     def rearm_idle_timer(self) -> None:
-        """Schedule an idle-disconnect task if the player is currently sitting idle.
-
-        Call this after disabling stay_connected so the bot doesn't linger forever
-        in an empty channel with nothing queued.
-        """
         if self.idle_task is None or self.idle_task.done():
             self.idle_task = asyncio.create_task(self._disconnect_when_idle())
 
@@ -493,8 +469,6 @@ class GuildPlayer:
         channel = self.voice_client.channel if self.voice_client else None
         if channel is None:
             return False
-        # Purge the stale client from ConnectionState before calling channel.connect();
-        # without this, discord.py raises ClientException("Already connected").
         if self.voice_client is not None:
             with contextlib.suppress(Exception):
                 await self.voice_client.disconnect(force=True)

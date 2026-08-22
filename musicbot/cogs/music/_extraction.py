@@ -1,10 +1,3 @@
-"""_extraction.py — ExtractionMixin: yt-dlp extraction and audio-source helpers.
-
-Mixed into MusicCog.  All methods access shared state through ``self``
-(bot, logger, _ytdl_tlocal, _http_session, etc.) which MusicCog.__init__
-initialises before any method can be called.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -20,48 +13,37 @@ import discord
 from discord.ext import commands
 from yt_dlp import DownloadError, YoutubeDL
 
+from musicbot.cogs.music._base import MusicCogBase
 from musicbot.cogs.music._context import _CURRENT_GUILD_ID
 from musicbot.cogs.music.constants import (
     FFMPEG_BEFORE_OPTIONS,
     FFMPEG_OPTIONS,
     SEARCH_SELECTION_LIMIT,
-    _SEARCH_RESULT_COUNT_LONG,
-    _SEARCH_RESULT_COUNT_MED,
     YTDL_OPTIONS,
 )
 from musicbot.cogs.music.models import Track
-from musicbot.cogs.music.scoring import rank_entries, signal_tokens
-
-
-from musicbot.cogs.music._base import MusicCogBase
 
 
 class ExtractionMixin(MusicCogBase):
-    """yt-dlp extraction, stream-URL validation, and FFmpeg audio-source construction."""
-
-    # ── yt-dlp option builders ──────────────────────────────────────────────
-
     def _build_ytdl_options(
         self, *, flat_playlist: bool = False, flat_search: bool = False
     ) -> dict[str, Any]:
-        if self._ytdl_base_options is None:  # type: ignore[attr-defined]
+        if self._ytdl_base_options is None:
             base = dict(YTDL_OPTIONS)
-            base["socket_timeout"] = self.bot.settings.ytdlp_socket_timeout  # type: ignore[attr-defined]
-            base["playlistend"] = self.bot.settings.max_playlist_size  # type: ignore[attr-defined]
-            if self.bot.settings.ytdlp_cookies_file:  # type: ignore[attr-defined]
-                if self.bot.settings.ytdlp_cookies_file.exists():  # type: ignore[attr-defined]
-                    base["cookiefile"] = str(self.bot.settings.ytdlp_cookies_file)  # type: ignore[attr-defined]
-                elif not self._warned_missing_cookiefile:  # type: ignore[attr-defined]
-                    self.logger.warning(  # type: ignore[attr-defined]
+            base["socket_timeout"] = self.bot.settings.ytdlp_socket_timeout
+            base["playlistend"] = self.bot.settings.max_playlist_size
+            if self.bot.settings.ytdlp_cookies_file:
+                if self.bot.settings.ytdlp_cookies_file.exists():
+                    base["cookiefile"] = str(self.bot.settings.ytdlp_cookies_file)
+                elif not self._warned_missing_cookiefile:
+                    self.logger.warning(
                         "YTDLP_COOKIES_FILE does not exist: %s",
-                        self.bot.settings.ytdlp_cookies_file,  # type: ignore[attr-defined]
+                        self.bot.settings.ytdlp_cookies_file,
                     )
-                    self._warned_missing_cookiefile = True  # type: ignore[attr-defined]
-            if self.bot.settings.ytdlp_js_runtime_path:  # type: ignore[attr-defined]
-                base["js_runtimes"] = {
-                    "node": {"path": self.bot.settings.ytdlp_js_runtime_path}  # type: ignore[attr-defined]
-                }
-            self._ytdl_base_options = base  # type: ignore[attr-defined]
+                    self._warned_missing_cookiefile = True
+            if self.bot.settings.ytdlp_js_runtime_path:
+                base["js_runtimes"] = {"node": {"path": self.bot.settings.ytdlp_js_runtime_path}}
+            self._ytdl_base_options = base
             fp = dict(base)
             fp["extract_flat"] = "in_playlist"
             fp["lazy_playlist"] = True
@@ -69,37 +51,23 @@ class ExtractionMixin(MusicCogBase):
             fs["extract_flat"] = True
             fps = dict(fp)
             fps["extract_flat"] = True
-            self._ytdl_variants = {  # type: ignore[attr-defined]
+            self._ytdl_variants = {
                 (False, False): dict(base),
                 (True, False): fp,
                 (False, True): fs,
                 (True, True): fps,
             }
-        return self._ytdl_variants[(flat_playlist, flat_search)]  # type: ignore[attr-defined, index]
-
-    # ── Stream-URL validation ───────────────────────────────────────────────
+        return self._ytdl_variants[(flat_playlist, flat_search)]
 
     async def _validate_stream_url(self, track: Track) -> bool:
-        """HEAD-check a resolved stream URL against its CDN origin.
-
-        Returns
-        -------
-        True
-            The server confirmed the URL is still alive, **or** we could not
-            reach the server (timeout / connection error).  Network
-            unavailability does not mean the URL is stale — returning False
-            here would cause spurious re-resolves and gaps between tracks.
-        False
-            The server explicitly rejected the URL (HTTP 4xx / 5xx).
-        """
         url = track.stream_url
         if not url or not url.startswith("http"):
             return False
 
-        session = self._http_session  # type: ignore[attr-defined]
+        session = self._http_session
         if session is None or session.closed:
-            self._http_session = aiohttp.ClientSession()  # type: ignore[attr-defined]
-            session = self._http_session  # type: ignore[attr-defined]
+            self._http_session = aiohttp.ClientSession()
+            session = self._http_session
 
         try:
             async with session.head(
@@ -109,38 +77,31 @@ class ExtractionMixin(MusicCogBase):
             ) as resp:
                 if resp.status < 400:
                     return True
-                self.logger.debug(  # type: ignore[attr-defined]
+                self.logger.debug(
                     "Stream URL validation: HTTP %d for %s",
                     resp.status,
                     track.webpage_url,
                 )
                 return False
         except (asyncio.TimeoutError, aiohttp.ClientError) as exc:
-            # Can't check ≠ stale.  Keep the cached stream URL.
-            self.logger.debug(  # type: ignore[attr-defined]
+            self.logger.debug(
                 "Stream URL HEAD check failed (network error — assuming still valid): %s | %s",
                 exc.__class__.__name__,
                 url[:80],
             )
             return True
         except Exception as exc:
-            self.logger.debug(  # type: ignore[attr-defined]
-                "Stream URL HEAD check unexpected error (assuming valid): %s", exc
-            )
+            self.logger.debug("Stream URL HEAD check unexpected error (assuming valid): %s", exc)
             return True
 
-    # ── FFmpeg audio-source construction ───────────────────────────────────
-
     async def _build_audio_source(self, track: Track) -> discord.AudioSource:
-        bitrate = int(track.abr) if track.abr > 0 else self.bot.settings.opus_bitrate_kbps  # type: ignore[attr-defined]
+        bitrate = int(track.abr) if track.abr > 0 else self.bot.settings.opus_bitrate_kbps
         return discord.FFmpegOpusAudio(
             track.stream_url,
             bitrate=bitrate,
             before_options=FFMPEG_BEFORE_OPTIONS,
             options=FFMPEG_OPTIONS,
         )
-
-    # ── Core yt-dlp wrapper ─────────────────────────────────────────────────
 
     async def _extract_info(
         self,
@@ -156,63 +117,54 @@ class ExtractionMixin(MusicCogBase):
         if guild_id is None:
             guild_sem = None
         elif curation_mode:
-            # Curation (!vibe / !vibe-load) gets its own per-guild semaphore sized
-            # from YTDLP_CURATION_CONCURRENCY so it isn't forced through the
-            # single-slot playback semaphore below. Still bounded by the global
-            # extract_semaphore (YTDLP_CONCURRENT_EXTRACTS), which is the real
-            # CPU-bound gate on a single-vCPU host.
-            guild_sem = self._curation_semaphores.setdefault(  # type: ignore[attr-defined]
+            guild_sem = self._curation_semaphores.setdefault(
                 guild_id,
-                asyncio.Semaphore(self.bot.settings.ytdlp_curation_concurrency),  # type: ignore[attr-defined]
+                asyncio.Semaphore(self.bot.settings.ytdlp_curation_concurrency),
             )
         else:
-            guild_sem = self._guild_extract_semaphores.setdefault(guild_id, asyncio.Semaphore(1))  # type: ignore[attr-defined]
+            guild_sem = self._guild_extract_semaphores.setdefault(guild_id, asyncio.Semaphore(1))
 
         sem_ctx = guild_sem if guild_sem is not None else contextlib.nullcontext()
-        async with sem_ctx:  # type: ignore[attr-defined]
-            async with self.extract_semaphore:  # type: ignore[attr-defined]
+        async with sem_ctx:
+            async with self.extract_semaphore:
                 try:
                     loop = asyncio.get_running_loop()
 
                     def _run() -> dict[str, Any] | None:
-                        tlocal = self._ytdl_tlocal  # type: ignore[attr-defined]
+                        tlocal = self._ytdl_tlocal
                         if not hasattr(tlocal, "instances"):
-                            tlocal.instances = {}  # type: ignore[attr-defined]
+                            tlocal.instances = {}
                         ydl = tlocal.instances.get(key)
                         if ydl is None:
                             ydl = YoutubeDL(options)
                             tlocal.instances[key] = ydl
-                        return ydl.extract_info(query, download=False)  # type: ignore[no-any-return]
+                        return ydl.extract_info(query, download=False)
 
                     result = await asyncio.wait_for(
-                        loop.run_in_executor(self._ytdl_executor, _run),  # type: ignore[attr-defined]
-                        timeout=self.bot.settings.ytdlp_extract_timeout_seconds,  # type: ignore[attr-defined]
+                        loop.run_in_executor(self._ytdl_executor, _run),
+                        timeout=self.bot.settings.ytdlp_extract_timeout_seconds,
                     )
                     if result is None:
                         raise commands.BadArgument(
                             "No information could be extracted for the provided source."
                         )
-                    self._ytdl_timeout_count = 0  # type: ignore[attr-defined]
+                    self._ytdl_timeout_count = 0
                     return result
                 except asyncio.TimeoutError as exc:
-                    self.logger.warning("yt-dlp timed out for query %r", query)  # type: ignore[attr-defined]
-                    self._ytdl_timeout_count += 1  # type: ignore[attr-defined]
-                    if self._ytdl_timeout_count >= 3:  # type: ignore[attr-defined]
-                        self.logger.warning(  # type: ignore[attr-defined]
+                    self.logger.warning("yt-dlp timed out for query %r", query)
+                    self._ytdl_timeout_count += 1
+                    if self._ytdl_timeout_count >= 3:
+                        self.logger.warning(
                             "3 consecutive yt-dlp timeouts — recycling extraction thread pool."
                         )
-                        old_executor = self._ytdl_executor  # type: ignore[attr-defined]
-                        self._ytdl_executor = ThreadPoolExecutor(  # type: ignore[attr-defined]
-                            max_workers=2, thread_name_prefix="ytdlp"
-                        )
-                        self._ytdl_timeout_count = 0  # type: ignore[attr-defined]
+                        old_executor = self._ytdl_executor
+                        self._ytdl_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="ytdlp")
+                        self._ytdl_timeout_count = 0
                         old_executor.shutdown(wait=False)
                     raise commands.BadArgument(
                         f"Source lookup timed out after "
-                        f"{self.bot.settings.ytdlp_extract_timeout_seconds} seconds."  # type: ignore[attr-defined]
+                        f"{self.bot.settings.ytdlp_extract_timeout_seconds} seconds."
                     ) from exc
-
-    # ── URL / metadata helpers ──────────────────────────────────────────────
 
     def _is_playlist_query(self, query: str) -> bool:
         if not query.startswith(("http://", "https://")):
@@ -265,15 +217,13 @@ class ExtractionMixin(MusicCogBase):
             thumbnail_url=self._item_thumbnail_url(item),
         )
 
-    # ── Multi-track extractors ──────────────────────────────────────────────
-
     async def _extract_playlist_tracks(self, query: str, requester_id: int) -> tuple[list[Track], int]:
         try:
             info = await self._extract_info(query, flat_playlist=True)
         except commands.BadArgument:
             raise
         except DownloadError as exc:
-            self.logger.warning("yt-dlp playlist scan failed for %s: %s", query, exc)  # type: ignore[attr-defined]
+            self.logger.warning("yt-dlp playlist scan failed for %s: %s", query, exc)
             raise commands.BadArgument(f"Failed to fetch media: {exc}") from exc
 
         entries = info.get("entries") if isinstance(info, dict) else None
@@ -283,7 +233,7 @@ class ExtractionMixin(MusicCogBase):
         tracks: list[Track] = []
         skipped = 0
         for item in entries:
-            if len(tracks) >= self.bot.settings.max_playlist_size:  # type: ignore[attr-defined]
+            if len(tracks) >= self.bot.settings.max_playlist_size:
                 break
             if not item:
                 skipped += 1
@@ -312,9 +262,7 @@ class ExtractionMixin(MusicCogBase):
             try:
                 item = await self._extract_info(item["webpage_url"])
             except DownloadError as exc:
-                self.logger.warning(  # type: ignore[attr-defined]
-                    "Skipping unplayable item %s: %s", item.get("webpage_url"), exc
-                )
+                self.logger.warning("Skipping unplayable item %s: %s", item.get("webpage_url"), exc)
                 return None
 
         stream_url = item.get("url")
@@ -342,13 +290,13 @@ class ExtractionMixin(MusicCogBase):
         except commands.BadArgument:
             raise
         except DownloadError as exc:
-            self.logger.warning("yt-dlp failed for query %r: %s", query, exc)  # type: ignore[attr-defined]
+            self.logger.warning("yt-dlp failed for query %r: %s", query, exc)
             raise commands.BadArgument(f"Failed to fetch media: {exc}") from exc
 
         entries = info.get("entries") if isinstance(info, dict) else None
         info_items: list[dict[str, Any]]
         if entries:
-            info_items = [e for e in entries if e][: self.bot.settings.max_playlist_size]  # type: ignore[attr-defined]
+            info_items = [e for e in entries if e][: self.bot.settings.max_playlist_size]
         elif isinstance(info, dict):
             info_items = [info]
         else:
@@ -362,17 +310,6 @@ class ExtractionMixin(MusicCogBase):
                 continue
             tracks.append(track)
         return tracks, skipped
-
-    # ── Search helpers ──────────────────────────────────────────────────────
-
-    def _search_result_count(self, query: str) -> int:
-        base = max(self.bot.settings.ytdlp_search_results, SEARCH_SELECTION_LIMIT)  # type: ignore[attr-defined]
-        tokens = signal_tokens(query)
-        if len(tokens) >= 4:
-            return max(base, _SEARCH_RESULT_COUNT_LONG)
-        if len(tokens) >= 3:
-            return max(base, _SEARCH_RESULT_COUNT_MED)
-        return base
 
     def _search_text(self, query: str) -> str:
         match = re.match(r"^ytsearch(?:all|\d+)?:", query, flags=re.IGNORECASE)
@@ -389,7 +326,7 @@ class ExtractionMixin(MusicCogBase):
         query = self._preprocess_query(query)
         if query.startswith(("http://", "https://")) or query.startswith("ytsearch"):
             return query
-        return f"ytsearch{self._search_result_count(query)}:{query}"
+        return f"ytsearch{self.bot.settings.ytdlp_search_results}:{query}"
 
     async def _extract_search_candidates(
         self,
@@ -404,28 +341,16 @@ class ExtractionMixin(MusicCogBase):
         except commands.BadArgument:
             raise
         except DownloadError as exc:
-            self.logger.warning("yt-dlp search failed for %r: %s", query, exc)  # type: ignore[attr-defined]
+            self.logger.warning("yt-dlp search failed for %r: %s", query, exc)
             raise commands.BadArgument(f"Failed to fetch media: {exc}") from exc
 
         entries = info.get("entries") if isinstance(info, dict) else None
         if not entries:
             return [], 0
 
-        guild_id = _CURRENT_GUILD_ID.get()
-        search_text = self._search_text(query)
-        ranked_items = rank_entries(
-            search_text,
-            list(entries),
-            guild_id,
-            self._last_search,  # type: ignore[attr-defined]
-            self._last_search_max,  # type: ignore[attr-defined]
-            self._playlist_entry_url,
-            curation_mode=curation_mode,
-        )
-
         tracks: list[Track] = []
         skipped = 0
-        for item in ranked_items:
+        for item in entries:
             track = self._search_result_track(item, requester_id)
             if track is None:
                 skipped += 1

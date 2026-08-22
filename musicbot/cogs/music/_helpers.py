@@ -1,31 +1,19 @@
-"""_helpers.py — CommandHelpersMixin: permission checks and shared command-support utilities.
-
-Mixed into MusicCog.  Depends on bot, players, _get_player, _persist_snapshot, _search_text,
-and is called both from hybrid commands and from NowPlayingView button callbacks.
-"""
-
 from __future__ import annotations
-from musicbot.cogs.music._context import GuildContext
 
 import math
 
 import discord
 from discord.ext import commands
 
+from musicbot.cogs.music._base import MusicCogBase
+from musicbot.cogs.music._context import GuildContext
 from musicbot.cogs.music.constants import LOOP_CYCLE, LOOP_ICONS, LOOP_LABELS
 from musicbot.cogs.music.models import Track
 from musicbot.cogs.music.player import GuildPlayer
 from musicbot.cogs.music.views import QueueView, SearchSelectionView
 
 
-from musicbot.cogs.music._base import MusicCogBase
-
-
 class CommandHelpersMixin(MusicCogBase):
-    """Permission checks and shared utilities used across commands and view callbacks."""
-
-    # ── Permission helpers ──────────────────────────────────────────────────
-
     async def _ensure_author_voice(
         self, context: GuildContext
     ) -> discord.VoiceChannel | discord.StageChannel:

@@ -10,7 +10,5 @@ _CURRENT_GUILD_ID: ContextVar[int | None] = ContextVar("_CURRENT_GUILD_ID", defa
 
 
 class GuildContext(commands.Context[Any]):
-    """Narrowed Context for guild-only commands."""
-
     guild: discord.Guild
     author: discord.Member

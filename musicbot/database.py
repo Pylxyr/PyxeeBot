@@ -138,8 +138,6 @@ class Database:
             row = await cur.fetchone()
 
         if row is None:
-            # First run under this migration system — detect current column
-            # state so we don't try to ADD columns that already exist.
             async with conn.execute("PRAGMA table_info(guild_settings)") as cursor:
                 existing = {r["name"] async for r in cursor}
             if "autoplay" in existing:

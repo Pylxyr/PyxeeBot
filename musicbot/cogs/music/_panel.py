@@ -1,9 +1,3 @@
-"""_panel.py — NPanelMixin: NowPlaying embed rendering, panel management, and refresh loop.
-
-Mixed into MusicCog.  Accesses now_playing_messages, players, bot, logger, and the
-NowPlayingView / QueueView classes through self.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -13,6 +7,7 @@ import time
 
 import discord
 
+from musicbot.cogs.music._base import MusicCogBase
 from musicbot.cogs.music.constants import (
     EMBED_COLOUR,
     LOOP_ICONS,
@@ -25,14 +20,7 @@ from musicbot.cogs.music.models import NowPlayingController
 from musicbot.cogs.music.player import GuildPlayer
 
 
-from musicbot.cogs.music._base import MusicCogBase
-
-
 class NPanelMixin(MusicCogBase):
-    """NowPlaying embed rendering, message send/edit, and debounced refresh loop."""
-
-    # ── Formatting helpers ──────────────────────────────────────────────────
-
     @staticmethod
     def _format_duration(seconds: float) -> str:
         s = max(0, int(seconds))
@@ -63,8 +51,6 @@ class NPanelMixin(MusicCogBase):
         if len(player.queue) > limit:
             lines.append(f"*…and {len(player.queue) - limit} more*")
         return lines
-
-    # ── Embed renderer ──────────────────────────────────────────────────────
 
     def _render_now_playing_embed(
         self,
@@ -114,14 +100,12 @@ class NPanelMixin(MusicCogBase):
         embed.set_footer(text="  ·  ".join(footer_parts))
         return embed
 
-    # ── Channel / controller helpers ────────────────────────────────────────
-
     def _controller(self, guild_id: int, *, message_id: int | None = None) -> NowPlayingController | None:
-        controller = self.now_playing_messages.get(guild_id)  # type: ignore[attr-defined]
+        controller = self.now_playing_messages.get(guild_id)
         if controller is None:
             return None
         if controller.expires_at <= time.monotonic():
-            self.now_playing_messages.pop(guild_id, None)  # type: ignore[attr-defined]
+            self.now_playing_messages.pop(guild_id, None)
             return None
         if message_id is not None and controller.message_id != message_id:
             return None
@@ -132,15 +116,13 @@ class NPanelMixin(MusicCogBase):
     ) -> discord.abc.Messageable | None:
         if player.announce_channel_id is None:
             return None
-        channel = self.bot.get_channel(player.announce_channel_id)  # type: ignore[attr-defined]
+        channel = self.bot.get_channel(player.announce_channel_id)
         if channel is None:
             try:
-                channel = await self.bot.fetch_channel(player.announce_channel_id)  # type: ignore[attr-defined]
+                channel = await self.bot.fetch_channel(player.announce_channel_id)
             except (discord.Forbidden, discord.HTTPException, discord.NotFound):
                 return None
         return channel if isinstance(channel, discord.abc.Messageable) else None
-
-    # ── Panel send / edit ───────────────────────────────────────────────────
 
     async def _send_now_playing_panel(
         self,
@@ -151,7 +133,7 @@ class NPanelMixin(MusicCogBase):
         replace_existing: bool = False,
         status_text: str = "",
     ) -> discord.Message | None:
-        from musicbot.cogs.music.views import NowPlayingView  # local — avoids circularity
+        from musicbot.cogs.music.views import NowPlayingView
 
         target_channel = channel or await self._fetch_announce_channel(guild, player)
         if target_channel is None:
@@ -160,7 +142,7 @@ class NPanelMixin(MusicCogBase):
         if replace_existing:
             existing = self._controller(guild.id)
             if existing and existing.message_id:
-                ch = self.bot.get_channel(existing.channel_id)  # type: ignore[attr-defined]
+                ch = self.bot.get_channel(existing.channel_id)
                 if ch and hasattr(ch, "get_partial_message"):
                     with contextlib.suppress(discord.Forbidden, discord.HTTPException):
                         await ch.get_partial_message(existing.message_id).delete()
@@ -181,18 +163,18 @@ class NPanelMixin(MusicCogBase):
             view=view,
         )
         controller.message_id = message.id
-        self.now_playing_messages[guild.id] = controller  # type: ignore[attr-defined]
+        self.now_playing_messages[guild.id] = controller
         return message
 
     async def _refresh_now_playing_message(self, guild_id: int) -> None:
         controller = self._controller(guild_id)
-        guild = self.bot.get_guild(guild_id)  # type: ignore[attr-defined]
+        guild = self.bot.get_guild(guild_id)
         if controller is None or guild is None:
             return
-        channel = self.bot.get_channel(controller.channel_id)  # type: ignore[attr-defined]
+        channel = self.bot.get_channel(controller.channel_id)
         if channel is None or not hasattr(channel, "get_partial_message"):
             return
-        player = self.players.get(guild_id)  # type: ignore[attr-defined]
+        player = self.players.get(guild_id)
 
         elapsed_bucket = int(player.elapsed_seconds // 4) if player else 0
         queue_preview = (
@@ -218,21 +200,19 @@ class NPanelMixin(MusicCogBase):
         )
         if getattr(controller, "_last_render_key", None) == state_key:
             return
-        controller._last_render_key = state_key  # type: ignore[attr-defined]
+        controller._last_render_key = state_key
 
         embed = self._render_now_playing_embed(guild, player, controller)
         partial = channel.get_partial_message(controller.message_id)
         with contextlib.suppress(discord.HTTPException, discord.NotFound):
             await partial.edit(embed=embed)
 
-    # ── Debounced refresh loop ──────────────────────────────────────────────
-
     def _schedule_np_refresh(self, guild_id: int, *, delay: float = NP_REFRESH_DEBOUNCE_SECONDS) -> None:
-        self._np_refresh_deadlines[guild_id] = time.monotonic() + delay  # type: ignore[attr-defined]
-        task = self._np_refresh_tasks.get(guild_id)  # type: ignore[attr-defined]
+        self._np_refresh_deadlines[guild_id] = time.monotonic() + delay
+        task = self._np_refresh_tasks.get(guild_id)
         if task and not task.done():
             return
-        self._np_refresh_tasks[guild_id] = self._bg_task(  # type: ignore[attr-defined]
+        self._np_refresh_tasks[guild_id] = self._bg_task(
             self._np_refresh_loop(guild_id),
             name=f"np-refresh-{guild_id}",
         )
@@ -240,14 +220,14 @@ class NPanelMixin(MusicCogBase):
     async def _np_refresh_loop(self, guild_id: int) -> None:
         try:
             while True:
-                deadline = self._np_refresh_deadlines.get(guild_id)  # type: ignore[attr-defined]
+                deadline = self._np_refresh_deadlines.get(guild_id)
                 if deadline is None:
                     break
                 remaining = deadline - time.monotonic()
                 if remaining > 0:
                     await asyncio.sleep(remaining)
                     continue
-                self._np_refresh_deadlines.pop(guild_id, None)  # type: ignore[attr-defined]
+                self._np_refresh_deadlines.pop(guild_id, None)
                 await self._refresh_now_playing_message(guild_id)
         finally:
-            self._np_refresh_tasks.pop(guild_id, None)  # type: ignore[attr-defined]
+            self._np_refresh_tasks.pop(guild_id, None)

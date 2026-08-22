@@ -1,7 +1,4 @@
-"""curation.py — Playlist Curation Cog."""
-
 from __future__ import annotations
-from musicbot.cogs.music._context import GuildContext
 
 import asyncio
 import contextlib
@@ -14,10 +11,11 @@ import aiohttp
 import discord
 from discord.ext import commands
 
-if TYPE_CHECKING:
-    from musicbot.cogs.music.cog import MusicCog
+from musicbot.cogs.music._context import GuildContext
 
+if TYPE_CHECKING:
     from musicbot.bot import MusicBot
+    from musicbot.cogs.music.cog import MusicCog
 
 from musicbot.cogs.music.constants import EMBED_COLOUR
 
@@ -38,27 +36,23 @@ def _artist_key(name: str) -> str:
 class CuratedTrack:
     title: str
     artist: str
-    selected: bool = True  # True = will be added to queue
-    match_score: float = 0.0  # Last.fm similarity score (0.0–1.0); higher = more confident
+    selected: bool = True
+    match_score: float = 0.0
 
 
 @dataclass(slots=True)
 class CurationSession:
     guild_id: int
     author_id: int
-    seed_query: str  # original user query
-    seed_artist: str  # resolved artist for auto-refill
-    seed_track: str  # resolved track for auto-refill
+    seed_query: str
+    seed_artist: str
+    seed_track: str
     tracks: list[CuratedTrack] = field(default_factory=list)
     panel_msg: discord.Message | None = None
     channel_id: int | None = None
 
 
 class CurationView(discord.ui.View):
-    """Panel attached to a curation embed.
-    Offers a multi-select dropdown to remove tracks, plus action buttons.
-    """
-
     def __init__(self, cog: "CurationCog", session: CurationSession) -> None:
         super().__init__(timeout=300)
         self.cog = cog
@@ -66,7 +60,6 @@ class CurationView(discord.ui.View):
         self._build_select()
 
     def _build_select(self) -> None:
-        """(Re)build the remove-tracks dropdown from current session tracks."""
         for item in list(self.children):
             if isinstance(item, discord.ui.Select):
                 self.remove_item(item)
@@ -90,11 +83,11 @@ class CurationView(discord.ui.View):
             max_values=len(options),
             options=options,
         )
-        select.callback = self._on_remove_select  # type: ignore[method-assign]
+        select.callback = self._on_remove_select
         self.add_item(select)
 
     async def _on_remove_select(self, interaction: discord.Interaction) -> None:
-        to_remove = set(int(v) for v in interaction.data.get("values", []))  # type: ignore[union-attr]
+        to_remove = set(int(v) for v in interaction.data.get("values", []))
         if not to_remove:
             await interaction.response.defer()
             return
@@ -222,12 +215,11 @@ class RefillView(discord.ui.View):
             max_values=len(options),
             options=options,
         )
-        select.callback = self._on_exclude_select  # type: ignore[method-assign]
+        select.callback = self._on_exclude_select
         self.add_item(select)
 
     async def _on_exclude_select(self, interaction: discord.Interaction) -> None:
-        """Give immediate ephemeral feedback so the two-step UX is clear."""
-        count = len(interaction.data.get("values", []))  # type: ignore[union-attr, arg-type]
+        count = len(interaction.data.get("values", []))
         if count:
             msg = f"{count} track{'s' if count != 1 else ''} marked for exclusion — click **Add All** to confirm."
         else:
@@ -277,8 +269,6 @@ class RefillView(discord.ui.View):
 
 
 class CurationCog(commands.Cog, name="CurationCog"):
-    """Discover and curate playlists via Last.fm similar-track recommendations."""
-
     def __init__(self, bot: "MusicBot") -> None:
         self.bot = bot
         self._key = getattr(bot.settings, "lastfm_api_key", None)
@@ -328,7 +318,7 @@ class CurationCog(commands.Cog, name="CurationCog"):
                                 data.get("message"),
                             )
                             return None
-                        return data  # type: ignore[no-any-return]
+                        return data
                     if resp.status == 429:
                         log.warning("Last.fm rate-limited (429) on %s — backing off 5 s", method)
                         await asyncio.sleep(5)
@@ -367,11 +357,6 @@ class CurationCog(commands.Cog, name="CurationCog"):
         return None
 
     async def _search_track(self, query: str) -> tuple[str, str] | None:
-        """Return (artist, track) for a free-text query via Last.fm track.search.
-
-        Fetches up to 5 results and prefers whichever result's artist name
-        fuzzy-matches the query (handles artist-only queries like "yorushika").
-        """
         data = await self._lastfm("track.search", track=query, limit=5)
         if not data:
             return None
@@ -379,27 +364,16 @@ class CurationCog(commands.Cog, name="CurationCog"):
         if not results:
             return None
         query_lower = query.strip().lower()
-        # Prefer a result where the artist name matches what the user typed.
         for result in results:
             artist_name = str(result.get("artist", "")).strip()
             if query_lower in artist_name.lower() or artist_name.lower() in query_lower:
                 return artist_name, str(result.get("name", ""))
-        # Fall back to the top result.
         top = results[0]
         return str(top.get("artist", "")), str(top.get("name", ""))
 
     async def _get_similar_tracks(
         self, artist: str, track: str, limit: int = MAX_PLAYLIST
     ) -> list[CuratedTrack]:
-        """Return up to `limit` curated tracks sorted by Last.fm match confidence.
-
-        Strategy:
-          1. track.getSimilar  → direct similar tracks with match scores (0–1)
-          2. artist.getSimilar → fallback if track.getSimilar is thin (<10 results)
-          3. Seed artist top tracks get guaranteed first slots
-          4. Sort by match_score descending so best picks appear at the top of
-             the curation panel and are least likely to be deselected.
-        """
         seed_key = _artist_key(artist)
         seen_titles: set[str] = {track.lower()}
         result: list[CuratedTrack] = []
@@ -464,7 +438,6 @@ class CurationCog(commands.Cog, name="CurationCog"):
         return (seed_tracks + result)[:limit]
 
     async def _get_artist_top_tracks(self, artist: str, limit: int = MAX_PLAYLIST) -> list[CuratedTrack]:
-        """Fallback: return top tracks for an artist when getSimilar gives nothing."""
         data = await self._lastfm("artist.gettoptracks", artist=artist, limit=limit)
         if not data:
             return []
@@ -516,10 +489,7 @@ class CurationCog(commands.Cog, name="CurationCog"):
         tracks: list[CuratedTrack],
         interaction: discord.Interaction,
     ) -> tuple[int, int]:
-        """Resolve each CuratedTrack via yt-dlp and add to MusicCog queue.
-        Returns (queued_count, failed_count).
-        """
-        music: MusicCog | None = self.bot.get_cog("MusicCog")  # type: ignore
+        music: MusicCog | None = self.bot.get_cog("MusicCog")
         if music is None:
             await interaction.followup.send("MusicCog is not loaded.", ephemeral=True)
             return 0, len(tracks)
@@ -632,11 +602,10 @@ class CurationCog(commands.Cog, name="CurationCog"):
         music._persist_snapshot(guild_id)
         return queued, failed
 
-    @commands.hybrid_command(name="vibe", aliases=["vb"])  # type: ignore[arg-type]
+    @commands.hybrid_command(name="vibe", aliases=["vb"])
     @commands.guild_only()
     @commands.cooldown(1, 15, commands.BucketType.guild)
     async def vibe(self, context: GuildContext, *, query: str) -> None:
-        """Discover similar songs via Last.fm and curate a playlist. Max 25 tracks."""
         if not self._key:
             await context.send("Last.fm API key is not configured.")
             return
@@ -651,7 +620,6 @@ class CurationCog(commands.Cog, name="CurationCog"):
 
         tracks = await self._get_similar_tracks(seed_artist, seed_track, limit=MAX_PLAYLIST)
         if not tracks:
-            # Fallback: top tracks by same artist
             tracks = await self._get_artist_top_tracks(seed_artist, limit=MAX_PLAYLIST)
         if not tracks:
             await context.send("No similar tracks found on Last.fm.")
@@ -674,10 +642,9 @@ class CurationCog(commands.Cog, name="CurationCog"):
         msg = await context.send(embed=embed, view=view)
         session.panel_msg = msg
 
-    @commands.hybrid_command(name="vibe-save", aliases=["vsave"])  # type: ignore[arg-type]
+    @commands.hybrid_command(name="vibe-save", aliases=["vsave"])
     @commands.guild_only()
     async def vibe_save(self, context: GuildContext, *, name: str) -> None:
-        """Save the active curation session as a named playlist."""
         session = self._sessions.get(context.guild.id)
         if session is None:
             await context.send("No active curation session. Run `!vibe <query>` first.")
@@ -695,16 +662,15 @@ class CurationCog(commands.Cog, name="CurationCog"):
             f"Saved {len(selected)} tracks as **{discord.utils.escape_markdown(name.strip())}**."
         )
 
-    @commands.hybrid_command(name="vibe-load", aliases=["vload"])  # type: ignore[arg-type]
+    @commands.hybrid_command(name="vibe-load", aliases=["vload"])
     @commands.guild_only()
     async def vibe_load(self, context: GuildContext, *, name: str) -> None:
-        """Load a saved curated playlist into the queue."""
         entries = await self.bot.database.get_playlist_entries(context.guild.id, name.strip())
         if not entries:
             await context.send(f"No saved playlist named **{discord.utils.escape_markdown(name.strip())}**.")
             return
 
-        music: MusicCog | None = self.bot.get_cog("MusicCog")  # type: ignore
+        music: MusicCog | None = self.bot.get_cog("MusicCog")
         if music is None:
             return
 
@@ -771,10 +737,9 @@ class CurationCog(commands.Cog, name="CurationCog"):
 
     @commands.Cog.listener()
     async def on_musicbot_queue_updated(self, guild: discord.Guild) -> None:
-        """Trigger autoplay when the queue empties, or a refill prompt when it's low."""
         if not self._key:
             return
-        music: MusicCog | None = self.bot.get_cog("MusicCog")  # type: ignore
+        music: MusicCog | None = self.bot.get_cog("MusicCog")
         if music is None:
             return
         player = music.players.get(guild.id)
@@ -841,15 +806,14 @@ class CurationCog(commands.Cog, name="CurationCog"):
         task.add_done_callback(_on_refill_done)
 
     async def _do_autoplay(self, guild: discord.Guild, artist: str, track: str) -> None:
-        """Silently queue one similar track when the queue has fully emptied."""
-        music: MusicCog | None = self.bot.get_cog("MusicCog")  # type: ignore
+        music: MusicCog | None = self.bot.get_cog("MusicCog")
         if music is None:
             return
         player = music.players.get(guild.id)
         if player is None or not player.voice_client or not player.voice_client.is_connected():
             return
         if player.queue or player.current:
-            return  # something got queued before this task ran — nothing to do
+            return
 
         candidates = await self._get_similar_tracks(artist, track, limit=8)
         if not candidates:
@@ -883,8 +847,7 @@ class CurationCog(commands.Cog, name="CurationCog"):
         music._persist_snapshot(guild.id)
 
     async def _do_refill(self, guild: discord.Guild, artist: str, track: str) -> None:
-        """Fetch REFILL_MAX new similar tracks and post a refill approval prompt."""
-        music: MusicCog | None = self.bot.get_cog("MusicCog")  # type: ignore
+        music: MusicCog | None = self.bot.get_cog("MusicCog")
         if music is None:
             return
 

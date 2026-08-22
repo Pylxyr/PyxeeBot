@@ -1,9 +1,3 @@
-"""_events.py — EventsMixin: bot and player event listeners.
-
-Mixed into MusicCog.  Depends on players, bot, and helper methods from NPanelMixin,
-ResolverMixin, ExtractionMixin, and LifecycleMixin.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -12,15 +6,11 @@ import contextlib
 import discord
 from discord.ext import commands
 
+from musicbot.cogs.music._base import MusicCogBase
 from musicbot.cogs.music.models import Track
 
 
-from musicbot.cogs.music._base import MusicCogBase
-
-
 class EventsMixin(MusicCogBase):
-    """Bot and player event listeners."""
-
     async def _schedule_rejoin(
         self,
         guild: discord.Guild,
@@ -32,8 +22,6 @@ class EventsMixin(MusicCogBase):
             return
         with contextlib.suppress(Exception):
             await player.connect(channel)
-
-    # ── Event listeners ─────────────────────────────────────────────────────
 
     @commands.Cog.listener()
     async def on_musicbot_np_auto_refresh(self, guild: discord.Guild) -> None:
@@ -106,7 +94,7 @@ class EventsMixin(MusicCogBase):
                 else:
                     await self._cleanup_guild(member.guild.id)
             elif after.channel is not None and after.channel != before.channel:
-                player.voice_client = member.guild.voice_client  # type: ignore[assignment]
+                player.voice_client = member.guild.voice_client
                 await player.refresh_empty_channel_state()
             return
         if before.channel == tracked_channel or after.channel == tracked_channel:
