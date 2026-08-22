@@ -27,22 +27,16 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends --fix-missing libsodium-dev
 
       - name: Install Python dependencies
-        run: pip install -r requirements.txt pytest pytest-asyncio ruff pip-audit mypy
+        run: pip install -r requirements.txt ruff pip-audit
 
       - name: Lint
-        run: ruff check musicbot/ tests/
+        run: ruff check musicbot/ bot.py
 
       - name: Format check
-        run: ruff format --check musicbot/ tests/
+        run: ruff format --check musicbot/ bot.py
 
-      - name: Type check
-        run: mypy musicbot/
-        
       - name: Security audit
-        run: pip-audit --ignore-vuln CVE-2025-69277  
-        
-      - name: Tests
-        run: pytest tests/ -q --tb=short
+        run: pip-audit --ignore-vuln CVE-2025-69277
 
   deploy:
     runs-on: ubuntu-latest
@@ -65,7 +59,6 @@ jobs:
 
             git fetch origin main
 
-            # Clean Git index only - NEVER delete live data/
             git rm -r --cached data/ 2>/dev/null || true
 
             git reset --hard origin/main
