@@ -23,6 +23,27 @@ class EventsMixin(MusicCogBase):
         with contextlib.suppress(Exception):
             await player.connect(channel)
 
+    async def _grace_reconnect_or_cleanup(
+        self,
+        guild_id: int,
+        channel: discord.VoiceChannel | discord.StageChannel,
+    ) -> None:
+        # A voice disconnect can be a real kick/outage, or a brief network
+        # blip. Give it a short grace window to recover before nuking the
+        # player (and the whole queue) — mirrors the stay_connected rejoin
+        # path, just for the non-24/7 case where we'd otherwise clean up
+        # immediately on the first disconnect event.
+        await asyncio.sleep(5.0)
+        player = self.players.get(guild_id)
+        if player is None:
+            return
+        if player.voice_client and player.voice_client.is_connected():
+            return
+        with contextlib.suppress(Exception):
+            await player.connect(channel)
+            return
+        await self._cleanup_guild(guild_id)
+
     @commands.Cog.listener()
     async def on_musicbot_np_auto_refresh(self, guild: discord.Guild) -> None:
         await self._refresh_now_playing_message(guild.id)
@@ -92,7 +113,10 @@ class EventsMixin(MusicCogBase):
                         name=f"rejoin-{member.guild.id}",
                     )
                 else:
-                    await self._cleanup_guild(member.guild.id)
+                    self._bg_task(
+                        self._grace_reconnect_or_cleanup(member.guild.id, before.channel),
+                        name=f"grace-cleanup-{member.guild.id}",
+                    )
             elif after.channel is not None and after.channel != before.channel:
                 player.voice_client = member.guild.voice_client
                 await player.refresh_empty_channel_state()

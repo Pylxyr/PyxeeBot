@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from musicbot.cogs.music.models import Track
 
 from musicbot.cogs.music.constants import EMBED_COLOUR
+from musicbot.cogs.music.views import _close_interaction_message
 
 log = logging.getLogger(__name__)
 
@@ -192,9 +193,9 @@ class CurationView(discord.ui.View):
 
     @discord.ui.button(label="Cancel", style=discord.ButtonStyle.danger, row=1)
     async def cancel(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
-        self._disable_all()
-        await interaction.response.edit_message(content="Curation cancelled.", embed=None, view=self)
+        self.stop()
         self.cog._sessions.pop(self.session.guild_id, None)
+        await _close_interaction_message(interaction, closed_text="Curation cancelled.")
 
     def _disable_all(self) -> None:
         for item in self.children:
@@ -311,8 +312,8 @@ class RefillView(discord.ui.View):
 
     @discord.ui.button(label="Dismiss", style=discord.ButtonStyle.danger, row=1)
     async def skip(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
-        self._disable()
-        await interaction.response.edit_message(content="Refill skipped.", embed=None, view=self)
+        self.stop()
+        await _close_interaction_message(interaction, closed_text="Refill skipped.")
 
     def _disable(self) -> None:
         for item in self.children:
@@ -336,6 +337,7 @@ class CurationCog(commands.Cog, name="CurationCog"):
         self._refill_seeds: dict[int, tuple[str, str]] = {}
         self._refill_in_progress: set[int] = set()
         self._curation_sem: dict[int, asyncio.Semaphore] = {}
+        self._curation_enqueue_locks: dict[int, asyncio.Lock] = {}
         self._resolve_tasks: dict[int, set[asyncio.Task[Any]]] = {}
         self._epoch: dict[int, int] = {}
 
@@ -662,6 +664,7 @@ class CurationCog(commands.Cog, name="CurationCog"):
 
         concurrency = max(1, getattr(self.bot.settings, "ytdlp_curation_concurrency", 3))
         sem = self._curation_sem.setdefault(guild_id, asyncio.Semaphore(concurrency))
+        enqueue_lock = self._curation_enqueue_locks.setdefault(guild_id, asyncio.Lock())
 
         async def _resolve_one(ct: CuratedTrack) -> None:
             nonlocal queued, failed, resolved_count
@@ -678,11 +681,17 @@ class CurationCog(commands.Cog, name="CurationCog"):
                     return
                 best = _pick_best_candidate(resolved)
                 if best is not None:
-                    if music._check_per_user_limit(player, requester_id):
-                        return
-                    if len(player.queue) >= music.bot.settings.max_queue_size:
-                        return
-                    await player.enqueue(best)
+                    # Several _resolve_one calls run concurrently (bounded by
+                    # `sem`); the limit checks and the enqueue must happen as
+                    # one atomic step per guild, otherwise concurrent tasks can
+                    # all pass the checks before any of them actually enqueues,
+                    # overshooting the queue/per-user caps.
+                    async with enqueue_lock:
+                        if music._check_per_user_limit(player, requester_id):
+                            return
+                        if len(player.queue) >= music.bot.settings.max_queue_size:
+                            return
+                        await player.enqueue(best)
                     added.append(
                         f"**{discord.utils.escape_markdown(ct.artist)}** — "
                         f"{discord.utils.escape_markdown(ct.title)}"
@@ -843,6 +852,7 @@ class CurationCog(commands.Cog, name="CurationCog"):
         limit_hit = asyncio.Event()
         concurrency = max(1, getattr(self.bot.settings, "ytdlp_curation_concurrency", 3))
         sem = self._curation_sem.setdefault(context.guild.id, asyncio.Semaphore(concurrency))
+        enqueue_lock = self._curation_enqueue_locks.setdefault(context.guild.id, asyncio.Lock())
         my_epoch = self._register_resolve_task(context.guild.id)
 
         async def _load_one(entry: dict[str, Any]) -> None:
@@ -867,13 +877,18 @@ class CurationCog(commands.Cog, name="CurationCog"):
                     if best is None:
                         failed += 1
                         return
-                    if music._check_per_user_limit(player, context.author.id):
-                        limit_hit.set()
-                        return
-                    if len(player.queue) >= music.bot.settings.max_queue_size:
-                        limit_hit.set()
-                        return
-                    await player.enqueue(best)
+                    # See _resolve_and_queue_inner: the limit checks and the
+                    # enqueue must be atomic across concurrently-running loads.
+                    async with enqueue_lock:
+                        if limit_hit.is_set():
+                            return
+                        if music._check_per_user_limit(player, context.author.id):
+                            limit_hit.set()
+                            return
+                        if len(player.queue) >= music.bot.settings.max_queue_size:
+                            limit_hit.set()
+                            return
+                        await player.enqueue(best)
                     queued += 1
                 except asyncio.CancelledError:
                     raise

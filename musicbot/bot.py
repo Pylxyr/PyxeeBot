@@ -323,7 +323,7 @@ class MusicBot(commands.Bot):
             player = music_cog.players.get(guild.id) if music_cog else None
             announce_id = player.announce_channel_id if player else None
             channel = guild.get_channel(announce_id) if isinstance(announce_id, int) else guild.system_channel
-            if channel is None:
+            if channel is None or not isinstance(channel, discord.abc.Messageable):
                 continue
             with contextlib.suppress(discord.HTTPException):
                 await channel.send(

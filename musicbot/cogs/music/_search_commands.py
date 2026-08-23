@@ -17,6 +17,10 @@ class SearchCommandsMixin(MusicCogBase):
         if len(player.queue) >= self.bot.settings.max_queue_size:
             await context.send("Queue is full.")
             return
+        if self._check_per_user_limit(player, context.author.id):
+            limit = self.bot.settings.max_queue_size_per_user
+            await context.send(f"You already have `{limit}` tracks in the queue.")
+            return
         self._remember_channel(player, context.channel)
         search_query = f"ytsearch{SEARCH_SELECTION_LIMIT}:{self._preprocess_query(query)}"
         async with context.typing():

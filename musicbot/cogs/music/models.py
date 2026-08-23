@@ -40,6 +40,17 @@ class Track:
             self._escaped_uploader = _escape_md(self.uploader or "Unknown")
         return self._escaped_uploader
 
+    def invalidate_escaped_cache(self) -> None:
+        """Clear the memoized escaped_title/escaped_uploader.
+
+        Must be called whenever `title` or `uploader` are mutated in place
+        (e.g. after full stream resolution replaces placeholder metadata
+        from a flat playlist scan) — otherwise any code that read the
+        escaped property early keeps showing the stale value forever.
+        """
+        self._escaped_title = None
+        self._escaped_uploader = None
+
     @property
     def duration_label(self) -> str:
         minutes, seconds = divmod(self.duration, 60)

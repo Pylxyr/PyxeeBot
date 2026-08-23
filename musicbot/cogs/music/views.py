@@ -30,6 +30,25 @@ def _disable_view_items(view: discord.ui.View) -> None:
             item.disabled = True
 
 
+async def _close_interaction_message(
+    interaction: discord.Interaction, *, closed_text: str = "❌ Closed."
+) -> None:
+    """Remove the embed/components a component interaction belongs to.
+
+    Always acknowledges the interaction with an edit that strips the embed
+    and view (works for both regular and ephemeral messages), then makes a
+    best-effort attempt to fully delete the message afterward. Deletion
+    silently no-ops on ephemeral messages, which is fine — the edit already
+    leaves nothing to look at.
+    """
+    with contextlib.suppress(discord.HTTPException, discord.NotFound, discord.Forbidden):
+        await interaction.response.edit_message(content=closed_text, embed=None, view=None)
+    message = interaction.message
+    if message is not None:
+        with contextlib.suppress(discord.HTTPException, discord.NotFound, discord.Forbidden):
+            await message.delete()
+
+
 class SearchSelectionMenu(discord.ui.Select):
     def __init__(self) -> None:
         super().__init__(
@@ -172,6 +191,14 @@ class SearchSelectionView(discord.ui.View):
         self._sync_controls()
         await interaction.response.edit_message(embed=self.build_embed(), view=self)
 
+    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.danger, row=1)
+    async def cancel_selection(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
+        if not self.selection.done():
+            self.selection.set_result(None)
+        self.stop()
+        self.candidates = []
+        await _close_interaction_message(interaction, closed_text="❌ Search cancelled.")
+
     async def on_timeout(self) -> None:
         if not self.selection.done():
             self.selection.set_result(None)
@@ -271,7 +298,7 @@ class QueueView(discord.ui.View):
     @discord.ui.button(label="Close", style=discord.ButtonStyle.secondary)
     async def close_panel(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
         self.stop()
-        await interaction.response.edit_message(view=None)
+        await _close_interaction_message(interaction, closed_text="Queue closed.")
 
     async def on_timeout(self) -> None:
         _disable_view_items(self)
@@ -395,7 +422,7 @@ class NowPlayingView(discord.ui.View):
         if player is None:
             await interaction.response.send_message("Nothing is playing.", ephemeral=True)
             return
-        view = self.cog._build_queue_view(self.guild_id, player, author_id=interaction.user.id, page=1)
+        view = self.cog._build_queue_view(self.guild_id, player, author_id=interaction.user.id, page=0)
         await interaction.response.send_message(embed=view.build_embed(), view=view, ephemeral=True)
 
     async def on_timeout(self) -> None:

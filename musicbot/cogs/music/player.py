@@ -291,23 +291,34 @@ class GuildPlayer:
 
                     resolved_track = await self.track_resolver(self.current)
                     if resolved_track is None:
-                        key = self.current.query or self.current.webpage_url
+                        failed_track = self.current
+                        key = failed_track.query or failed_track.webpage_url
                         fails = self._resolve_fail_counts.get(key, 0) + 1
                         if len(self._resolve_fail_counts) > 200:
                             self._resolve_fail_counts.clear()
                         self._resolve_fail_counts[key] = fails
                         backoff = min(30.0, 1.0 * (2 ** (fails - 1)))
+                        will_retry = fails < 4
                         self.bot.dispatch(
                             "musicbot_track_skipped_error",
                             self.guild,
-                            self.current,
+                            failed_track,
                             f"Could not resolve stream (attempt {fails}). Retrying in {backoff:.0f}s."
-                            if fails < 4
+                            if will_retry
                             else "Track is unavailable, skipping.",
                         )
                         self.current = None
-                        if fails < 4:
+                        if will_retry:
                             await asyncio.sleep(backoff)
+                            # Put the track back so the next loop iteration actually
+                            # retries it, instead of silently moving on to whatever
+                            # is next in the queue.
+                            if len(self.queue) == self.queue.maxlen:
+                                self._total_duration = max(0, self._total_duration - self.queue[-1].duration)
+                            self._total_duration += failed_track.duration
+                            self.queue.appendleft(failed_track)
+                        else:
+                            self._resolve_fail_counts.pop(key, None)
                         self.bot.dispatch("musicbot_queue_updated", self.guild)
                         continue
 

@@ -59,6 +59,7 @@ class ResolverMixin(MusicCogBase):
             track.thumbnail_url = data.thumbnail_url
         if data.tags:
             track.tags = data.tags
+        track.invalidate_escaped_cache()
         return track
 
     async def _resolve_track_data(self, track: Track) -> ResolvedTrackData | None:
