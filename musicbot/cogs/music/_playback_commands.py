@@ -34,10 +34,11 @@ class PlaybackCommandsMixin(MusicCogBase):
     @commands.cooldown(1, 5, commands.BucketType.guild)
     async def leave(self, context: GuildContext) -> None:
         await self._require_dj(context)
-        if not self.players.get(context.guild.id):
+        gid = context.guild.id
+        await self._cancel_curation_activity(gid)
+        if not self.players.get(gid):
             await context.send("I am not connected.")
             return
-        gid = context.guild.id
         await self._cleanup_guild(gid)
         await context.send("Disconnected and cleared the queue.")
         await self._refresh_now_playing_message(gid)

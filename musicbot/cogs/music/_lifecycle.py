@@ -69,7 +69,18 @@ class LifecycleMixin(MusicCogBase):
                 with contextlib.suppress(Exception):
                     await self._resolve_track(track)
 
+    async def _cancel_curation_activity(self, guild_id: int) -> None:
+        curation = self.bot.get_cog("CurationCog")
+        if curation is None:
+            return
+        cancel = getattr(curation, "cancel_guild_activity", None)
+        if cancel is None:
+            return
+        with contextlib.suppress(Exception):
+            await cancel(guild_id)
+
     async def _cleanup_guild(self, guild_id: int) -> None:
+        await self._cancel_curation_activity(guild_id)
         player = self.players.pop(guild_id, None)
         if player:
             await player.destroy()

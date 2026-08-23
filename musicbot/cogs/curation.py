@@ -16,6 +16,7 @@ from musicbot.cogs.music._context import GuildContext
 if TYPE_CHECKING:
     from musicbot.bot import MusicBot
     from musicbot.cogs.music.cog import MusicCog
+    from musicbot.cogs.music.models import Track
 
 from musicbot.cogs.music.constants import EMBED_COLOUR
 
@@ -30,6 +31,63 @@ REFILL_MAX = 15
 def _artist_key(name: str) -> str:
     ascii_only = re.sub(r"[^a-z0-9]", "", name.lower())
     return ascii_only if ascii_only else name.lower().strip()
+
+
+_VARIANT_MARKERS = (
+    "live",
+    "remix",
+    "acoustic",
+    "demo",
+    "instrumental",
+    "karaoke",
+    "cover",
+    "remaster",
+    "remastered",
+    "unplugged",
+    "session",
+    "orchestral",
+    "a cappella",
+    "mono",
+    "stereo",
+    "edit",
+    "reprise",
+    "rehearsal",
+    "alternate",
+    "rough mix",
+)
+_PARENTHETICAL_RE = re.compile(r"[\(\[][^\)\]]*[\)\]]")
+_TRAILING_QUALIFIER_RE = re.compile(r"\s+[-\u2013\u2014]\s+(.+)$")
+
+
+def _is_unwanted_variant(title: str) -> bool:
+    lowered = title.lower()
+    for bracketed in _PARENTHETICAL_RE.findall(lowered):
+        inner = bracketed.strip("()[]")
+        if any(marker in inner for marker in _VARIANT_MARKERS):
+            return True
+    trailing = _TRAILING_QUALIFIER_RE.search(lowered)
+    if trailing and any(marker in trailing.group(1) for marker in _VARIANT_MARKERS):
+        return True
+    return False
+
+
+def _track_key(title: str) -> str:
+    stripped = _PARENTHETICAL_RE.sub("", title)
+    stripped = _TRAILING_QUALIFIER_RE.sub("", stripped)
+    normalized = re.sub(r"[^a-z0-9]+", "", stripped.lower())
+    return normalized if normalized else title.lower().strip()
+
+
+CURATION_CANDIDATE_POOL = 4
+
+
+def _pick_best_candidate(tracks: list["Track"]) -> "Track | None":
+    if not tracks:
+        return None
+    for candidate in tracks:
+        if not _is_unwanted_variant(candidate.title):
+            return candidate
+    return tracks[0]
 
 
 @dataclass(slots=True)
@@ -278,6 +336,43 @@ class CurationCog(commands.Cog, name="CurationCog"):
         self._refill_seeds: dict[int, tuple[str, str]] = {}
         self._refill_in_progress: set[int] = set()
         self._curation_sem: dict[int, asyncio.Semaphore] = {}
+        self._resolve_tasks: dict[int, set[asyncio.Task[Any]]] = {}
+        self._epoch: dict[int, int] = {}
+
+    def _register_resolve_task(self, guild_id: int) -> int:
+        epoch = self._epoch.get(guild_id, 0)
+        task = asyncio.current_task()
+        if task is not None:
+            self._resolve_tasks.setdefault(guild_id, set()).add(task)
+        return epoch
+
+    def _unregister_resolve_task(self, guild_id: int) -> None:
+        task = asyncio.current_task()
+        if task is None:
+            return
+        bucket = self._resolve_tasks.get(guild_id)
+        if bucket is not None:
+            bucket.discard(task)
+
+    def _is_current(self, guild_id: int, epoch: int) -> bool:
+        return self._epoch.get(guild_id, 0) == epoch
+
+    async def cancel_guild_activity(self, guild_id: int) -> None:
+        self._epoch[guild_id] = self._epoch.get(guild_id, 0) + 1
+        tasks = self._resolve_tasks.pop(guild_id, None)
+        if tasks:
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+        self._refill_in_progress.discard(guild_id)
+        self._refill_seeds.pop(guild_id, None)
+        self._last_queue_len.pop(guild_id, None)
+        session = self._sessions.pop(guild_id, None)
+        if session and session.panel_msg:
+            with contextlib.suppress(discord.HTTPException):
+                await session.panel_msg.edit(
+                    content="Session ended — I left the voice channel.", embed=None, view=None
+                )
 
     async def cog_load(self) -> None:
         connector = aiohttp.TCPConnector(limit=5, ttl_dns_cache=300)
@@ -375,7 +470,7 @@ class CurationCog(commands.Cog, name="CurationCog"):
         self, artist: str, track: str, limit: int = MAX_PLAYLIST
     ) -> list[CuratedTrack]:
         seed_key = _artist_key(artist)
-        seen_titles: set[str] = {track.lower()}
+        seen_titles: set[str] = {_track_key(track)}
         result: list[CuratedTrack] = []
 
         sim_data = await self._lastfm("track.getsimilar", artist=artist, track=track, limit=50)
@@ -386,11 +481,14 @@ class CurationCog(commands.Cog, name="CurationCog"):
                 score = float(item.get("match", 0.0))
                 if not t_name or not a_name:
                     continue
-                if t_name.lower() in seen_titles:
+                if _is_unwanted_variant(t_name):
+                    continue
+                key = _track_key(t_name)
+                if key in seen_titles:
                     continue
                 if _artist_key(a_name) == seed_key:
                     continue
-                seen_titles.add(t_name.lower())
+                seen_titles.add(key)
                 result.append(CuratedTrack(title=t_name, artist=a_name, match_score=score))
 
         if len(result) < 10:
@@ -414,11 +512,14 @@ class CurationCog(commands.Cog, name="CurationCog"):
                     akey = _artist_key(a)
                     for item in resp.get("toptracks", {}).get("track", []):
                         t = str(item.get("name", "")).strip()
-                        if not t or t.lower() in seen_titles:
+                        if not t or _is_unwanted_variant(t):
+                            continue
+                        key = _track_key(t)
+                        if key in seen_titles:
                             continue
                         if artist_counts.get(akey, 0) >= 2:
                             continue
-                        seen_titles.add(t.lower())
+                        seen_titles.add(key)
                         artist_counts[akey] = artist_counts.get(akey, 0) + 1
                         result.append(CuratedTrack(title=t, artist=a, match_score=0.0))
 
@@ -429,8 +530,11 @@ class CurationCog(commands.Cog, name="CurationCog"):
         if seed_data:
             for item in seed_data.get("toptracks", {}).get("track", []):
                 t = str(item.get("name", "")).strip()
-                if t and t.lower() not in seen_titles:
-                    seen_titles.add(t.lower())
+                if not t or _is_unwanted_variant(t):
+                    continue
+                key = _track_key(t)
+                if key not in seen_titles:
+                    seen_titles.add(key)
                     seed_tracks.append(CuratedTrack(title=t, artist=artist, match_score=1.0))
                 if len(seed_tracks) >= 5:
                     break
@@ -438,18 +542,29 @@ class CurationCog(commands.Cog, name="CurationCog"):
         return (seed_tracks + result)[:limit]
 
     async def _get_artist_top_tracks(self, artist: str, limit: int = MAX_PLAYLIST) -> list[CuratedTrack]:
-        data = await self._lastfm("artist.gettoptracks", artist=artist, limit=limit)
+        data = await self._lastfm("artist.gettoptracks", artist=artist, limit=limit * 2)
         if not data:
             return []
         raw = data.get("toptracks", {}).get("track", [])
-        return [
-            CuratedTrack(
-                title=str(item.get("name", "")),
-                artist=str(item.get("artist", {}).get("name", artist)),
+        seen_titles: set[str] = set()
+        out: list[CuratedTrack] = []
+        for item in raw:
+            title = str(item.get("name", ""))
+            if not title or _is_unwanted_variant(title):
+                continue
+            key = _track_key(title)
+            if key in seen_titles:
+                continue
+            seen_titles.add(key)
+            out.append(
+                CuratedTrack(
+                    title=title,
+                    artist=str(item.get("artist", {}).get("name", artist)),
+                )
             )
-            for item in raw
-            if item.get("name")
-        ][:limit]
+            if len(out) >= limit:
+                break
+        return out
 
     def _build_session_embed(self, session: CurationSession) -> discord.Embed:
         tracks = [t for t in session.tracks if t.selected]
@@ -494,6 +609,23 @@ class CurationCog(commands.Cog, name="CurationCog"):
             await interaction.followup.send("MusicCog is not loaded.", ephemeral=True)
             return 0, len(tracks)
 
+        my_epoch = self._register_resolve_task(guild_id)
+        try:
+            return await self._resolve_and_queue_inner(
+                music, guild_id, requester_id, tracks, interaction, my_epoch
+            )
+        finally:
+            self._unregister_resolve_task(guild_id)
+
+    async def _resolve_and_queue_inner(
+        self,
+        music: "MusicCog",
+        guild_id: int,
+        requester_id: int,
+        tracks: list[CuratedTrack],
+        interaction: discord.Interaction,
+        my_epoch: int,
+    ) -> tuple[int, int]:
         player = music.players.get(guild_id)
 
         if player is None:
@@ -508,9 +640,18 @@ class CurationCog(commands.Cog, name="CurationCog"):
                     return 0, len(tracks)
                 player = await music._get_player(guild)
                 await player.connect(vc)
+            except asyncio.CancelledError:
+                if player is not None and player.voice_client and player.voice_client.is_connected():
+                    with contextlib.suppress(Exception):
+                        await player.voice_client.disconnect(force=True)
+                raise
             except Exception as exc:
                 log.exception("Auto-join failed: %s", exc)
                 await interaction.followup.send(f"Couldn't join your voice channel: `{exc}`", ephemeral=True)
+                return 0, len(tracks)
+            if not self._is_current(guild_id, my_epoch):
+                with contextlib.suppress(Exception):
+                    await player.voice_client.disconnect(force=True) if player.voice_client else None
                 return 0, len(tracks)
 
         queued = 0
@@ -524,21 +665,24 @@ class CurationCog(commands.Cog, name="CurationCog"):
 
         async def _resolve_one(ct: CuratedTrack) -> None:
             nonlocal queued, failed, resolved_count
-            n = self.bot.settings.ytdlp_search_results
-            query = f"ytsearch{n}:{ct.artist} - {ct.title} official audio"
+            query = f"ytsearch{CURATION_CANDIDATE_POOL}:{ct.artist} - {ct.title} official audio"
             try:
                 resolved, _ = await music._extract_tracks(
                     query,
                     requester_id=requester_id,
                     guild_id=guild_id,
                     curation_mode=True,
+                    limit=CURATION_CANDIDATE_POOL,
                 )
-                if resolved:
+                if not self._is_current(guild_id, my_epoch):
+                    return
+                best = _pick_best_candidate(resolved)
+                if best is not None:
                     if music._check_per_user_limit(player, requester_id):
                         return
                     if len(player.queue) >= music.bot.settings.max_queue_size:
                         return
-                    await player.enqueue(resolved[0])
+                    await player.enqueue(best)
                     added.append(
                         f"**{discord.utils.escape_markdown(ct.artist)}** — "
                         f"{discord.utils.escape_markdown(ct.title)}"
@@ -549,6 +693,8 @@ class CurationCog(commands.Cog, name="CurationCog"):
                 else:
                     log.debug("No yt-dlp result for: %s - %s", ct.artist, ct.title)
                     failed += 1
+            except asyncio.CancelledError:
+                raise
             except Exception as exc:
                 log.warning("Failed to resolve %s - %s: %s", ct.artist, ct.title, exc)
                 failed += 1
@@ -584,20 +730,21 @@ class CurationCog(commands.Cog, name="CurationCog"):
             reporter.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await reporter
-            bar = "▓" * 16
-            recent = "\n".join(f"· {t}" for t in added[-8:])
-            text = f"`{bar}` {total}/{total} resolved — **{queued}** queued" + (
-                f"\n\n{recent}" if recent else ""
-            )
-            try:
-                await interaction.edit_original_response(content=text)
-            except discord.NotFound:
-                channel = interaction.channel
-                if channel and hasattr(channel, "send"):
-                    with contextlib.suppress(discord.HTTPException):
-                        await channel.send(text)
-            except discord.HTTPException:
-                pass
+            if self._is_current(guild_id, my_epoch):
+                bar = "▓" * 16
+                recent = "\n".join(f"· {t}" for t in added[-8:])
+                text = f"`{bar}` {total}/{total} resolved — **{queued}** queued" + (
+                    f"\n\n{recent}" if recent else ""
+                )
+                try:
+                    await interaction.edit_original_response(content=text)
+                except discord.NotFound:
+                    channel = interaction.channel
+                    if channel and hasattr(channel, "send"):
+                        with contextlib.suppress(discord.HTTPException):
+                            await channel.send(text)
+                except discord.HTTPException:
+                    pass
 
         music._persist_snapshot(guild_id)
         return queued, failed
@@ -696,6 +843,7 @@ class CurationCog(commands.Cog, name="CurationCog"):
         limit_hit = asyncio.Event()
         concurrency = max(1, getattr(self.bot.settings, "ytdlp_curation_concurrency", 3))
         sem = self._curation_sem.setdefault(context.guild.id, asyncio.Semaphore(concurrency))
+        my_epoch = self._register_resolve_task(context.guild.id)
 
         async def _load_one(entry: dict[str, Any]) -> None:
             nonlocal queued, failed
@@ -706,14 +854,17 @@ class CurationCog(commands.Cog, name="CurationCog"):
                     return
                 query = str(entry["query"])
                 try:
-                    n = music.bot.settings.ytdlp_search_results
                     tracks, _ = await music._extract_tracks(
-                        f"ytsearch{n}:{query}",
+                        f"ytsearch{CURATION_CANDIDATE_POOL}:{query}",
                         requester_id=context.author.id,
                         guild_id=context.guild.id,
                         curation_mode=True,
+                        limit=CURATION_CANDIDATE_POOL,
                     )
-                    if not tracks:
+                    if not self._is_current(context.guild.id, my_epoch):
+                        return
+                    best = _pick_best_candidate(tracks)
+                    if best is None:
                         failed += 1
                         return
                     if music._check_per_user_limit(player, context.author.id):
@@ -722,12 +873,20 @@ class CurationCog(commands.Cog, name="CurationCog"):
                     if len(player.queue) >= music.bot.settings.max_queue_size:
                         limit_hit.set()
                         return
-                    await player.enqueue(tracks[0])
+                    await player.enqueue(best)
                     queued += 1
+                except asyncio.CancelledError:
+                    raise
                 except Exception:
                     failed += 1
 
-        await asyncio.gather(*(_load_one(dict(entry)) for entry in entries), return_exceptions=True)
+        try:
+            await asyncio.gather(*(_load_one(dict(entry)) for entry in entries), return_exceptions=True)
+        finally:
+            self._unregister_resolve_task(context.guild.id)
+
+        if not self._is_current(context.guild.id, my_epoch):
+            return
 
         music._persist_snapshot(context.guild.id)
         await msg.edit(
@@ -815,84 +974,101 @@ class CurationCog(commands.Cog, name="CurationCog"):
         if player.queue or player.current:
             return
 
-        candidates = await self._get_similar_tracks(artist, track, limit=8)
-        if not candidates:
-            return
+        my_epoch = self._register_resolve_task(guild.id)
+        try:
+            candidates = await self._get_similar_tracks(artist, track, limit=8)
+            if not candidates:
+                return
 
-        played_titles = {t.title.lower() for t in player.history}
-        candidates = [c for c in candidates if c.title.lower() not in played_titles]
-        if not candidates:
-            return
+            played_keys = {_track_key(t.title) for t in player.history}
+            candidates = [c for c in candidates if _track_key(c.title) not in played_keys]
+            if not candidates:
+                return
 
-        for ct in candidates:
-            n = self.bot.settings.ytdlp_search_results
-            query = f"ytsearch{n}:{ct.artist} - {ct.title}"
-            try:
-                resolved, _ = await music._extract_tracks(
-                    query,
-                    requester_id=self.bot.user.id if self.bot.user else 0,
-                    guild_id=guild.id,
-                    curation_mode=True,
-                )
-            except Exception:
-                continue
-            if not resolved:
-                continue
-            if len(player.queue) >= music.bot.settings.max_queue_size:
+            for ct in candidates:
+                query = f"ytsearch{CURATION_CANDIDATE_POOL}:{ct.artist} - {ct.title}"
+                try:
+                    resolved, _ = await music._extract_tracks(
+                        query,
+                        requester_id=self.bot.user.id if self.bot.user else 0,
+                        guild_id=guild.id,
+                        curation_mode=True,
+                        limit=CURATION_CANDIDATE_POOL,
+                    )
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    continue
+                best = _pick_best_candidate(resolved)
+                if best is None:
+                    continue
+                if not self._is_current(guild.id, my_epoch):
+                    return
+                if len(player.queue) >= music.bot.settings.max_queue_size:
+                    break
+                await player.enqueue(best)
+                self._refill_seeds[guild.id] = (ct.artist, ct.title)
                 break
-            await player.enqueue(resolved[0])
-            self._refill_seeds[guild.id] = (ct.artist, ct.title)
-            break
 
-        music._persist_snapshot(guild.id)
+            if self._is_current(guild.id, my_epoch):
+                music._persist_snapshot(guild.id)
+        finally:
+            self._unregister_resolve_task(guild.id)
 
     async def _do_refill(self, guild: discord.Guild, artist: str, track: str) -> None:
         music: MusicCog | None = self.bot.get_cog("MusicCog")
         if music is None:
             return
 
-        channel_id = None
-        session = self._sessions.get(guild.id)
-        if session:
-            channel_id = session.channel_id
-        else:
+        my_epoch = self._register_resolve_task(guild.id)
+        try:
+            channel_id = None
+            session = self._sessions.get(guild.id)
+            if session:
+                channel_id = session.channel_id
+            else:
+                player = music.players.get(guild.id)
+                if player and player.announce_channel_id:
+                    channel_id = player.announce_channel_id
+
+            channel = self.bot.get_channel(channel_id) if channel_id else None
+            if not isinstance(channel, discord.TextChannel):
+                return
+
+            tracks = await self._get_similar_tracks(artist, track, limit=REFILL_MAX + 10)
+            if not tracks:
+                return
+
+            if not self._is_current(guild.id, my_epoch):
+                return
+
             player = music.players.get(guild.id)
-            if player and player.announce_channel_id:
-                channel_id = player.announce_channel_id
+            if player:
+                queued_keys = {_track_key(t.title) for t in player.queue}
+                if player.current:
+                    queued_keys.add(_track_key(player.current.title))
+                tracks = [t for t in tracks if _track_key(t.title) not in queued_keys]
 
-        channel = self.bot.get_channel(channel_id) if channel_id else None
-        if not isinstance(channel, discord.TextChannel):
-            return
+            tracks = tracks[:REFILL_MAX]
+            if not tracks:
+                return
 
-        tracks = await self._get_similar_tracks(artist, track, limit=REFILL_MAX + 10)
-        if not tracks:
-            return
+            author_id = (
+                session.author_id
+                if session
+                else (player.current.requester_id if player and player.current else 0)
+            )
 
-        player = music.players.get(guild.id)
-        if player:
-            queued_titles = {t.title.lower() for t in player.queue}
-            if player.current:
-                queued_titles.add(player.current.title.lower())
-            tracks = [t for t in tracks if t.title.lower() not in queued_titles]
-
-        tracks = tracks[:REFILL_MAX]
-        if not tracks:
-            return
-
-        author_id = (
-            session.author_id
-            if session
-            else (player.current.requester_id if player and player.current else 0)
-        )
-
-        embed = self._build_refill_embed(tracks, f"{artist} – {track}")
-        view = RefillView(self, guild.id, author_id, tracks)
-        msg = await channel.send(
-            f"Queue is running low — here are {len(tracks)} more similar tracks:",
-            embed=embed,
-            view=view,
-        )
-        view.message = msg
+            embed = self._build_refill_embed(tracks, f"{artist} – {track}")
+            view = RefillView(self, guild.id, author_id, tracks)
+            msg = await channel.send(
+                f"Queue is running low — here are {len(tracks)} more similar tracks:",
+                embed=embed,
+                view=view,
+            )
+            view.message = msg
+        finally:
+            self._unregister_resolve_task(guild.id)
 
 
 async def setup(bot: "MusicBot") -> None:

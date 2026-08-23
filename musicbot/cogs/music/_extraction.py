@@ -360,9 +360,6 @@ class ExtractionMixin(MusicCogBase):
                 break
         return tracks, skipped
 
-    async def _extract_search_tracks(self, query: str, requester_id: int) -> tuple[list[Track], int]:
-        return await self._extract_search_candidates(query, requester_id, limit=1)
-
     async def _extract_tracks(
         self,
         query: str,
@@ -370,12 +367,13 @@ class ExtractionMixin(MusicCogBase):
         *,
         guild_id: int | None = None,
         curation_mode: bool = False,
+        limit: int = 1,
     ) -> tuple[list[Track], int]:
         token = _CURRENT_GUILD_ID.set(guild_id)
         try:
             if query.startswith("ytsearch"):
                 return await self._extract_search_candidates(
-                    query, requester_id, limit=1, curation_mode=curation_mode
+                    query, requester_id, limit=limit, curation_mode=curation_mode
                 )
             if self._is_playlist_query(query):
                 return await self._extract_playlist_tracks(query, requester_id)
