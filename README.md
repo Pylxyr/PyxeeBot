@@ -387,3 +387,27 @@ PyxeeBot/
 ## License
 
 MIT
+
+
+## Verified implementation details
+
+This documentation reflects the current source in `main`.
+
+### Playback and queue behavior
+
+- `!play` queues yt-dlp's top search result; `!search` presents interactive candidates.
+- Supported controls include `join`, `leave`, `playnext`, `pause`, `resume`, `skip`, `forceskip`, `skipto`, `prev`, `replay`, `repeat`, `loop`, `stop`, and `nowplaying`.
+- Queue tools include `queue`, `remove`, `clear`, `shuffle`, `move`, `history`, `toptracks`, and `toprequestors`.
+- `!playlist save|list|show|load|delete` manages named server playlists.
+
+### Curation and permissions
+
+- `!vibe`, `!vibe-save`, and `!vibe-load` use Last.fm when `LASTFM_API_KEY` is configured. Curation panels allow exclusions, Queue All, save, and cancel actions.
+- Autoplay refills an empty queue with one similar track from the last completed track.
+- DJ-gated actions use the configured DJ role or Manage Server permission; skip voting is based on active human listeners.
+
+### Runtime safeguards
+
+- Queue snapshots are debounced and stored in SQLite, then restored after restart when enabled.
+- yt-dlp extraction and curation concurrency are bounded; stream URLs use a bounded TTL cache and are refreshed before expiry.
+- FFmpeg re-encodes to Opus. Idle and empty-channel disconnect timeouts, playlist limits, search count, cache size, and bitrate are configurable through `.env`.
