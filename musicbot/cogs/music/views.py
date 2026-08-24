@@ -397,7 +397,7 @@ class NowPlayingView(discord.ui.View):
 
     @discord.ui.button(
         emoji="\N{BLACK RIGHT-POINTING TRIANGLE WITH DOUBLE VERTICAL BAR}",
-        style=discord.ButtonStyle.secondary,
+        style=discord.ButtonStyle.primary,
         row=0,
     )
     async def pause_resume(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
@@ -425,7 +425,7 @@ class NowPlayingView(discord.ui.View):
         msg = await self.cog._toggle_loop_for_member(player, interaction.user)
         await self._respond(interaction, msg)
 
-    @discord.ui.button(emoji="\N{SCROLL}", style=discord.ButtonStyle.secondary, row=1)
+    @discord.ui.button(label="Queue", emoji="\N{SCROLL}", style=discord.ButtonStyle.secondary, row=1)
     async def queue(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
         player = self.cog.players.get(self.guild_id)
         if player is None:
@@ -434,7 +434,7 @@ class NowPlayingView(discord.ui.View):
         view = self.cog._build_queue_view(self.guild_id, player, author_id=interaction.user.id, page=0)
         await interaction.response.send_message(embed=view.build_embed(), view=view, ephemeral=True)
 
-    @discord.ui.button(emoji="\N{CROSS MARK}", style=discord.ButtonStyle.danger, row=1)
+    @discord.ui.button(label="Close", style=discord.ButtonStyle.danger, row=1)
     async def close(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
         if not isinstance(interaction.user, discord.Member) or not await self.cog._is_dj(interaction.user):
             await interaction.response.send_message(
