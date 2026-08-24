@@ -366,7 +366,9 @@ class NowPlayingView(discord.ui.View):
             await interaction.response.edit_message(embed=embed, view=self)
 
     @discord.ui.button(
-        emoji="\N{BLACK LEFT-POINTING DOUBLE TRIANGLE WITH VERTICAL BAR}", style=discord.ButtonStyle.secondary
+        emoji="\N{BLACK LEFT-POINTING DOUBLE TRIANGLE WITH VERTICAL BAR}",
+        style=discord.ButtonStyle.secondary,
+        row=0,
     )
     async def previous(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
         player = self.cog.players.get(self.guild_id)
@@ -381,6 +383,7 @@ class NowPlayingView(discord.ui.View):
     @discord.ui.button(
         emoji="\N{BLACK RIGHT-POINTING DOUBLE TRIANGLE WITH VERTICAL BAR}",
         style=discord.ButtonStyle.secondary,
+        row=0,
     )
     async def skip(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
         player = self.cog.players.get(self.guild_id)
@@ -395,6 +398,7 @@ class NowPlayingView(discord.ui.View):
     @discord.ui.button(
         emoji="\N{BLACK RIGHT-POINTING TRIANGLE WITH DOUBLE VERTICAL BAR}",
         style=discord.ButtonStyle.secondary,
+        row=0,
     )
     async def pause_resume(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         player = self.cog.players.get(self.guild_id)
@@ -407,7 +411,9 @@ class NowPlayingView(discord.ui.View):
         await self._respond(interaction, msg)
 
     @discord.ui.button(
-        emoji="\N{CLOCKWISE RIGHTWARDS AND LEFTWARDS OPEN CIRCLE ARROWS}", style=discord.ButtonStyle.secondary
+        emoji="\N{CLOCKWISE RIGHTWARDS AND LEFTWARDS OPEN CIRCLE ARROWS}",
+        style=discord.ButtonStyle.secondary,
+        row=0,
     )
     async def loop(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
         player = self.cog.players.get(self.guild_id)
@@ -419,7 +425,7 @@ class NowPlayingView(discord.ui.View):
         msg = await self.cog._toggle_loop_for_member(player, interaction.user)
         await self._respond(interaction, msg)
 
-    @discord.ui.button(emoji="\N{SCROLL}", style=discord.ButtonStyle.secondary)
+    @discord.ui.button(emoji="\N{SCROLL}", style=discord.ButtonStyle.secondary, row=1)
     async def queue(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
         player = self.cog.players.get(self.guild_id)
         if player is None:

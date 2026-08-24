@@ -41,5 +41,6 @@ class SearchCommandsMixin(MusicCogBase):
         self._kick_pipeline(context.guild.id)
         await self._refresh_now_playing_message(context.guild.id)
         await context.send(
-            f"Queued [{discord.utils.escape_markdown(selected.title)}]({selected.webpage_url})."
+            f"Queued [{discord.utils.escape_markdown(selected.title)}]({selected.webpage_url}).",
+            suppress_embeds=not player.show_link_previews,
         )

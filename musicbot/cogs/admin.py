@@ -110,6 +110,29 @@ class AdminCog(commands.Cog):
         )
         await context.send(f"Requester mentions turned {state} — {detail}")
 
+    @commands.hybrid_command(name="linkpreviews", aliases=["preview", "previews"])
+    @commands.guild_only()
+    @commands.has_guild_permissions(manage_guild=True)
+    @commands.cooldown(1, 5, commands.BucketType.guild)
+    async def linkpreviews(self, context: GuildContext) -> None:
+        guild_id = context.guild.id
+        current = await self.bot.database.get_show_link_previews(guild_id)
+        new_value = not current
+        await self.bot.database.set_show_link_previews(
+            guild_id, new_value, default_prefix=self.bot.settings.default_prefix
+        )
+        music = self.bot.get_cog("MusicCog")
+        player = music.players.get(guild_id) if music else None
+        if player is not None:
+            player.show_link_previews = new_value
+        state = "on" if new_value else "off"
+        detail = (
+            "queue confirmations will show Discord's native YouTube preview."
+            if new_value
+            else "queue confirmations will no longer show Discord's native YouTube preview."
+        )
+        await context.send(f"Link previews turned {state} — {detail}")
+
     @commands.hybrid_command(name="stats")
     @_bot_owner_check()
     async def stats(self, context: GuildContext) -> None:

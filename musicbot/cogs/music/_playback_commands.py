@@ -169,7 +169,11 @@ class PlaybackCommandsMixin(MusicCogBase):
                     f"from your last session are in the queue. Run `!clear` to start fresh."
                 )
             self._restored_guilds.discard(context.guild.id)
-        await (fetch_msg.edit(content=result) if fetch_msg else context.send(result))
+        await (
+            fetch_msg.edit(content=result, suppress=not player.show_link_previews)
+            if fetch_msg
+            else context.send(result, suppress_embeds=not player.show_link_previews)
+        )
 
     @commands.hybrid_command(name="playnext", aliases=["pn"])
     @commands.guild_only()
@@ -200,7 +204,10 @@ class PlaybackCommandsMixin(MusicCogBase):
         self._persist_snapshot(context.guild.id)
         self._kick_pipeline(context.guild.id)
         await self._refresh_now_playing_message(context.guild.id)
-        await fetch_msg.edit(content=f"Queued next: [{track.escaped_title}]({track.webpage_url}).")
+        await fetch_msg.edit(
+            content=f"Queued next: [{track.escaped_title}]({track.webpage_url}).",
+            suppress=not player.show_link_previews,
+        )
 
     @commands.hybrid_command(name="repeat", aliases=["rp"])
     @commands.guild_only()

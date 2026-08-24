@@ -9,7 +9,7 @@ from typing import Any
 
 import aiosqlite
 
-_CURRENT_SCHEMA_VERSION = 4
+_CURRENT_SCHEMA_VERSION = 5
 _HISTORY_MAX_ROWS = 5000
 
 
@@ -21,6 +21,7 @@ class Database:
         self._stay_connected_cache: dict[int, bool] = {}
         self._autoplay_cache: dict[int, bool] = {}
         self._show_requester_mentions_cache: dict[int, bool] = {}
+        self._show_link_previews_cache: dict[int, bool] = {}
         self._conn: aiosqlite.Connection | None = None
         self._snapshot_hashes: dict[int, str] = {}
         self._write_count = 0
@@ -60,7 +61,8 @@ class Database:
                 dj_role_id               INTEGER,
                 stay_connected           INTEGER NOT NULL DEFAULT 0,
                 autoplay                 INTEGER NOT NULL DEFAULT 0,
-                show_requester_mentions  INTEGER NOT NULL DEFAULT 0
+                show_requester_mentions  INTEGER NOT NULL DEFAULT 0,
+                show_link_previews       INTEGER NOT NULL DEFAULT 1
             )
             """
         )
@@ -142,7 +144,9 @@ class Database:
         if row is None:
             async with conn.execute("PRAGMA table_info(guild_settings)") as cursor:
                 existing = {r["name"] async for r in cursor}
-            if "show_requester_mentions" in existing:
+            if "show_link_previews" in existing:
+                current = 5
+            elif "show_requester_mentions" in existing:
                 current = 4
             elif "autoplay" in existing:
                 current = 3
@@ -178,6 +182,13 @@ class Database:
                 "ALTER TABLE guild_settings ADD COLUMN show_requester_mentions INTEGER NOT NULL DEFAULT 0"
             )
             current = 4
+            await conn.execute("UPDATE schema_version SET version = ?", (current,))
+
+        if current < 5:
+            await conn.execute(
+                "ALTER TABLE guild_settings ADD COLUMN show_link_previews INTEGER NOT NULL DEFAULT 1"
+            )
+            current = 5
             await conn.execute("UPDATE schema_version SET version = ?", (current,))
 
     async def get_prefix(self, guild_id: int) -> str | None:
@@ -484,6 +495,35 @@ class Database:
             )
             await self._conn.commit()
         self._show_requester_mentions_cache[guild_id] = enabled
+        self._prefix_cache.setdefault(guild_id, default_prefix)
+
+    async def get_show_link_previews(self, guild_id: int) -> bool:
+        if self._conn is None:
+            return True
+        if guild_id in self._show_link_previews_cache:
+            return self._show_link_previews_cache[guild_id]
+        async with self._conn.execute(
+            "SELECT show_link_previews FROM guild_settings WHERE guild_id = ?", (guild_id,)
+        ) as cursor:
+            row = await cursor.fetchone()
+        value = bool(row["show_link_previews"]) if row else True
+        self._show_link_previews_cache[guild_id] = value
+        return value
+
+    async def set_show_link_previews(self, guild_id: int, enabled: bool, default_prefix: str = "!") -> None:
+        if self._conn is None:
+            return
+        async with self._write_lock:
+            await self._conn.execute(
+                """
+                INSERT INTO guild_settings (guild_id, prefix, show_link_previews)
+                VALUES (?, ?, ?)
+                ON CONFLICT(guild_id) DO UPDATE SET show_link_previews = excluded.show_link_previews
+                """,
+                (guild_id, default_prefix, int(enabled)),
+            )
+            await self._conn.commit()
+        self._show_link_previews_cache[guild_id] = enabled
         self._prefix_cache.setdefault(guild_id, default_prefix)
 
     async def add_play_history(self, guild_id: int, title: str, webpage_url: str, requester_id: int) -> None:
