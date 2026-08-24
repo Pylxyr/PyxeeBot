@@ -31,6 +31,7 @@ class LifecycleMixin(MusicCogBase):
                 )
                 self.players[guild.id] = player
                 player.stay_connected = await self.bot.database.get_stay_connected(guild.id)
+                player.show_mentions = await self.bot.database.get_show_requester_mentions(guild.id)
                 await self._restore_snapshot(player)
             return player
 

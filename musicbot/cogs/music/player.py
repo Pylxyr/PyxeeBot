@@ -46,6 +46,7 @@ class GuildPlayer:
         self.loop_mode: LoopMode = "off"
         self.rewind_requested = False
         self.stay_connected = False
+        self.show_mentions = False
         self._connected_at: float = 0.0
 
         self.next_event = asyncio.Event()

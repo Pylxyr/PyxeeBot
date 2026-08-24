@@ -5,6 +5,7 @@ import random
 import discord
 from discord.ext import commands
 
+from musicbot.cogs.music.models import format_requester
 from musicbot.cogs.music._base import MusicCogBase
 from musicbot.cogs.music._context import GuildContext
 from musicbot.cogs.music.constants import EMBED_COLOUR
@@ -21,7 +22,8 @@ class QueueCommandsMixin(MusicCogBase):
             await context.send("No tracks have been played this session.")
             return
         lines = [
-            f"`{i}.` [{t.escaped_title}]({t.webpage_url}) `[{t.duration_label}]` — <@{t.requester_id}>"
+            f"`{i}.` [{t.escaped_title}]({t.webpage_url}) `[{t.duration_label}]` — "
+            f"{format_requester(context.guild, t.requester_id, show_mentions=player.show_mentions if player else False)}"
             for i, t in enumerate(reversed(hist), start=1)
         ]
         embed = discord.Embed(title="Recent History", description="\n".join(lines[:20]), colour=EMBED_COLOUR)
@@ -57,9 +59,12 @@ class QueueCommandsMixin(MusicCogBase):
         if not rows:
             await context.send("No play history recorded yet.")
             return
+        show_mentions = await self.bot.database.get_show_requester_mentions(context.guild.id)
         medals = {1: "🥇", 2: "🥈", 3: "🥉"}
         lines = [
-            f"{medals.get(i, f'`{i}.`')} <@{row['requester_id']}> — {row['request_count']}× requests"
+            f"{medals.get(i, f'`{i}.`')} "
+            f"{format_requester(context.guild, row['requester_id'], show_mentions=show_mentions)} — "
+            f"{row['request_count']}× requests"
             for i, row in enumerate(rows, start=1)
         ]
         embed = discord.Embed(

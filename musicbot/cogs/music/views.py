@@ -17,7 +17,7 @@ from musicbot.cogs.music.constants import (
     SEARCH_SELECTION_PAGE_SIZE,
     SEARCH_SELECTION_TIMEOUT_SECONDS,
 )
-from musicbot.cogs.music.models import Track
+from musicbot.cogs.music.models import Track, format_requester
 
 if TYPE_CHECKING:
     from musicbot.cogs.music._base import MusicCogBase
@@ -246,13 +246,16 @@ class QueueView(discord.ui.View):
         start = self.page_index * QUEUE_PAGE_SIZE
         page = tracks[start : start + QUEUE_PAGE_SIZE]
 
+        guild = self.cog.bot.get_guild(self.guild_id)
         lines: list[str] = []
         for i, track in enumerate(page, start=start):
             duration = track.duration_label if track.duration else "pending"
             prefix = "▶" if i == 0 and self.player.current else f"{i}."
+            requester_label = format_requester(
+                guild, track.requester_id, show_mentions=self.player.show_mentions
+            )
             lines.append(
-                f"`{prefix}` [{track.escaped_title}]"
-                f"({track.webpage_url}) `[{duration}]` — <@{track.requester_id}>"
+                f"`{prefix}` [{track.escaped_title}]({track.webpage_url}) `[{duration}]` — {requester_label}"
             )
         embed.description = "\n".join(lines) if lines else "Nothing queued."
 
@@ -424,6 +427,17 @@ class NowPlayingView(discord.ui.View):
             return
         view = self.cog._build_queue_view(self.guild_id, player, author_id=interaction.user.id, page=0)
         await interaction.response.send_message(embed=view.build_embed(), view=view, ephemeral=True)
+
+    @discord.ui.button(emoji="\N{CROSS MARK}", style=discord.ButtonStyle.danger, row=1)
+    async def close(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
+        if not isinstance(interaction.user, discord.Member) or not await self.cog._is_dj(interaction.user):
+            await interaction.response.send_message(
+                "DJ role or Manage Server permission required to close this.", ephemeral=True
+            )
+            return
+        self.stop()
+        self.cog.now_playing_messages.pop(self.guild_id, None)
+        await _close_interaction_message(interaction, closed_text="Now Playing panel closed.")
 
     async def on_timeout(self) -> None:
         _disable_view_items(self)

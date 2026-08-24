@@ -87,6 +87,29 @@ class AdminCog(commands.Cog):
             message += " Note: LASTFM_API_KEY isn't set, so autoplay won't find any tracks yet."
         await context.send(message)
 
+    @commands.hybrid_command(name="mentions")
+    @commands.guild_only()
+    @commands.has_guild_permissions(manage_guild=True)
+    @commands.cooldown(1, 5, commands.BucketType.guild)
+    async def mentions(self, context: GuildContext) -> None:
+        guild_id = context.guild.id
+        current = await self.bot.database.get_show_requester_mentions(guild_id)
+        new_value = not current
+        await self.bot.database.set_show_requester_mentions(
+            guild_id, new_value, default_prefix=self.bot.settings.default_prefix
+        )
+        music = self.bot.get_cog("MusicCog")
+        player = music.players.get(guild_id) if music else None
+        if player is not None:
+            player.show_mentions = new_value
+        state = "on" if new_value else "off"
+        detail = (
+            "requester tags will now ping the user."
+            if new_value
+            else "requester tags now show a display name instead of pinging."
+        )
+        await context.send(f"Requester mentions turned {state} — {detail}")
+
     @commands.hybrid_command(name="stats")
     @_bot_owner_check()
     async def stats(self, context: GuildContext) -> None:

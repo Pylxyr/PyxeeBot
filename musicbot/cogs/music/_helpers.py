@@ -45,6 +45,31 @@ class CommandHelpersMixin(MusicCogBase):
         if not await self._is_dj(context.author):
             raise commands.CheckFailure("DJ role or Manage Server permission required.")
 
+    async def _disable_persistent_modes(self, guild_id: int, player: GuildPlayer | None) -> list[str]:
+        """Turn off 24/7 mode and autoplay for a guild.
+
+        Used by !leave and !stop so a manual stop doesn't get silently
+        undone the moment the bot reconnects or the queue empties again.
+        Returns the human-readable names of whichever modes were actually
+        on (and are now off), for confirmation messages.
+        """
+        disabled: list[str] = []
+        if await self.bot.database.get_stay_connected(guild_id):
+            await self.bot.database.set_stay_connected(
+                guild_id, False, default_prefix=self.bot.settings.default_prefix
+            )
+            disabled.append("24/7 mode")
+        if await self.bot.database.get_autoplay(guild_id):
+            await self.bot.database.set_autoplay(
+                guild_id, False, default_prefix=self.bot.settings.default_prefix
+            )
+            disabled.append("autoplay")
+        if player is not None:
+            player.stay_connected = False
+            if not player.current and not player.queue:
+                player.rearm_idle_timer()
+        return disabled
+
     async def _join_for_context(self, context: GuildContext) -> GuildPlayer:
         channel = await self._ensure_author_voice(context)
         player = await self._get_player(context.guild)

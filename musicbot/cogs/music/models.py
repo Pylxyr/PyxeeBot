@@ -2,12 +2,32 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import discord
 
 _MD_ESCAPE_RE = re.compile(r"([\\*_`|~<>{}[\]()+#\-!])")
 
 
 def _escape_md(text: str) -> str:
     return _MD_ESCAPE_RE.sub(r"\\\1", text)
+
+
+def format_requester(guild: "discord.Guild | None", requester_id: int, *, show_mentions: bool) -> str:
+    """Render a track/playlist requester without pinging them by default.
+
+    When `show_mentions` is off (the default), this never emits a real
+    `<@id>` mention — it resolves to the member's display name where
+    possible, or a plain, non-clickable placeholder otherwise. When on,
+    it returns a real mention pill.
+    """
+    if show_mentions:
+        return f"<@{requester_id}>"
+    member = guild.get_member(requester_id) if guild is not None else None
+    if member is not None:
+        return _escape_md(member.display_name)
+    return f"`User {requester_id}`"
 
 
 @dataclass(slots=True)

@@ -16,7 +16,7 @@ from musicbot.cogs.music.constants import (
     NOW_PLAYING_TIMEOUT_SECONDS,
     NP_REFRESH_DEBOUNCE_SECONDS,
 )
-from musicbot.cogs.music.models import NowPlayingController
+from musicbot.cogs.music.models import NowPlayingController, format_requester
 from musicbot.cogs.music.player import GuildPlayer
 
 
@@ -70,8 +70,7 @@ class NPanelMixin(MusicCogBase):
         is_paused = bool(player.voice_client and player.voice_client.is_paused())
         loop_icon = LOOP_ICONS.get(player.loop_mode, "→")
         loop_label = LOOP_LABELS.get(player.loop_mode, "Off")
-        requester = guild.get_member(track.requester_id)
-        req_label = requester.display_name if requester else f"<@{track.requester_id}>"
+        req_label = format_requester(guild, track.requester_id, show_mentions=player.show_mentions)
 
         embed.set_author(name=f"♪  Now Playing  ·  {'⏸  paused' if is_paused else '▶  playing'}")
         embed.description = (

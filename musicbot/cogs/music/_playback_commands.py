@@ -39,8 +39,12 @@ class PlaybackCommandsMixin(MusicCogBase):
         if not self.players.get(gid):
             await context.send("I am not connected.")
             return
+        disabled = await self._disable_persistent_modes(gid, None)
         await self._cleanup_guild(gid)
-        await context.send("Disconnected and cleared the queue.")
+        message = "Disconnected and cleared the queue."
+        if disabled:
+            message += f" Turned off {' and '.join(disabled)}."
+        await context.send(message)
         await self._refresh_now_playing_message(gid)
 
     @commands.hybrid_command(name="skipto")
@@ -264,8 +268,12 @@ class PlaybackCommandsMixin(MusicCogBase):
             return
         self._remember_channel(player, context.channel)
         await player.stop()
+        disabled = await self._disable_persistent_modes(context.guild.id, player)
         self._persist_snapshot(context.guild.id)
-        await context.send("Stopped playback and cleared loop mode.")
+        message = "Stopped playback and cleared loop mode."
+        if disabled:
+            message += f" Turned off {' and '.join(disabled)}."
+        await context.send(message)
         await self._refresh_now_playing_message(context.guild.id)
 
     @commands.hybrid_command(name="pause")

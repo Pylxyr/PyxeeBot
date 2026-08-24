@@ -8,7 +8,7 @@ from discord.ext import commands
 from musicbot.cogs.music._base import MusicCogBase
 from musicbot.cogs.music._context import GuildContext
 from musicbot.cogs.music.constants import EMBED_COLOUR
-from musicbot.cogs.music.models import Track
+from musicbot.cogs.music.models import Track, format_requester
 
 
 class PlaylistCommandsMixin(MusicCogBase):
@@ -39,12 +39,15 @@ class PlaylistCommandsMixin(MusicCogBase):
         if not rows:
             await context.send("No saved playlists for this server.")
             return
+        show_mentions = await self.bot.database.get_show_requester_mentions(context.guild.id)
         PAGE = 25
         page_count = math.ceil(len(rows) / PAGE)
         for page in range(page_count):
             chunk = rows[page * PAGE : (page + 1) * PAGE]
             lines = [
-                f"`{row['name']}` — {row['track_count']} tracks — <@{row['created_by']}>" for row in chunk
+                f"`{row['name']}` — {row['track_count']} tracks — "
+                f"{format_requester(context.guild, row['created_by'], show_mentions=show_mentions)}"
+                for row in chunk
             ]
             title = (
                 "Saved Playlists" if page_count == 1 else f"Saved Playlists (page {page + 1}/{page_count})"
