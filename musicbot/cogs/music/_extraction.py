@@ -26,9 +26,6 @@ from musicbot.cogs.music.models import Track
 
 class ExtractionMixin(MusicCogBase):
     def _reset_ytdl_options(self) -> None:
-        # Worker threads cache their own YoutubeDL instances (built with the
-        # old cookiefile baked in), so resetting the options dict alone
-        # isn't enough — recycle the pool so new threads rebuild fresh.
         self._ytdl_base_options = None
         self._ytdl_variants = None
         self._warned_missing_cookiefile = False

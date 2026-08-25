@@ -15,13 +15,6 @@ def _escape_md(text: str) -> str:
 
 
 def format_requester(guild: "discord.Guild | None", requester_id: int, *, show_mentions: bool) -> str:
-    """Render a track/playlist requester without pinging them by default.
-
-    When `show_mentions` is off (the default), this never emits a real
-    `<@id>` mention — it resolves to the member's display name where
-    possible, or a plain, non-clickable placeholder otherwise. When on,
-    it returns a real mention pill.
-    """
     if show_mentions:
         return f"<@{requester_id}>"
     member = guild.get_member(requester_id) if guild is not None else None
@@ -61,13 +54,6 @@ class Track:
         return self._escaped_uploader
 
     def invalidate_escaped_cache(self) -> None:
-        """Clear the memoized escaped_title/escaped_uploader.
-
-        Must be called whenever `title` or `uploader` are mutated in place
-        (e.g. after full stream resolution replaces placeholder metadata
-        from a flat playlist scan) — otherwise any code that read the
-        escaped property early keeps showing the stale value forever.
-        """
         self._escaped_title = None
         self._escaped_uploader = None
 

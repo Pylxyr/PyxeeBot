@@ -33,14 +33,6 @@ def _disable_view_items(view: discord.ui.View) -> None:
 async def _close_interaction_message(
     interaction: discord.Interaction, *, closed_text: str = "❌ Closed."
 ) -> None:
-    """Remove the embed/components a component interaction belongs to.
-
-    Always acknowledges the interaction with an edit that strips the embed
-    and view (works for both regular and ephemeral messages), then makes a
-    best-effort attempt to fully delete the message afterward. Deletion
-    silently no-ops on ephemeral messages, which is fine — the edit already
-    leaves nothing to look at.
-    """
     with contextlib.suppress(discord.HTTPException, discord.NotFound, discord.Forbidden):
         await interaction.response.edit_message(content=closed_text, embed=None, view=None)
     message = interaction.message

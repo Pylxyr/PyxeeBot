@@ -8,6 +8,7 @@ from typing import Any
 import discord
 
 from musicbot.cogs.music._base import MusicCogBase
+from musicbot.cogs.music._context import _CURRENT_GUILD_ID
 from musicbot.cogs.music.constants import SNAPSHOT_DEBOUNCE_SECONDS
 from musicbot.cogs.music.models import Track
 from musicbot.cogs.music.player import GuildPlayer
@@ -66,10 +67,14 @@ class LifecycleMixin(MusicCogBase):
 
     async def _warmup_restore(self, tracks: list[Track], *, guild_id: int) -> None:
         sem = self._guild_extract_semaphores.setdefault(guild_id, asyncio.Semaphore(1))
-        for track in tracks:
-            async with sem:
-                with contextlib.suppress(Exception):
-                    await self._resolve_track(track)
+        token = _CURRENT_GUILD_ID.set(guild_id)
+        try:
+            for track in tracks:
+                async with sem:
+                    with contextlib.suppress(Exception):
+                        await self._resolve_track(track)
+        finally:
+            _CURRENT_GUILD_ID.reset(token)
 
     async def _cancel_curation_activity(self, guild_id: int) -> None:
         curation = self.bot.get_cog("CurationCog")

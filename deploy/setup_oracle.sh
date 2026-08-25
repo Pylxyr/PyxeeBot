@@ -107,7 +107,7 @@ RUN_WIZARD=true
 HAS_EXISTING_ENV=false
 if [[ -f "$ENV_PATH" ]] \
    && grep -q "^DISCORD_TOKEN=" "$ENV_PATH" 2>/dev/null \
-   && ! grep -qE "^DISCORD_TOKEN=(replace_me)?$" "$ENV_PATH" 2>/dev/null; then
+   && ! grep -qE "^DISCORD_TOKEN=(replace_me|your_discord_bot_token_here)?$" "$ENV_PATH" 2>/dev/null; then
   HAS_EXISTING_ENV=true
 fi
 

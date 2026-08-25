@@ -681,11 +681,6 @@ class CurationCog(commands.Cog, name="CurationCog"):
                     return
                 best = _pick_best_candidate(resolved)
                 if best is not None:
-                    # Several _resolve_one calls run concurrently (bounded by
-                    # `sem`); the limit checks and the enqueue must happen as
-                    # one atomic step per guild, otherwise concurrent tasks can
-                    # all pass the checks before any of them actually enqueues,
-                    # overshooting the queue/per-user caps.
                     async with enqueue_lock:
                         if music._check_per_user_limit(player, requester_id):
                             return
@@ -877,8 +872,6 @@ class CurationCog(commands.Cog, name="CurationCog"):
                     if best is None:
                         failed += 1
                         return
-                    # See _resolve_and_queue_inner: the limit checks and the
-                    # enqueue must be atomic across concurrently-running loads.
                     async with enqueue_lock:
                         if limit_hit.is_set():
                             return

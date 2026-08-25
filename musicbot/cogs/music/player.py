@@ -184,7 +184,7 @@ class GuildPlayer:
             await self.voice_client.disconnect(force=False)
         self.voice_client = None
         self.current = None
-        self._total_duration = 0
+        self._total_duration = sum(t.duration for t in self.queue)
         self.started_at = self._pause_started = self._total_paused = 0.0
         self._resolve_fail_counts.clear()
         self.history.clear()
@@ -312,9 +312,6 @@ class GuildPlayer:
                         self.current = None
                         if will_retry:
                             await asyncio.sleep(backoff)
-                            # Put the track back so the next loop iteration actually
-                            # retries it, instead of silently moving on to whatever
-                            # is next in the queue.
                             if len(self.queue) == self.queue.maxlen:
                                 self._total_duration = max(0, self._total_duration - self.queue[-1].duration)
                             self._total_duration += failed_track.duration

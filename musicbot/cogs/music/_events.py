@@ -28,11 +28,6 @@ class EventsMixin(MusicCogBase):
         guild_id: int,
         channel: discord.VoiceChannel | discord.StageChannel,
     ) -> None:
-        # A voice disconnect can be a real kick/outage, or a brief network
-        # blip. Give it a short grace window to recover before nuking the
-        # player (and the whole queue) — mirrors the stay_connected rejoin
-        # path, just for the non-24/7 case where we'd otherwise clean up
-        # immediately on the first disconnect event.
         await asyncio.sleep(5.0)
         player = self.players.get(guild_id)
         if player is None:
