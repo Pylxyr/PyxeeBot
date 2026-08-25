@@ -70,6 +70,9 @@ class PyxeeHelpCommand(commands.HelpCommand):
         "playlist list": "List all saved playlists for this server.",
         "playlist show": "Show the tracks in a saved playlist.",
         "playlist delete": "Delete a saved playlist.",
+        "mentions": "Toggle whether requester tags ping the user or just show their name.",
+        "linkpreviews": "Toggle Discord's native YouTube preview on queue confirmations.",
+        "refreshcookies": "Owner-only: replace cookies.txt via DM upload, with auto-rollback.",
     }
 
     def get_command_signature(self, command: commands.Command[Any, ..., Any]) -> str:

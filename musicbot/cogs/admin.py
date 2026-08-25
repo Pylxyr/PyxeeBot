@@ -62,6 +62,7 @@ def _restore_cookies_backup(target: Path, backup: Path) -> None:
 class AdminCog(commands.Cog):
     def __init__(self, bot: "MusicBot") -> None:
         self.bot = bot
+        self._refreshcookies_lock = asyncio.Lock()
 
     async def _send(
         self,
@@ -200,6 +201,15 @@ class AdminCog(commands.Cog):
     @_bot_owner_check()
     @commands.cooldown(1, 30, commands.BucketType.user)
     async def refreshcookies(self, context: GuildContext) -> None:
+        if self._refreshcookies_lock.locked():
+            await self._send(
+                context, "A cookie refresh is already in progress — check your DMs.", ephemeral=True
+            )
+            return
+        async with self._refreshcookies_lock:
+            await self._run_refreshcookies(context)
+
+    async def _run_refreshcookies(self, context: GuildContext) -> None:
         cookies_path = self.bot.settings.ytdlp_cookies_file
         if cookies_path is None:
             await self._send(context, "YTDLP_COOKIES_FILE isn't configured.", ephemeral=True)
