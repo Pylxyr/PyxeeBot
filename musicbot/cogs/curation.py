@@ -837,7 +837,9 @@ class CurationCog(commands.Cog, name="CurationCog"):
             {"query": f"{t.artist} - {t.title}", "title": f"{t.artist} – {t.title}", "webpage_url": ""}
             for t in selected
         ]
-        await self.bot.database.save_playlist(context.guild.id, name.strip().lower(), context.author.id, entries)
+        await self.bot.database.save_playlist(
+            context.guild.id, name.strip().lower(), context.author.id, entries
+        )
         await context.send(
             f"Saved {len(selected)} tracks as **{discord.utils.escape_markdown(name.strip().lower())}**."
         )
@@ -847,7 +849,9 @@ class CurationCog(commands.Cog, name="CurationCog"):
     async def vibe_load(self, context: GuildContext, *, name: str) -> None:
         entries = await self.bot.database.get_playlist_entries(context.guild.id, name.strip().lower())
         if not entries:
-            await context.send(f"No saved playlist named **{discord.utils.escape_markdown(name.strip().lower())}**.")
+            await context.send(
+                f"No saved playlist named **{discord.utils.escape_markdown(name.strip().lower())}**."
+            )
             return
 
         music: MusicCog | None = self.bot.get_cog("MusicCog")
