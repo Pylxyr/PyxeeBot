@@ -6,7 +6,7 @@ on:
   pull_request:
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -34,8 +34,13 @@ jobs:
       - name: Lint
         run: ruff check musicbot/ bot.py
 
-      - name: Format check
-        run: ruff format --check musicbot/ bot.py
+      - name: Auto-format with Ruff
+        run: ruff format musicbot/ bot.py
+
+      - name: Commit formatting changes
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "style: auto-format python code with ruff"
 
       - name: Security audit
         run: pip-audit --ignore-vuln CVE-2025-69277
