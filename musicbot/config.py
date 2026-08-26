@@ -55,9 +55,7 @@ def _parse_owner_ids(raw_value: str) -> tuple[int, ...]:
         try:
             ids.append(int(chunk))
         except ValueError:
-            raise RuntimeError(
-                f"BOT_OWNERS must be a comma-separated list of user IDs, got: {chunk!r}"
-            ) from None
+            raise RuntimeError(f"BOT_OWNERS must be a comma-separated list of user IDs, got: {chunk!r}") from None
     return tuple(ids)
 
 

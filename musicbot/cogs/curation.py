@@ -56,8 +56,9 @@ _VARIANT_MARKERS = (
     "alternate",
     "rough mix",
 )
-_PARENTHETICAL_RE = re.compile(r"[\(\[][^\)\]]*[\)\]]")
+_PARENTHETICAL_RE = re.compile(r"[\(\[（【][^\)\]）】]*[\)\]）】]")
 _TRAILING_QUALIFIER_RE = re.compile(r"\s+[-\u2013\u2014]\s+(.+)$")
+_OFFICIAL_MARKERS = ("official audio", "official video", "official music video", "official mv")
 
 
 def _is_unwanted_variant(title: str) -> bool:
@@ -79,16 +80,32 @@ def _track_key(title: str) -> str:
     return normalized if normalized else title.lower().strip()
 
 
+def _combined_key(artist: str, title: str) -> str:
+    return f"{_artist_key(artist)}::{_track_key(title)}"
+
+
 CURATION_CANDIDATE_POOL = 4
 
 
-def _pick_best_candidate(tracks: list["Track"]) -> "Track | None":
+def _pick_best_candidate(tracks: list["Track"], artist: str = "") -> "Track | None":
     if not tracks:
         return None
-    for candidate in tracks:
-        if not _is_unwanted_variant(candidate.title):
-            return candidate
-    return tracks[0]
+    artist_key = _artist_key(artist) if artist else ""
+    best_index = 0
+    best_rank = None
+    for i, candidate in enumerate(tracks):
+        title_lower = candidate.title.lower()
+        rank = 0
+        if _is_unwanted_variant(candidate.title):
+            rank -= 3
+        if artist_key and artist_key in _artist_key(candidate.uploader or ""):
+            rank += 2
+        if any(marker in title_lower for marker in _OFFICIAL_MARKERS):
+            rank += 1
+        if best_rank is None or rank > best_rank:
+            best_rank = rank
+            best_index = i
+    return tracks[best_index]
 
 
 @dataclass(slots=True)
@@ -340,6 +357,7 @@ class CurationCog(commands.Cog, name="CurationCog"):
         self._curation_enqueue_locks: dict[int, asyncio.Lock] = {}
         self._resolve_tasks: dict[int, set[asyncio.Task[Any]]] = {}
         self._epoch: dict[int, int] = {}
+        self._played_keys: dict[int, set[str]] = {}
 
     def _register_resolve_task(self, guild_id: int) -> int:
         epoch = self._epoch.get(guild_id, 0)
@@ -369,6 +387,7 @@ class CurationCog(commands.Cog, name="CurationCog"):
         self._refill_in_progress.discard(guild_id)
         self._refill_seeds.pop(guild_id, None)
         self._last_queue_len.pop(guild_id, None)
+        self._played_keys.pop(guild_id, None)
         session = self._sessions.pop(guild_id, None)
         if session and session.panel_msg:
             with contextlib.suppress(discord.HTTPException):
@@ -418,8 +437,10 @@ class CurationCog(commands.Cog, name="CurationCog"):
                         return data
                     if resp.status == 429:
                         log.warning("Last.fm rate-limited (429) on %s — backing off 5 s", method)
-                        await asyncio.sleep(5)
-                        continue
+                        if attempt == 0:
+                            await asyncio.sleep(5)
+                            continue
+                        return None
                     if resp.status == 403:
                         log.error("Last.fm 403 on %s — check LASTFM_API_KEY", method)
                         return None
@@ -680,7 +701,7 @@ class CurationCog(commands.Cog, name="CurationCog"):
                 )
                 if not self._is_current(guild_id, my_epoch):
                     return
-                best = _pick_best_candidate(resolved)
+                best = _pick_best_candidate(resolved, ct.artist)
                 if best is not None:
                     async with enqueue_lock:
                         if music._check_per_user_limit(player, requester_id):
@@ -692,6 +713,7 @@ class CurationCog(commands.Cog, name="CurationCog"):
                         f"**{discord.utils.escape_markdown(ct.artist)}** — "
                         f"{discord.utils.escape_markdown(ct.title)}"
                     )
+                    self._played_keys.setdefault(guild_id, set()).add(_combined_key(ct.artist, ct.title))
                     if queued == 0:
                         self._refill_seeds[guild_id] = (ct.artist, ct.title)
                     queued += 1
@@ -777,6 +799,11 @@ class CurationCog(commands.Cog, name="CurationCog"):
             await context.send("No similar tracks found on Last.fm.")
             return
 
+        played = self._played_keys.get(context.guild.id, set())
+        filtered = [t for t in tracks if _combined_key(t.artist, t.title) not in played]
+        if filtered:
+            tracks = filtered
+
         session = CurationSession(
             guild_id=context.guild.id,
             author_id=context.author.id,
@@ -788,6 +815,7 @@ class CurationCog(commands.Cog, name="CurationCog"):
         )
         self._sessions[context.guild.id] = session
         self._refill_seeds[context.guild.id] = (seed_artist, seed_track)
+        self._played_keys.setdefault(context.guild.id, set()).add(_combined_key(seed_artist, seed_track))
 
         embed = self._build_session_embed(session)
         view = CurationView(self, session)
@@ -809,38 +837,53 @@ class CurationCog(commands.Cog, name="CurationCog"):
             {"query": f"{t.artist} - {t.title}", "title": f"{t.artist} – {t.title}", "webpage_url": ""}
             for t in selected
         ]
-        await self.bot.database.save_playlist(context.guild.id, name.strip(), context.author.id, entries)
+        await self.bot.database.save_playlist(context.guild.id, name.strip().lower(), context.author.id, entries)
         await context.send(
-            f"Saved {len(selected)} tracks as **{discord.utils.escape_markdown(name.strip())}**."
+            f"Saved {len(selected)} tracks as **{discord.utils.escape_markdown(name.strip().lower())}**."
         )
 
     @commands.hybrid_command(name="vibe-load", aliases=["vload"])
     @commands.guild_only()
     async def vibe_load(self, context: GuildContext, *, name: str) -> None:
-        entries = await self.bot.database.get_playlist_entries(context.guild.id, name.strip())
+        entries = await self.bot.database.get_playlist_entries(context.guild.id, name.strip().lower())
         if not entries:
-            await context.send(f"No saved playlist named **{discord.utils.escape_markdown(name.strip())}**.")
+            await context.send(f"No saved playlist named **{discord.utils.escape_markdown(name.strip().lower())}**.")
             return
 
         music: MusicCog | None = self.bot.get_cog("MusicCog")
         if music is None:
             return
 
+        my_epoch = self._register_resolve_task(context.guild.id)
         player = music.players.get(context.guild.id)
         if player is None:
             vc = context.author.voice.channel if context.author.voice else None
             if vc is None:
+                self._unregister_resolve_task(context.guild.id)
                 await context.send("Join a voice channel first.")
                 return
             try:
                 player = await music._get_player(context.guild)
                 await player.connect(vc)
+            except asyncio.CancelledError:
+                if player is not None and player.voice_client and player.voice_client.is_connected():
+                    with contextlib.suppress(Exception):
+                        await player.disconnect(intentional=True)
+                self._unregister_resolve_task(context.guild.id)
+                raise
             except Exception as exc:
+                self._unregister_resolve_task(context.guild.id)
                 await context.send(f"Couldn't join your voice channel: `{exc}`")
+                return
+            if not self._is_current(context.guild.id, my_epoch):
+                with contextlib.suppress(Exception):
+                    if player.voice_client:
+                        await player.disconnect(intentional=True)
+                self._unregister_resolve_task(context.guild.id)
                 return
 
         msg = await context.send(
-            f"Loading **{discord.utils.escape_markdown(name.strip())}** — {len(entries)} tracks…"
+            f"Loading **{discord.utils.escape_markdown(name.strip().lower())}** — {len(entries)} tracks…"
         )
 
         queued = 0
@@ -849,7 +892,6 @@ class CurationCog(commands.Cog, name="CurationCog"):
         concurrency = max(1, getattr(self.bot.settings, "ytdlp_curation_concurrency", 3))
         sem = self._curation_sem.setdefault(context.guild.id, asyncio.Semaphore(concurrency))
         enqueue_lock = self._curation_enqueue_locks.setdefault(context.guild.id, asyncio.Lock())
-        my_epoch = self._register_resolve_task(context.guild.id)
 
         async def _load_one(entry: dict[str, Any]) -> None:
             nonlocal queued, failed
@@ -899,7 +941,7 @@ class CurationCog(commands.Cog, name="CurationCog"):
 
         music._persist_snapshot(context.guild.id)
         await msg.edit(
-            content=f"Loaded {queued} track(s) from **{discord.utils.escape_markdown(name.strip())}**."
+            content=f"Loaded {queued} track(s) from **{discord.utils.escape_markdown(name.strip().lower())}**."
             + (f" ({failed} failed.)" if failed else "")
         )
 
@@ -989,13 +1031,14 @@ class CurationCog(commands.Cog, name="CurationCog"):
             if not candidates:
                 return
 
-            played_keys = {_track_key(t.title) for t in player.history}
-            candidates = [c for c in candidates if _track_key(c.title) not in played_keys]
+            played = self._played_keys.setdefault(guild.id, set())
+            played.add(_combined_key(artist, track))
+            candidates = [c for c in candidates if _combined_key(c.artist, c.title) not in played]
             if not candidates:
                 return
 
             for ct in candidates:
-                query = f"ytsearch{CURATION_CANDIDATE_POOL}:{ct.artist} - {ct.title}"
+                query = f"ytsearch{CURATION_CANDIDATE_POOL}:{ct.artist} - {ct.title} official audio"
                 try:
                     resolved, _ = await music._extract_tracks(
                         query,
@@ -1008,14 +1051,17 @@ class CurationCog(commands.Cog, name="CurationCog"):
                     raise
                 except Exception:
                     continue
-                best = _pick_best_candidate(resolved)
+                best = _pick_best_candidate(resolved, ct.artist)
                 if best is None:
                     continue
                 if not self._is_current(guild.id, my_epoch):
                     return
+                if player.queue or player.current:
+                    return
                 if len(player.queue) >= music.bot.settings.max_queue_size:
                     break
                 await player.enqueue(best)
+                played.add(_combined_key(ct.artist, ct.title))
                 self._refill_seeds[guild.id] = (ct.artist, ct.title)
                 break
 
@@ -1049,6 +1095,11 @@ class CurationCog(commands.Cog, name="CurationCog"):
                 return
 
             if not self._is_current(guild.id, my_epoch):
+                return
+
+            played = self._played_keys.get(guild.id, set())
+            tracks = [t for t in tracks if _combined_key(t.artist, t.title) not in played]
+            if not tracks:
                 return
 
             player = music.players.get(guild.id)

@@ -90,6 +90,7 @@ class GuildPlayer:
             self.voice_client = None
         self.voice_client = await channel.connect(self_deaf=True)
         self._connected_at = time.monotonic()
+        self.intentional_disconnect = False
         await self.refresh_empty_channel_state()
         return self.voice_client
 
@@ -174,7 +175,6 @@ class GuildPlayer:
         return True
 
     async def disconnect(self, *, intentional: bool = False) -> None:
-        self.intentional_disconnect = intentional
         for task in (self.idle_task, self.empty_channel_task):
             if task:
                 task.cancel()
@@ -183,6 +183,7 @@ class GuildPlayer:
         self.idle_task = self.empty_channel_task = None
         await self._cancel_near_end_task()
         if self.voice_client and self.voice_client.is_connected():
+            self.intentional_disconnect = intentional
             await self.voice_client.disconnect(force=False)
         self.voice_client = None
         self.current = None
