@@ -5,8 +5,6 @@ import itertools
 import time
 from typing import Any
 
-from discord.ext import commands
-
 from musicbot.cogs.music._base import MusicCogBase
 from musicbot.cogs.music._context import _CURRENT_GUILD_ID
 from musicbot.cogs.music.constants import STREAM_URL_REFRESH_AGE_SECONDS
@@ -193,7 +191,9 @@ class ResolverMixin(MusicCogBase):
                 resolved = await self._resolve_track(next_track)
             finally:
                 _CURRENT_GUILD_ID.reset(token)
-        except commands.BadArgument as exc:
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
             self.logger.warning("Safety-net refresh failed for guild %s: %s", guild_id, exc)
             return
         if resolved is not None:

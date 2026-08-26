@@ -645,7 +645,7 @@ class CurationCog(commands.Cog, name="CurationCog"):
             except asyncio.CancelledError:
                 if player is not None and player.voice_client and player.voice_client.is_connected():
                     with contextlib.suppress(Exception):
-                        await player.voice_client.disconnect(force=True)
+                        await player.disconnect(intentional=True)
                 raise
             except Exception as exc:
                 log.exception("Auto-join failed: %s", exc)
@@ -653,7 +653,8 @@ class CurationCog(commands.Cog, name="CurationCog"):
                 return 0, len(tracks)
             if not self._is_current(guild_id, my_epoch):
                 with contextlib.suppress(Exception):
-                    await player.voice_client.disconnect(force=True) if player.voice_client else None
+                    if player.voice_client:
+                        await player.disconnect(intentional=True)
                 return 0, len(tracks)
 
         queued = 0

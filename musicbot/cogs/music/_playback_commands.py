@@ -68,6 +68,7 @@ class PlaybackCommandsMixin(MusicCogBase):
         dropped = position - 1
         player.replace_queue(queue_list[position - 1 :])
         self._persist_snapshot(context.guild.id)
+        self._kick_pipeline(context.guild.id)
         target = player.queue[0]
         embed = discord.Embed(title="Jumped to Position", colour=EMBED_COLOUR)
         embed.add_field(

@@ -324,6 +324,8 @@ class MusicBot(commands.Bot):
             self._reconnect_announced_at[guild.id] = now
             music_cog = self.cogs.get("MusicCog")
             player = music_cog.players.get(guild.id) if music_cog else None
+            if player is not None and player.voice_client is not None and player.voice_client.is_connected():
+                continue
             announce_id = player.announce_channel_id if player else None
             channel = guild.get_channel(announce_id) if isinstance(announce_id, int) else guild.system_channel
             if channel is None or not isinstance(channel, discord.abc.Messageable):

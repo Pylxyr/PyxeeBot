@@ -47,7 +47,16 @@ class Settings:
 
 
 def _parse_owner_ids(raw_value: str) -> tuple[int, ...]:
-    return tuple(int(c.strip()) for c in raw_value.split(",") if c.strip())
+    ids: list[int] = []
+    for chunk in raw_value.split(","):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        try:
+            ids.append(int(chunk))
+        except ValueError:
+            raise RuntimeError(f"BOT_OWNERS must be a comma-separated list of user IDs, got: {chunk!r}") from None
+    return tuple(ids)
 
 
 def _int_env(name: str, default: int) -> int:
@@ -66,6 +75,10 @@ def load_settings() -> Settings:
     token = os.getenv("DISCORD_TOKEN", "").strip()
     if not token:
         raise RuntimeError("DISCORD_TOKEN is not set. Add it to .env before starting the bot.")
+    if token in {"your_discord_bot_token_here", "replace_me"}:
+        raise RuntimeError(
+            "DISCORD_TOKEN is still set to the placeholder value. Edit .env with your real bot token."
+        )
 
     default_prefix = os.getenv("DEFAULT_PREFIX", "!").strip() or "!"
     if " " in default_prefix:

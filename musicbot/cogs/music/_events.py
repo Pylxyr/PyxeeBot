@@ -102,6 +102,10 @@ class EventsMixin(MusicCogBase):
         tracked_channel = player.voice_client.channel
         if self.bot.user is not None and member.id == self.bot.user.id:
             if before.channel is not None and after.channel is None:
+                was_intentional = player.intentional_disconnect
+                player.intentional_disconnect = False
+                if was_intentional:
+                    return
                 if player.stay_connected:
                     self._bg_task(
                         self._schedule_rejoin(member.guild, before.channel),

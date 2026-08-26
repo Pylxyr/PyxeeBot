@@ -162,6 +162,7 @@ class NPanelMixin(MusicCogBase):
             view=view,
         )
         controller.message_id = message.id
+        view.message_id = message.id
         self.now_playing_messages[guild.id] = controller
         return message
 

@@ -321,6 +321,7 @@ class NowPlayingView(discord.ui.View):
         super().__init__(timeout=NOW_PLAYING_TIMEOUT_SECONDS)
         self.cog = cog
         self.guild_id = guild_id
+        self.message_id: int | None = None
         self._pause_btn: discord.ui.Button | None = getattr(self, "pause_resume", None)
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
@@ -440,7 +441,7 @@ class NowPlayingView(discord.ui.View):
     async def on_timeout(self) -> None:
         _disable_view_items(self)
         controller = self.cog.now_playing_messages.get(self.guild_id)
-        if controller is None or time.monotonic() >= controller.expires_at:
+        if controller is None or controller.message_id != self.message_id:
             return
         channel = self.cog.bot.get_channel(controller.channel_id)
         if channel is None or not isinstance(channel, discord.abc.Messageable):

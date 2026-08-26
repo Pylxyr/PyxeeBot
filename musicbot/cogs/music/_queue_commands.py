@@ -107,6 +107,7 @@ class QueueCommandsMixin(MusicCogBase):
         queue_list.pop(index - 1)
         player.replace_queue(queue_list)
         self._persist_snapshot(context.guild.id)
+        self._kick_pipeline(context.guild.id)
         await context.send(f"Removed **{removed.escaped_title}** from the queue.")
         await self._refresh_now_playing_message(context.guild.id)
 
@@ -139,6 +140,7 @@ class QueueCommandsMixin(MusicCogBase):
         random.shuffle(shuffled)
         player.replace_queue(shuffled)
         self._persist_snapshot(context.guild.id)
+        self._kick_pipeline(context.guild.id)
         await context.send("Shuffled the queue.")
         await self._refresh_now_playing_message(context.guild.id)
 
@@ -167,6 +169,7 @@ class QueueCommandsMixin(MusicCogBase):
         queue_list.insert(to_index - 1, track)
         player.replace_queue(queue_list)
         self._persist_snapshot(context.guild.id)
+        self._kick_pipeline(context.guild.id)
         embed = discord.Embed(
             description=f"Moved **{track.escaped_title}** from `{from_index}` to `{to_index}`.",
             colour=EMBED_COLOUR,

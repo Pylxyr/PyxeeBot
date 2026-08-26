@@ -269,7 +269,7 @@ class ExtractionMixin(MusicCogBase):
         if "url" not in item and item.get("webpage_url"):
             try:
                 item = await self._extract_info(item["webpage_url"])
-            except DownloadError as exc:
+            except (DownloadError, commands.BadArgument) as exc:
                 self.logger.warning("Skipping unplayable item %s: %s", item.get("webpage_url"), exc)
                 return None
 

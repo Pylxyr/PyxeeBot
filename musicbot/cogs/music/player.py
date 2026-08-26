@@ -49,6 +49,7 @@ class GuildPlayer:
         self.show_mentions = False
         self.show_link_previews = True
         self._connected_at: float = 0.0
+        self.intentional_disconnect = False
 
         self.next_event = asyncio.Event()
         self.idle_task: asyncio.Task[None] | None = None
@@ -172,7 +173,8 @@ class GuildPlayer:
             self.voice_client.stop()
         return True
 
-    async def disconnect(self) -> None:
+    async def disconnect(self, *, intentional: bool = False) -> None:
+        self.intentional_disconnect = intentional
         for task in (self.idle_task, self.empty_channel_task):
             if task:
                 task.cancel()
@@ -200,7 +202,7 @@ class GuildPlayer:
 
     async def destroy(self) -> None:
         await self.stop()
-        await self.disconnect()
+        await self.disconnect(intentional=True)
         if self.player_task:
             self.player_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
@@ -280,7 +282,7 @@ class GuildPlayer:
             return
         if self.voice_client and self.voice_client.is_connected() and not self._has_human_listeners():
             await self.stop()
-            await self.disconnect()
+            await self.disconnect(intentional=True)
             self.bot.dispatch("musicbot_queue_updated", self.guild)
 
     async def _player_loop(self) -> None:
@@ -472,7 +474,7 @@ class GuildPlayer:
             return
         if not self.current and not self.queue:
             await self.stop()
-            await self.disconnect()
+            await self.disconnect(intentional=True)
             self.bot.dispatch("musicbot_queue_updated", self.guild)
 
     async def _try_reconnect(self) -> bool:
