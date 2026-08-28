@@ -407,6 +407,21 @@ class CurationCog(commands.Cog, name="CurationCog"):
         if self._session and not self._session.closed:
             await self._session.close()
 
+    async def shutdown(self) -> None:
+        # Bot.close() doesn't call cog_unload() on loaded cogs, so — same as
+        # MusicCog.shutdown() — this is the method actually invoked on a graceful
+        # SIGTERM shutdown. Without it, any in-flight !vibe/!vibe-load resolve tasks
+        # are left dangling and the Last.fm session is never closed, leaving an
+        # "Unclosed client session" warning in the logs on every restart.
+        for tasks in list(self._resolve_tasks.values()):
+            for task in list(tasks):
+                task.cancel()
+            with contextlib.suppress(Exception):
+                await asyncio.gather(*tasks, return_exceptions=True)
+        if self._session and not self._session.closed:
+            with contextlib.suppress(Exception):
+                await self._session.close()
+
     async def _lastfm(self, method: str, **params: Any) -> dict[str, Any] | None:
         if not self._key:
             return None
