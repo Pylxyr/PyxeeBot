@@ -108,6 +108,15 @@ class MusicCog(
         for player in list(self.players.values()):
             with contextlib.suppress(Exception):
                 await player.destroy()
+        # cog_unload() (below) isn't reliably called on a normal bot shutdown — Bot.close()
+        # doesn't unload cogs on its own — so this is the only place these are guaranteed
+        # to run. Without it, every graceful restart leaves an "Unclosed client session"
+        # warning in the logs and cuts off any in-flight HTTP request mid-request instead
+        # of letting it close cleanly.
+        if self._http_session and not self._http_session.closed:
+            with contextlib.suppress(Exception):
+                await self._http_session.close()
+        self._ytdl_executor.shutdown(wait=False)
 
     async def cog_command_error(self, context: commands.Context[Any], error: Exception) -> None:
         if isinstance(error, commands.CommandOnCooldown):
