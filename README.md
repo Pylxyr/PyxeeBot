@@ -18,6 +18,22 @@ Stream from YouTube · Last.fm curation · Live controls
 
 A self-hosted Discord music bot built with [discord.py](https://github.com/Rapptz/discord.py), yt-dlp, and aiosqlite. Designed to run well on a single-core VPS (tested on Oracle Cloud free-tier AMD E2.1.Micro running Ubuntu).
 
+## Contents
+
+- [Overview](#overview)
+- [Features](#features)
+- [Requirements](#requirements)
+- [Installation](#installation)
+  - [Automated VPS setup](#automated-vps-setup)
+  - [Local setup](#local-setup)
+- [Running as a systemd service](#running-as-a-systemd-service)
+- [Configuration](#configuration)
+- [Commands](#commands)
+- [Project Structure](#project-structure)
+- [Architecture Notes](#architecture-notes)
+- [Contributing](#contributing)
+- [License](#license)
+
 ---
 
 ## Overview
@@ -51,7 +67,7 @@ A self-hosted Discord music bot built with [discord.py](https://github.com/Rappt
 
 `!vibe <query>` discovers similar tracks via Last.fm's `track.getSimilar` API. Results are sorted by match confidence (0.0–1.0). A curation panel lets you deselect tracks before queuing. When the queue drops to ≤10 tracks during an active vibe session, a refill prompt surfaces automatically offering more similar tracks.
 
-Curation resolutions for a single guild run up to `YTDLP_CURATION_CONCURRENCY` at a time (own per-guild semaphore, separate from the playback path), bounded overall by `YTDLP_CONCURRENT_EXTRACTS`.
+Curation resolutions for a single guild run up to `YTDLP_CURATION_CONCURRENCY` at a time (own per-guild semaphore, separate from the playback path). Curation also has its own dedicated global semaphore, sized by the same `YTDLP_CURATION_CONCURRENCY` value — a large `!vibe` batch resolving in the background can no longer starve `!play`/`!playnext`/`!search` of the single global playback slot (`YTDLP_CONCURRENT_EXTRACTS`).
 
 Each similar track from Last.fm is resolved to YouTube by taking yt-dlp's top search result for `<artist> - <title>` — no re-ranking.
 
@@ -70,7 +86,8 @@ If autoplay is enabled for the server (`!autoplay`), the bot queues one similar 
 ### Performance
 
 - yt-dlp runs in a `ThreadPoolExecutor(max_workers=2)` to avoid blocking the event loop
-- A global semaphore (`YTDLP_CONCURRENT_EXTRACTS`, default 1) limits concurrent extractions on the constrained vCPU
+- A global semaphore (`YTDLP_CONCURRENT_EXTRACTS`, default 1) limits concurrent playback-path extractions on the constrained vCPU
+- Curation (`!vibe`) resolves through its own separate global semaphore (sized by `YTDLP_CURATION_CONCURRENCY`), so a large curated playlist resolving in the background can't block ordinary playback commands
 - Per-guild playback semaphore (`Semaphore(1)`) isolates guilds from each other
 - Curation resolutions use a separate per-guild semaphore sized by `YTDLP_CURATION_CONCURRENCY`
 - Thread pool automatically recycles after 3 consecutive extraction timeouts
@@ -91,6 +108,8 @@ If autoplay is enabled for the server (`!autoplay`), the bot queues one similar 
 
 ## Installation
 
+### Automated VPS setup
+
 **Deploying to a fresh Ubuntu VPS (e.g. Oracle Cloud free tier)?** Clone the repo to the server, then run the setup script — it installs everything, walks you through getting a Discord token and (optionally) a Last.fm key with live validation, and starts the bot as a systemd service in one go:
 
 ```bash
@@ -99,7 +118,9 @@ cd /home/ubuntu/musicbot
 bash deploy/setup_oracle.sh
 ```
 
-The manual steps below are for local development or other platforms.
+### Local setup
+
+The steps below are for local development or platforms other than the automated script above.
 
 **1. Clone**
 
@@ -378,36 +399,20 @@ PyxeeBot/
 
 **Search resolution.** `!play`/`!playnext` and Last.fm curation resolve a text query by fetching `YTDLP_SEARCH_RESULTS` raw candidates from yt-dlp (in YouTube's own relevance order) and taking the first one that has a usable webpage URL — this is a safety margin against occasional malformed search entries, not a ranking step. `!search` fetches `SEARCH_SELECTION_LIMIT` candidates the same way and presents all of them for the user to pick from directly.
 
-**yt-dlp concurrency.** All extractions run in `ThreadPoolExecutor(max_workers=2)`. A global `asyncio.Semaphore(YTDLP_CONCURRENT_EXTRACTS)` gates concurrent work. A separate per-guild semaphore (`Semaphore(1)`) isolates playback-path extractions from other guilds. Curation (`!vibe`) uses its own per-guild semaphore sized by `YTDLP_CURATION_CONCURRENCY` so it doesn't compete with the playback semaphore. The thread pool is automatically recycled after 3 consecutive `asyncio.wait_for` timeouts, since a genuinely-stuck thread (e.g. blocked in DNS resolution outside a socket timeout) can't be force-killed and would otherwise permanently consume a worker slot.
+**yt-dlp concurrency.** All extractions run in `ThreadPoolExecutor(max_workers=2)`. Two separate global semaphores gate concurrent work: `asyncio.Semaphore(YTDLP_CONCURRENT_EXTRACTS)` for playback-path extractions, and a dedicated `asyncio.Semaphore(YTDLP_CURATION_CONCURRENCY)` for curation — kept separate so a `!vibe` confirmation resolving a large batch in the background can never monopolize the single playback slot and stall `!play`/`!playnext`/`!search`. A further per-guild semaphore (`Semaphore(1)`) isolates playback-path extractions from other guilds, and curation (`!vibe`) also has its own per-guild semaphore sized by `YTDLP_CURATION_CONCURRENCY`. The thread pool is automatically recycled after 3 consecutive `asyncio.wait_for` timeouts, since a genuinely-stuck thread (e.g. blocked in DNS resolution outside a socket timeout) can't be force-killed and would otherwise permanently consume a worker slot.
 
 **Bot owner resolution.** `setup_hook` calls `application_info()` to populate `owner_id` (personal app) or `owner_ids` (team-owned app, admin/developer roles only) at startup. If the Discord API is temporarily unavailable, the call is caught and the bot falls back to `BOT_OWNERS` only rather than aborting startup. discord.py would otherwise only populate these lazily on first `is_owner()` call, which nothing in this codebase triggers — meaning owner-only commands would silently fail for anyone not listed in `BOT_OWNERS`.
+
+**Permissions.** DJ-gated actions (`!forceskip`, `!skipto`, `!clear`, `!shuffle`, `!move`, `!loop`, `!replay`, `!playnext`, etc.) accept either the configured DJ role (`!setdj`) or the Manage Server permission — a server manager always has DJ-level access, even before a DJ role is set. Vote-skip (`!skip`) is based on active human listeners in the voice channel, not guild member count.
+
+---
+
+## Contributing
+
+Issues and pull requests are welcome. `pyproject.toml` config: `ruff` (`py311`, `E`/`F`/`W`) for linting and `mypy --strict` for type checking — please run both before opening a PR.
 
 ---
 
 ## License
 
 MIT
-
-
-## Verified implementation details
-
-This documentation reflects the current source in `main`.
-
-### Playback and queue behavior
-
-- `!play` queues yt-dlp's top search result; `!search` presents interactive candidates.
-- Supported controls include `join`, `leave`, `playnext`, `pause`, `resume`, `skip`, `forceskip`, `skipto`, `prev`, `replay`, `repeat`, `loop`, `stop`, and `nowplaying`.
-- Queue tools include `queue`, `remove`, `clear`, `shuffle`, `move`, `history`, `toptracks`, and `toprequestors`.
-- `!playlist save|list|show|load|delete` manages named server playlists.
-
-### Curation and permissions
-
-- `!vibe`, `!vibe-save`, and `!vibe-load` use Last.fm when `LASTFM_API_KEY` is configured. Curation panels allow exclusions, Queue All, save, and cancel actions.
-- Autoplay refills an empty queue with one similar track from the last completed track.
-- DJ-gated actions use the configured DJ role or Manage Server permission; skip voting is based on active human listeners.
-
-### Runtime safeguards
-
-- Queue snapshots are debounced and stored in SQLite, then restored after restart when enabled.
-- yt-dlp extraction and curation concurrency are bounded; stream URLs use a bounded TTL cache and are refreshed before expiry.
-- FFmpeg re-encodes to Opus. Idle and empty-channel disconnect timeouts, playlist limits, search count, cache size, and bitrate are configurable through `.env`.
