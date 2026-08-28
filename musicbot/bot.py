@@ -364,6 +364,9 @@ class MusicBot(commands.Bot):
         music_cog = self.cogs.get("MusicCog")
         if isinstance(music_cog, MusicCog):
             await music_cog.shutdown()
+        curation_cog = self.cogs.get("CurationCog")
+        if isinstance(curation_cog, CurationCog):
+            await curation_cog.shutdown()
         await self.database.close()
         await super().close()
 
