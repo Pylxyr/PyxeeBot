@@ -44,6 +44,7 @@ class MusicCogBase(commands.Cog):
     _guild_extract_semaphores: dict[int, asyncio.Semaphore]
     _curation_semaphores: dict[int, asyncio.Semaphore]
     extract_semaphore: asyncio.Semaphore
+    curation_extract_semaphore: asyncio.Semaphore
     _restored_guilds: set[int]
 
     def _bg_task(self, coro: Any, *, name: str | None = None) -> asyncio.Task[Any]: ...

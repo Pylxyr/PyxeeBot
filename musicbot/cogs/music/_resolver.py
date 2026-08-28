@@ -157,7 +157,9 @@ class ResolverMixin(MusicCogBase):
                         track.stream_url = ""
                         track.resolved_at = 0.0
                     try:
+                        old_duration = track.duration
                         await self._resolve_track(track)
+                        player.note_duration_change(track, track.duration - old_duration)
                         resolved_count += 1
                         await asyncio.sleep(0)
                     except Exception as exc:
@@ -188,7 +190,10 @@ class ResolverMixin(MusicCogBase):
         try:
             token = _CURRENT_GUILD_ID.set(guild_id)
             try:
+                old_duration = next_track.duration
                 resolved = await self._resolve_track(next_track)
+                if resolved is not None:
+                    player.note_duration_change(next_track, next_track.duration - old_duration)
             finally:
                 _CURRENT_GUILD_ID.reset(token)
         except asyncio.CancelledError:

@@ -73,6 +73,11 @@ class MusicCog(
         self._guild_extract_semaphores: dict[int, asyncio.Semaphore] = {}
         self._curation_semaphores: dict[int, asyncio.Semaphore] = {}
         self.extract_semaphore = asyncio.Semaphore(self.bot.settings.ytdlp_concurrent_extracts)
+        # Separate global slot for curation-mode (bulk !vibe resolve) extraction, so a
+        # large curated playlist resolving in the background can never starve ordinary
+        # playback commands (!play, !playnext, !search) of the single shared extraction
+        # slot they rely on. See musicbot/cogs/music/_extraction.py::_extract_info.
+        self.curation_extract_semaphore = asyncio.Semaphore(self.bot.settings.ytdlp_curation_concurrency)
 
         self._restored_guilds: set[int] = set()
 

@@ -133,8 +133,13 @@ class ExtractionMixin(MusicCogBase):
             guild_sem = self._guild_extract_semaphores.setdefault(guild_id, asyncio.Semaphore(1))
 
         sem_ctx = guild_sem if guild_sem is not None else contextlib.nullcontext()
+        # Curation's bulk resolve (potentially 25 tracks from a single !vibe confirm) must
+        # never compete with playback-critical commands for the same global slot — otherwise
+        # !play/!playnext/!search can appear to hang indefinitely behind a large curation
+        # batch, with no feedback beyond a stuck typing indicator.
+        global_sem = self.curation_extract_semaphore if curation_mode else self.extract_semaphore
         async with sem_ctx:
-            async with self.extract_semaphore:
+            async with global_sem:
                 try:
                     loop = asyncio.get_running_loop()
 

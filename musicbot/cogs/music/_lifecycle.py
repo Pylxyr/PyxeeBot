@@ -67,12 +67,16 @@ class LifecycleMixin(MusicCogBase):
 
     async def _warmup_restore(self, tracks: list[Track], *, guild_id: int) -> None:
         sem = self._guild_extract_semaphores.setdefault(guild_id, asyncio.Semaphore(1))
+        player = self.players.get(guild_id)
         token = _CURRENT_GUILD_ID.set(guild_id)
         try:
             for track in tracks:
                 async with sem:
+                    old_duration = track.duration
                     with contextlib.suppress(Exception):
                         await self._resolve_track(track)
+                    if player is not None:
+                        player.note_duration_change(track, track.duration - old_duration)
         finally:
             _CURRENT_GUILD_ID.reset(token)
 

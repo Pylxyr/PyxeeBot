@@ -100,6 +100,19 @@ class GuildPlayer:
         self.queue = deque(trimmed, maxlen=cap)
         self._total_duration = sum(t.duration for t in self.queue)
 
+    def note_duration_change(self, track: Track, delta: int) -> None:
+        """Adjust the running queue-duration total after a track's duration changes in
+        place (e.g. a background resolve fills in a duration that was unknown — 0 — at
+        enqueue time, notably for queues restored from a snapshot after a restart).
+        No-ops if the track isn't still sitting in the queue (checked by identity, since
+        two distinct Track instances can compare equal), since it's then not contributing
+        to `_total_duration` any more and the caller's own bookkeeping already covers it.
+        """
+        if not delta:
+            return
+        if any(t is track for t in self.queue):
+            self._total_duration = max(0, self._total_duration + delta)
+
     async def enqueue(self, track: Track, *, front: bool = False) -> None:
         if len(self.queue) == self.queue.maxlen:
             evicted = self.queue[-1] if front else self.queue[0]
@@ -159,6 +172,7 @@ class GuildPlayer:
         if not self.history:
             return False
         previous_track = self.history.pop()
+        was_playing = self.current is not None
         if self.current:
             if len(self.queue) == self.queue.maxlen:
                 self._total_duration = max(0, self._total_duration - self.queue[-1].duration)
@@ -168,7 +182,8 @@ class GuildPlayer:
             self._total_duration = max(0, self._total_duration - self.queue[-1].duration)
         self._total_duration += previous_track.duration
         self.queue.appendleft(previous_track)
-        self.rewind_requested = True
+        if was_playing:
+            self.rewind_requested = True
         self.next_event.set()
         if self.voice_client and (self.voice_client.is_playing() or self.voice_client.is_paused()):
             self.voice_client.stop()
