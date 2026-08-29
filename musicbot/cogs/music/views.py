@@ -323,6 +323,7 @@ class NowPlayingView(discord.ui.View):
         self.guild_id = guild_id
         self.message_id: int | None = None
         self._pause_btn: discord.ui.Button | None = getattr(self, "pause_resume", None)
+        self._sync_pause_emoji(cog.players.get(guild_id))
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         player = self.cog.players.get(self.guild_id)

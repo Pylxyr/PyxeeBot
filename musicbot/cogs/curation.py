@@ -408,11 +408,6 @@ class CurationCog(commands.Cog, name="CurationCog"):
             await self._session.close()
 
     async def shutdown(self) -> None:
-        # Bot.close() doesn't call cog_unload() on loaded cogs, so — same as
-        # MusicCog.shutdown() — this is the method actually invoked on a graceful
-        # SIGTERM shutdown. Without it, any in-flight !vibe/!vibe-load resolve tasks
-        # are left dangling and the Last.fm session is never closed, leaving an
-        # "Unclosed client session" warning in the logs on every restart.
         for tasks in list(self._resolve_tasks.values()):
             for task in list(tasks):
                 task.cancel()
@@ -541,7 +536,7 @@ class CurationCog(commands.Cog, name="CurationCog"):
                 tasks = [self._lastfm("artist.gettoptracks", artist=a, limit=3) for a in similar_artists]
                 responses = await asyncio.gather(*tasks, return_exceptions=True)
                 artist_counts: dict[str, int] = {}
-                for a, resp in zip(similar_artists, responses):
+                for a, resp in zip(similar_artists, responses, strict=True):
                     if isinstance(resp, BaseException):
                         log.debug("artist.gettoptracks failed for %r: %s", a, resp)
                         continue
@@ -724,14 +719,14 @@ class CurationCog(commands.Cog, name="CurationCog"):
                         if len(player.queue) >= music.bot.settings.max_queue_size:
                             return
                         await player.enqueue(best)
+                        if queued == 0:
+                            self._refill_seeds[guild_id] = (ct.artist, ct.title)
+                        queued += 1
                     added.append(
                         f"**{discord.utils.escape_markdown(ct.artist)}** — "
                         f"{discord.utils.escape_markdown(ct.title)}"
                     )
                     self._played_keys.setdefault(guild_id, set()).add(_combined_key(ct.artist, ct.title))
-                    if queued == 0:
-                        self._refill_seeds[guild_id] = (ct.artist, ct.title)
-                    queued += 1
                 else:
                     log.debug("No yt-dlp result for: %s - %s", ct.artist, ct.title)
                     failed += 1

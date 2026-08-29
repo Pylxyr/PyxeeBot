@@ -36,6 +36,13 @@ class SearchCommandsMixin(MusicCogBase):
             if not tracks:
                 await context.send("No results found.")
             return
+        if len(player.queue) >= self.bot.settings.max_queue_size:
+            await context.send("Queue filled up while you were choosing — try again.")
+            return
+        if self._check_per_user_limit(player, context.author.id):
+            limit = self.bot.settings.max_queue_size_per_user
+            await context.send(f"You hit your `{limit}`-track limit while choosing.")
+            return
         await player.enqueue(selected)
         self._persist_snapshot(context.guild.id)
         self._kick_pipeline(context.guild.id)

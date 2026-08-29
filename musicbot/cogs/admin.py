@@ -49,8 +49,11 @@ def _looks_like_netscape_cookiefile(text: str) -> bool:
 def _swap_cookies_file(target: Path, backup: Path, new_content: str) -> None:
     if target.exists():
         shutil.copy2(target, backup)
+        with contextlib.suppress(OSError):
+            backup.chmod(0o600)
     tmp = target.with_suffix(target.suffix + ".tmp")
     tmp.write_text(new_content, encoding="utf-8")
+    tmp.chmod(0o600)
     os.replace(tmp, target)
 
 

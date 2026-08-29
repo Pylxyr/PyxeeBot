@@ -100,6 +100,8 @@ class LifecycleMixin(MusicCogBase):
             task = task_dict.pop(guild_id, None)
             if task and not task.done():
                 task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
         self._guild_extract_semaphores.pop(guild_id, None)
         self._curation_semaphores.pop(guild_id, None)
         self._player_create_locks.pop(guild_id, None)
