@@ -267,6 +267,7 @@ fi
 echo "[3/9] Preparing app directories"
 mkdir -p "${APP_DIR}"
 mkdir -p "${APP_DIR}/logs"
+mkdir -p "${APP_DIR}/data"
 
 echo "[4/9] Creating virtual environment"
 cd "${APP_DIR}"
