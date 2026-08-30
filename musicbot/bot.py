@@ -257,7 +257,14 @@ class MusicBot(commands.Bot):
         await self._populate_owner_ids()
         await self.add_cog(AdminCog(self))
         await self.add_cog(MusicCog(self))
-        await self.add_cog(CurationCog(self))
+        # !vibe / !vibe-save / !vibe-load only do anything with a Last.fm key configured
+        # (curation.py no-ops every API call without one — see CurationCog._lastfm).
+        # Skip registering the cog entirely when there's no key, so those commands don't
+        # clutter !commands with things that can't work yet. Everything that touches this
+        # cog elsewhere (bot.close(), _lifecycle._cancel_curation_activity) already treats
+        # it as optional via get_cog(...) is None checks, so this is safe to skip.
+        if self.settings.lastfm_api_key:
+            await self.add_cog(CurationCog(self))
 
     async def _populate_owner_ids(self) -> None:
         if not self.owner_id and not self.owner_ids:
