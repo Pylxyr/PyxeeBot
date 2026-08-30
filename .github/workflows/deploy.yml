@@ -62,14 +62,36 @@ jobs:
           port: 22
           script: |
             set -e
+
+            # This step assumes ~/musicbot is already a live checkout with a working
+            # .venv, .env, and systemd unit (i.e. deploy/setup_oracle.sh has been run
+            # there at least once). It only pulls new code onto an existing install —
+            # it can't bootstrap a server from nothing, since that needs a Discord
+            # token typed in interactively. If the directory is missing (e.g. it was
+            # deleted), fail with a clear message instead of a cryptic "No such file
+            # or directory" from `cd`.
+            if [ ! -d ~/musicbot/.git ]; then
+              echo "~/musicbot is missing or not a git checkout — nothing to deploy onto."
+              echo "SSH in and run this once to reprovision it:"
+              echo "  git clone https://github.com/${{ github.repository }}.git ~/musicbot"
+              echo "  cd ~/musicbot && bash deploy/setup_oracle.sh"
+              exit 1
+            fi
             cd ~/musicbot
 
             git fetch origin main
 
-            git rm -r --cached data/ 2>/dev/null || true
+            # NB: data/ is already in .gitignore, so this is a no-op in normal use —
+            # a former one-time fix for a commit predating that. Left out here since
+            # `git reset --hard` below discards the staged removal anyway (nothing
+            # commits it in between), so it never did anything on this path.
 
             git reset --hard origin/main
 
+            if [ ! -x ~/musicbot/.venv/bin/pip ]; then
+              echo "~/musicbot/.venv is missing — run deploy/setup_oracle.sh on the server first."
+              exit 1
+            fi
             ~/musicbot/.venv/bin/pip install --upgrade pip "setuptools>=83.0.0" -q
             ~/musicbot/.venv/bin/pip install -r requirements.txt -q
 
