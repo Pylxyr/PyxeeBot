@@ -1,23 +1,31 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-APP_DIR="${APP_DIR:-/home/ubuntu/musicbot}"
+# Default to wherever this script actually lives (repo_root/deploy/setup_oracle.sh),
+# not a hardcoded path. This is what you're cloning-and-running from in practice, and
+# it means a fresh `git clone` + `bash deploy/setup_oracle.sh` always targets the real
+# checkout instead of silently checking a stale/mismatched default path.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+APP_DIR="${APP_DIR:-$SCRIPT_DIR}"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 SERVICE_NAME="${SERVICE_NAME:-musicbot}"
+SERVICE_USER="${SERVICE_USER:-$(id -un)}"
 SYSTEMD_UNIT_PATH="/etc/systemd/system/${SERVICE_NAME}.service"
 ENV_PATH="${APP_DIR}/.env"
 
 if [[ ! -f "${APP_DIR}/requirements.txt" || ! -f "${APP_DIR}/deploy/musicbot.service" ]]; then
   echo "Could not find requirements.txt or deploy/musicbot.service inside ${APP_DIR}."
   echo ""
-  echo "This script expects the PyxeeBot repo to already be cloned at ${APP_DIR}."
-  echo "Clone it there first, then re-run this script from inside that directory:"
+  echo "APP_DIR defaults to this script's own checkout (${SCRIPT_DIR}), so this usually"
+  echo "means the clone is incomplete or corrupted rather than the wrong path. Re-clone"
+  echo "fresh and re-run:"
   echo ""
-  echo "  git clone https://github.com/Pylxyr/PyxeeBot.git ${APP_DIR}"
-  echo "  cd ${APP_DIR}"
+  echo "  git clone https://github.com/Pylxyr/PyxeeBot.git ~/musicbot"
+  echo "  cd ~/musicbot"
   echo "  bash deploy/setup_oracle.sh"
   echo ""
-  echo "(Cloned it somewhere else? Set APP_DIR=/that/path before running this script.)"
+  echo "(Deliberately pointing at a different, already-cloned checkout? Set"
+  echo " APP_DIR=/that/path before running this script.)"
   exit 1
 fi
 
@@ -341,10 +349,17 @@ else
 fi
 
 echo "[7/9] Installing logrotate config"
-sudo install -m 0644 deploy/musicbot-logrotate "/etc/logrotate.d/${SERVICE_NAME}"
+# Template the path/user instead of installing the file verbatim — otherwise a custom
+# APP_DIR/SERVICE_USER silently doesn't take effect here even though the rest of the
+# install honors it.
+sed -e "s#/home/ubuntu/musicbot#${APP_DIR}#g" \
+    -e "s#su ubuntu ubuntu#su ${SERVICE_USER} ${SERVICE_USER}#" \
+    deploy/musicbot-logrotate | sudo tee "/etc/logrotate.d/${SERVICE_NAME}" >/dev/null
 
 echo "[8/9] Installing systemd unit"
-sudo install -m 0644 deploy/musicbot.service "${SYSTEMD_UNIT_PATH}"
+sed -e "s#/home/ubuntu/musicbot#${APP_DIR}#g" \
+    -e "s#User=ubuntu#User=${SERVICE_USER}#" \
+    deploy/musicbot.service | sudo tee "${SYSTEMD_UNIT_PATH}" >/dev/null
 sudo systemctl daemon-reload
 sudo systemctl enable "${SERVICE_NAME}"
 
