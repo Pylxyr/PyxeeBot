@@ -64,17 +64,20 @@ jobs:
             set -e
 
             # This step assumes ~/musicbot is already a live checkout with a working
-            # .venv, .env, and systemd unit (i.e. deploy/setup_oracle.sh has been run
-            # there at least once). It only pulls new code onto an existing install —
-            # it can't bootstrap a server from nothing, since that needs a Discord
-            # token typed in interactively. If the directory is missing (e.g. it was
-            # deleted), fail with a clear message instead of a cryptic "No such file
-            # or directory" from `cd`.
+            # .venv, .env, and systemd unit (i.e. one of the deploy/setup_*.sh scripts
+            # has been run there at least once). It only pulls new code onto an
+            # existing install — it can't bootstrap a server from nothing, since that
+            # needs a Discord token typed in interactively. If the directory is
+            # missing (e.g. it was deleted), fail with a clear message instead of a
+            # cryptic "No such file or directory" from `cd`.
             if [ ! -d ~/musicbot/.git ]; then
               echo "~/musicbot is missing or not a git checkout — nothing to deploy onto."
               echo "SSH in and run this once to reprovision it:"
               echo "  git clone https://github.com/${{ github.repository }}.git ~/musicbot"
-              echo "  cd ~/musicbot && bash deploy/setup_oracle.sh"
+              echo "  cd ~/musicbot"
+              echo "  bash deploy/setup_oracle.sh   # on Oracle Cloud"
+              echo "  bash deploy/setup_gcp.sh      # on Google Cloud"
+              echo "  bash deploy/setup.sh          # anywhere else"
               exit 1
             fi
             cd ~/musicbot
@@ -89,7 +92,7 @@ jobs:
             git reset --hard origin/main
 
             if [ ! -x ~/musicbot/.venv/bin/pip ]; then
-              echo "~/musicbot/.venv is missing — run deploy/setup_oracle.sh on the server first."
+              echo "~/musicbot/.venv is missing — run the matching deploy/setup_*.sh script on the server first."
               exit 1
             fi
             ~/musicbot/.venv/bin/pip install --upgrade pip "setuptools>=83.0.0" -q
