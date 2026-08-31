@@ -4,6 +4,9 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch: {} # lets you re-run the deploy manually from the Actions tab —
+    # handy right after reconnecting SSH access, so you can confirm it works without
+    # needing a throwaway commit to main.
 
 permissions:
   contents: write
@@ -48,7 +51,7 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     needs: ci
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     concurrency:
       group: deploy-production
       cancel-in-progress: false
