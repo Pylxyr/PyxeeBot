@@ -5,7 +5,6 @@ import contextlib
 import logging
 import threading
 from collections import OrderedDict
-from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Any
 
 import aiohttp
@@ -55,7 +54,7 @@ class MusicCog(
         self._ytdl_base_options: dict[str, Any] | None = None
         self._ytdl_variants: dict[tuple[bool, bool], dict[str, Any]] | None = None
 
-        self._ytdl_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="ytdlp")
+        self._ytdl_executor = self._new_ytdl_executor()
         self._ytdl_tlocal: threading.local = threading.local()
         self._ytdl_timeout_count = 0
 

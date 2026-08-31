@@ -25,12 +25,30 @@ from musicbot.cogs.music.models import Track
 
 
 class ExtractionMixin(MusicCogBase):
+    def _new_ytdl_executor(self) -> ThreadPoolExecutor:
+        # Sized from the two settings that actually gate concurrent extraction work
+        # (extract_semaphore / curation_extract_semaphore in cog.py), not a fixed
+        # number — otherwise raising YTDLP_CONCURRENT_EXTRACTS or
+        # YTDLP_CURATION_CONCURRENCY lets more extraction tasks acquire a semaphore
+        # slot than there are worker threads to actually run them on, so the extra
+        # "concurrency" just queues behind however many threads happen to exist
+        # rather than delivering any real parallelism. Floor of 2 keeps the original
+        # minimum on tiny/default configs; capped at 16 so a very large manual
+        # override can't spawn an unreasonable number of native OS threads.
+        worker_count = max(
+            2,
+            min(
+                16, self.bot.settings.ytdlp_concurrent_extracts + self.bot.settings.ytdlp_curation_concurrency
+            ),
+        )
+        return ThreadPoolExecutor(max_workers=worker_count, thread_name_prefix="ytdlp")
+
     def _reset_ytdl_options(self) -> None:
         self._ytdl_base_options = None
         self._ytdl_variants = None
         self._warned_missing_cookiefile = False
         old_executor = self._ytdl_executor
-        self._ytdl_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="ytdlp")
+        self._ytdl_executor = self._new_ytdl_executor()
         old_executor.shutdown(wait=False)
 
     def _build_ytdl_options(
@@ -171,7 +189,7 @@ class ExtractionMixin(MusicCogBase):
                             "3 consecutive yt-dlp timeouts — recycling extraction thread pool."
                         )
                         old_executor = self._ytdl_executor
-                        self._ytdl_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="ytdlp")
+                        self._ytdl_executor = self._new_ytdl_executor()
                         self._ytdl_timeout_count = 0
                         old_executor.shutdown(wait=False)
                     raise commands.BadArgument(
