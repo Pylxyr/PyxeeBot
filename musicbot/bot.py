@@ -13,18 +13,91 @@ from discord.ext import commands
 from musicbot.cogs.admin import AdminCog
 from musicbot.cogs.curation import CurationCog
 from musicbot.cogs.music import MusicCog
+from musicbot.cogs.music.constants import EMBED_COLOUR
 from musicbot.config import Settings, load_settings
 from musicbot.database import Database
 
 _bg_tasks: set[asyncio.Task[Any]] = set()
 
+HELP_VIEW_TIMEOUT_SECONDS = 180
+
+
+class HelpOverviewView(discord.ui.View):
+    """Category picker for !commands / !help — one short overview, browse the rest on demand.
+
+    Everything needed to render is precomputed once in send_bot_help and handed in,
+    so picking a category is just an in-place embed swap on the same message —
+    no re-filtering commands per interaction.
+    """
+
+    def __init__(
+        self,
+        *,
+        categories: list[tuple[str, list[str]]],
+        overview_embed: discord.Embed,
+        colour: discord.Colour,
+        total_commands: int,
+    ) -> None:
+        super().__init__(timeout=HELP_VIEW_TIMEOUT_SECONDS)
+        self.categories = categories
+        self.overview_embed = overview_embed
+        self.colour = colour
+        self.total_commands = total_commands
+        self.message: discord.Message | None = None
+        self._build_select()
+
+    def _build_select(self) -> None:
+        options = [
+            discord.SelectOption(label="Overview", description="Back to the category list", value="overview")
+        ]
+        for i, (title, lines) in enumerate(self.categories):
+            options.append(
+                discord.SelectOption(
+                    label=title,
+                    description=f"{len(lines)} command{'s' if len(lines) != 1 else ''}",
+                    value=str(i),
+                )
+            )
+        select: discord.ui.Select[Any] = discord.ui.Select(
+            placeholder="Browse a category…",
+            options=options,
+        )
+        select.callback = self._on_select
+        self.add_item(select)
+
+    def _category_embed(self, index: int) -> discord.Embed:
+        title, lines = self.categories[index]
+        embed = discord.Embed(
+            title=title,
+            description="\n".join(lines)[:4000],
+            colour=self.colour,
+        )
+        embed.set_footer(
+            text=f"{len(lines)} command{'s' if len(lines) != 1 else ''} · "
+            "Use help <command> for full details on any one"
+        )
+        return embed
+
+    async def _on_select(self, interaction: discord.Interaction) -> None:
+        value = interaction.data.get("values", ["overview"])[0]
+        embed = self.overview_embed if value == "overview" else self._category_embed(int(value))
+        await interaction.response.edit_message(embed=embed, view=self)
+
+    async def on_timeout(self) -> None:
+        for item in self.children:
+            if hasattr(item, "disabled"):
+                item.disabled = True
+        if self.message:
+            with contextlib.suppress(discord.HTTPException):
+                await self.message.edit(view=self)
+
 
 class PyxeeHelpCommand(commands.HelpCommand):
     CATEGORY_STYLES = {
-        "MusicCog": ("\N{MUSICAL NOTE}", "Playback Deck"),
-        "AdminCog": ("\N{SATELLITE ANTENNA}", "Control Room"),
-        "CurationCog": ("\N{SPARKLES}", "Playlist Curator"),
-        None: ("\N{SPARKLES}", "Extras"),
+        "MusicCog": "Playback Deck",
+        "AdminCog": "Control Room",
+        "CurationCog": "Playlist Curator",
+        None: "Extras",
     }
     COMMAND_BLURBS = {
         "setprefix": "Change the bot command prefix for this server.",
@@ -93,7 +166,7 @@ class PyxeeHelpCommand(commands.HelpCommand):
         embed = discord.Embed(
             title=title,
             description=description,
-            colour=discord.Colour.from_rgb(255, 170, 64),
+            colour=EMBED_COLOUR,
         )
         if bot_user:
             embed.set_author(name="PyxeeBot Interface", icon_url=bot_user.display_avatar.url)
@@ -102,7 +175,7 @@ class PyxeeHelpCommand(commands.HelpCommand):
         embed.set_footer(text="Use help <command> for focused details.")
         return embed
 
-    def _style_for_cog(self, cog: commands.Cog | None) -> tuple[str, str]:
+    def _style_for_cog(self, cog: commands.Cog | None) -> str:
         key = cog.__class__.__name__ if cog else None
         return self.CATEGORY_STYLES.get(key, self.CATEGORY_STYLES[None])
 
@@ -118,16 +191,6 @@ class PyxeeHelpCommand(commands.HelpCommand):
         self, mapping: dict[commands.Cog | None, list[commands.Command[Any, ..., Any]]]
     ) -> None:
         prefix = self.context.clean_prefix
-        description = (
-            "Full command list. Use `help <command>` for details.\n"
-            f"`{prefix}join` → `{prefix}play <song>` → `{prefix}nowplaying`"
-        )
-        base_embed = self._base_embed("PyxeeBot Command Atlas", description)
-
-        FIELD_LIMIT = 1000
-        EMBED_CHAR_LIMIT = 5800
-
-        all_fields: list[tuple[str, str]] = []
 
         ordered_cogs: list[commands.Cog | None] = [
             cog for cog in self.context.bot.cogs.values() if cog in mapping
@@ -135,54 +198,51 @@ class PyxeeHelpCommand(commands.HelpCommand):
         if None in mapping:
             ordered_cogs.append(None)
 
+        categories: list[tuple[str, list[str]]] = []
         for cog in ordered_cogs:
             commands_for_cog = await self.filter_commands(mapping.get(cog, []), sort=True)
             if not commands_for_cog:
                 continue
-            icon, title = self._style_for_cog(cog)
-            field_name = f"{icon} {title}"
-            chunk_lines: list[str] = []
-            chunk_len = 0
-            chunk_index = 0
+            title = self._style_for_cog(cog)
+            lines = [self._format_command_compact(command) for command in commands_for_cog]
+            categories.append((title, lines))
 
-            for command in commands_for_cog:
-                line = self._format_command_compact(command)
-                if chunk_lines and chunk_len + len(line) + 1 > FIELD_LIMIT:
-                    suffix = " (cont.)" if chunk_index > 0 else ""
-                    all_fields.append((f"{field_name}{suffix}", "\n".join(chunk_lines)))
-                    chunk_lines = []
-                    chunk_len = 0
-                    chunk_index += 1
-                chunk_lines.append(line)
-                chunk_len += len(line) + 1
+        total_commands = sum(len(lines) for _, lines in categories)
 
-            if chunk_lines:
-                suffix = " (cont.)" if chunk_index > 0 else ""
-                all_fields.append((f"{field_name}{suffix}", "\n".join(chunk_lines)))
+        description = (
+            "Everything I can do, sorted into categories below. Pick one from the "
+            "dropdown to see its commands — this stays out of your way until you ask.\n\n"
+            f"**Quick start**\n`{prefix}join` → `{prefix}play <song>` → `{prefix}nowplaying`"
+        )
+        overview_embed = self._base_embed("PyxeeBot Command Atlas", description)
+        bot_user = self.context.bot.user
+        if bot_user:
+            overview_embed.set_thumbnail(url=bot_user.display_avatar.url)
+        for title, lines in categories:
+            overview_embed.add_field(
+                name=title,
+                value=f"{len(lines)} command{'s' if len(lines) != 1 else ''}",
+                inline=True,
+            )
+        overview_embed.set_footer(
+            text=f"{total_commands} commands across {len(categories)} categories · "
+            "Use the dropdown to browse, or help <command> for full details"
+        )
 
-        embeds: list[discord.Embed] = [base_embed]
-        current_embed = base_embed
-        current_chars = len(description) + len("PyxeeBot Command Atlas")
-
-        for field_name, field_value in all_fields:
-            addition = len(field_name) + len(field_value)
-            if current_chars + addition > EMBED_CHAR_LIMIT and current_embed.fields:
-                current_embed = discord.Embed(colour=discord.Colour.from_rgb(255, 170, 64))
-                current_embed.set_footer(text="Use help <command> for focused details.")
-                embeds.append(current_embed)
-                current_chars = 0
-            current_embed.add_field(name=field_name, value=field_value, inline=False)
-            current_chars += addition
-
-        dest = self.get_destination()
-        for embed in embeds:
-            await dest.send(embed=embed)
+        view = HelpOverviewView(
+            categories=categories,
+            overview_embed=overview_embed,
+            colour=EMBED_COLOUR,
+            total_commands=total_commands,
+        )
+        message = await self.get_destination().send(embed=overview_embed, view=view)
+        view.message = message
 
     async def send_cog_help(self, cog: commands.Cog) -> None:
         commands_for_cog = await self.filter_commands(cog.get_commands(), sort=True)
-        icon, title = self._style_for_cog(cog)
+        title = self._style_for_cog(cog)
         embed = self._base_embed(
-            f"{icon} {title}",
+            title,
             f"Focused view for `{cog.qualified_name}` commands.",
         )
         for command in commands_for_cog:
@@ -195,7 +255,7 @@ class PyxeeHelpCommand(commands.HelpCommand):
 
     async def send_group_help(self, group: commands.Group[Any, ..., Any]) -> None:
         embed = self._base_embed(
-            f"\N{CARD INDEX DIVIDERS} {group.qualified_name}",
+            group.qualified_name,
             self._blurb_for(group),
         )
         embed.add_field(name="Usage", value=f"`{self.get_command_signature(group)}`", inline=False)
@@ -209,9 +269,9 @@ class PyxeeHelpCommand(commands.HelpCommand):
 
     async def send_command_help(self, command: commands.Command[Any, ..., Any]) -> None:
         cog = command.cog
-        icon, title = self._style_for_cog(cog)
+        title = self._style_for_cog(cog)
         embed = self._base_embed(
-            f"{icon} {command.qualified_name}",
+            command.qualified_name,
             self._blurb_for(command),
         )
         embed.add_field(name="Usage", value=f"`{self.get_command_signature(command)}`", inline=False)
@@ -228,7 +288,7 @@ class PyxeeHelpCommand(commands.HelpCommand):
         await self.get_destination().send(embed=embed)
 
     async def send_error_message(self, error: str, /) -> None:
-        embed = self._base_embed("\N{WARNING SIGN} Help Error", error)
+        embed = self._base_embed("Help Error", error)
         await self.get_destination().send(embed=embed)
 
 
