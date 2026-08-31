@@ -16,7 +16,7 @@ Stream from YouTube · Last.fm curation · Live controls
 
 </div>
 
-A self-hosted Discord music bot built with [discord.py](https://github.com/Rapptz/discord.py), yt-dlp, and aiosqlite. Designed to run well on a single-core VPS (tested on Oracle Cloud free-tier AMD E2.1.Micro running Ubuntu).
+A self-hosted Discord music bot built with [discord.py](https://github.com/Rapptz/discord.py), yt-dlp, and aiosqlite. Designed to run well on a single-core, 1 GB RAM VPS (tested on both Oracle Cloud's Always Free AMD E2.1.Micro and Google Cloud's Always Free e2-micro, running Ubuntu).
 
 ## Contents
 
@@ -110,13 +110,20 @@ If autoplay is enabled for the server (`!autoplay`), the bot queues one similar 
 
 ### Automated VPS setup
 
-**Deploying to a fresh Ubuntu VPS (e.g. Oracle Cloud free tier)?** Clone the repo to the server, then run the setup script — it installs everything, walks you through getting a Discord token and (optionally) a Last.fm key with live validation, and starts the bot as a systemd service in one go:
+**Deploying to a fresh Ubuntu VPS?** Clone the repo to the server, then run the setup script for your host — it installs everything, walks you through getting a Discord token and (optionally) a Last.fm key with live validation, and starts the bot as a systemd service in one go. All three scripts share the same installer under the hood (`deploy/_common.sh`); they only differ in a couple of host-specific checks and reminders.
 
 ```bash
-git clone https://github.com/Pylxyr/PyxeeBot.git /home/ubuntu/musicbot
-cd /home/ubuntu/musicbot
-bash deploy/setup_oracle.sh
+git clone https://github.com/Pylxyr/PyxeeBot.git ~/musicbot
+cd ~/musicbot
 ```
+
+| Host | Script | What it adds on top of the shared installer |
+|---|---|---|
+| Oracle Cloud | `bash deploy/setup_oracle.sh` | Reports whether you're on the AMD (E2.1.Micro) or ARM (Ampere A1) Always Free shape; notes Oracle's ~10 TB/month egress allowance |
+| Google Cloud | `bash deploy/setup_gcp.sh` | Checks the VM's region against GCP's Always Free eligibility (`us-west1`/`us-central1`/`us-east1`) via the instance metadata server; warns about the 1 GB/month egress cap and the Network Service Tier / boot disk type gotchas that void the free tier |
+| Anything else (DigitalOcean, Hetzner, AWS, bare metal, etc.) | `bash deploy/setup.sh` | Nothing extra — just the shared installer |
+
+`APP_DIR` defaults to wherever you actually cloned the repo (not a hardcoded path), so it doesn't matter what you name the folder or where it lives — `cd` into it and run the matching script. All three also add a 1 GB swap file automatically on any host with ≤2 GB RAM, since a single yt-dlp/ffmpeg burst can otherwise pressure a 1 GB box hard enough to risk an OOM-killed SSH session.
 
 ### Local setup
 
@@ -168,7 +175,7 @@ python bot.py
 
 ## Running as a systemd service
 
-> If you used `deploy/setup_oracle.sh`, this is already done — the bot is running as a systemd service. The steps below are for setting it up manually.
+> If you used one of the `deploy/setup_*.sh` scripts, this is already done — the bot is running as a systemd service. The steps below are for setting it up manually.
 
 Create `/etc/systemd/system/musicbot.service`:
 
@@ -351,9 +358,12 @@ PyxeeBot/
 ├── pyproject.toml                  # ruff (py311, E/F/W) and mypy (strict) config
 ├── .github/
 │   └── workflows/
-│       └── deploy.yml              # CI: lint → format-check → security-audit → SSH deploy to Oracle VPS
+│       └── deploy.yml              # CI: lint → format-check → security-audit → SSH deploy to the configured VPS
 ├── deploy/
-│   ├── setup_oracle.sh             # Interactive one-run setup wizard for Ubuntu VPS
+│   ├── _common.sh                  # Shared install engine — sourced by the three setup_*.sh scripts, not run directly
+│   ├── setup_oracle.sh             # Interactive one-run setup wizard for Oracle Cloud
+│   ├── setup_gcp.sh                # Interactive one-run setup wizard for Google Cloud
+│   ├── setup.sh                    # Interactive one-run setup wizard for any other Ubuntu/Debian VPS
 │   ├── musicbot.service            # systemd unit (ProtectHome, MemoryMax, SystemCallFilter, logrotate)
 │   ├── musicbot-logrotate          # logrotate config (weekly, copytruncate)
 │   └── .env.example                # Annotated environment template
