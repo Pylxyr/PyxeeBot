@@ -37,7 +37,9 @@ class ExtractionMixin(MusicCogBase):
         # override can't spawn an unreasonable number of native OS threads.
         worker_count = max(
             2,
-            min(16, self.bot.settings.ytdlp_concurrent_extracts + self.bot.settings.ytdlp_curation_concurrency),
+            min(
+                16, self.bot.settings.ytdlp_concurrent_extracts + self.bot.settings.ytdlp_curation_concurrency
+            ),
         )
         return ThreadPoolExecutor(max_workers=worker_count, thread_name_prefix="ytdlp")
 
