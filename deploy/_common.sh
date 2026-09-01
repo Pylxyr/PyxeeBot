@@ -8,6 +8,7 @@
 # fix here applies to all three hosts instead of having to be copy-pasted
 # three times and inevitably drifting.
 #
+#
 # Variables the caller must set before sourcing:
 #   SCRIPT_DIR, APP_DIR, PYTHON_BIN, SERVICE_NAME, SERVICE_USER,
 #   SYSTEMD_UNIT_PATH, ENV_PATH, PROVIDER_LABEL
