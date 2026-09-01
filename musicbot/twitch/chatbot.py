@@ -51,7 +51,9 @@ class SongRequestComponent(commands.Component):
 
         chatter_key = ctx.chatter.id
         if self._pending_by_chatter.get(chatter_key, 0) >= MAX_PENDING_PER_CHATTER:
-            await ctx.reply(f"You've already got {MAX_PENDING_PER_CHATTER} queued — wait for one to play first.")
+            await ctx.reply(
+                f"You've already got {MAX_PENDING_PER_CHATTER} queued — wait for one to play first."
+            )
             return
 
         try:
