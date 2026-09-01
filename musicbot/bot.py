@@ -462,6 +462,54 @@ def configure_logging(settings: Settings) -> None:
     logging.getLogger("yt_dlp").setLevel(logging.WARNING)
 
 
+async def _run_twitch_integration(bot: MusicBot, settings: Settings) -> None:
+    """Only scheduled at all when settings.twitch_enabled — see run() below. Waits
+    for the Discord side to finish its own setup_hook (which is where MusicCog
+    gets added) before reaching into it, since this needs the exact same
+    extraction pipeline the Discord commands use rather than a second one."""
+    from musicbot.twitch.chatbot import TwitchChatBot
+    from musicbot.twitch.nowplaying_server import run_nowplaying_server
+    from musicbot.twitch.relay import TwitchRadioRelay
+
+    await bot.wait_until_ready()
+    music_cog = bot.get_cog("MusicCog")
+    if music_cog is None:
+        logging.getLogger(__name__).error(
+            "Twitch integration enabled but MusicCog isn't loaded — skipping."
+        )
+        return
+
+    relay = TwitchRadioRelay(
+        ingest_url=settings.twitch_ingest_url,
+        stream_key=settings.twitch_stream_key,  # type: ignore[arg-type]  # guarded by twitch_enabled
+        background_image=settings.twitch_background_image,
+        resolver=music_cog._extract_tracks,
+        video_bitrate_kbps=settings.twitch_video_bitrate_kbps,
+        video_fps=settings.twitch_video_fps,
+    )
+    relay.start()
+
+    nowplaying_runner = await run_nowplaying_server(
+        relay, host=settings.twitch_nowplaying_host, port=settings.twitch_nowplaying_port
+    )
+
+    twitch_bot = TwitchChatBot(
+        client_id=settings.twitch_client_id,  # type: ignore[arg-type]
+        client_secret=settings.twitch_client_secret,  # type: ignore[arg-type]
+        bot_id=settings.twitch_bot_id,  # type: ignore[arg-type]
+        owner_id=settings.twitch_owner_id,  # type: ignore[arg-type]
+        prefix=settings.twitch_prefix,
+        resolver=music_cog._extract_tracks,
+        relay=relay,
+    )
+    try:
+        async with twitch_bot:
+            await twitch_bot.start()
+    finally:
+        await relay.stop()
+        await nowplaying_runner.cleanup()
+
+
 async def _async_run() -> None:
     settings = load_settings()
     configure_logging(settings)
@@ -479,7 +527,16 @@ async def _async_run() -> None:
         with contextlib.suppress(NotImplementedError):
             loop.add_signal_handler(signal.SIGTERM, _handle_sigterm)
 
-        await bot.start(settings.token)
+        tasks = [asyncio.create_task(bot.start(settings.token), name="discord-bot")]
+        if settings.twitch_enabled:
+            tasks.append(
+                asyncio.create_task(_run_twitch_integration(bot, settings), name="twitch-integration")
+            )
+        else:
+            logging.getLogger(__name__).info(
+                "Twitch integration not configured (TWITCH_STREAM_KEY unset) — skipping."
+            )
+        await asyncio.gather(*tasks)
 
 
 def run() -> None:

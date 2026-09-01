@@ -366,12 +366,18 @@ PyxeeBot/
 │   ├── setup.sh                    # Interactive one-run setup wizard for any other Ubuntu/Debian VPS
 │   ├── musicbot.service            # systemd unit (ProtectHome, MemoryMax, SystemCallFilter, logrotate)
 │   ├── musicbot-logrotate          # logrotate config (weekly, copytruncate)
+│   ├── twitch_background.png       # Looping video background for the Twitch relay (swap for your own art)
 │   └── .env.example                # Annotated environment template
 ├── musicbot/
 │   ├── __init__.py
 │   ├── bot.py                      # MusicBot subclass, help command, startup, owner resolution
 │   ├── config.py                   # Settings dataclass, env var loading
 │   ├── database.py                 # aiosqlite wrapper; all write methods hold a shared write lock
+│   ├── twitch/                     # Optional — only runs if TWITCH_STREAM_KEY is set (see config.twitch_enabled)
+│   │   ├── __init__.py
+│   │   ├── relay.py                # TwitchRadioRelay: persistent RTMP muxer, gapless request queue
+│   │   ├── chatbot.py              # TwitchChatBot + SongRequestComponent: !sr, EventSub chat
+│   │   └── nowplaying_server.py    # aiohttp JSON endpoint for OBS/StreamElements overlays
 │   └── cogs/
 │       ├── __init__.py
 │       ├── admin.py                # AdminCog: prefix, DJ, stay, autoplay, stats, ping, commands
