@@ -29,12 +29,9 @@ log = logging.getLogger(__name__)
 
 
 def _settings_page(tunables: TwitchTunables, *, saved: bool, broadcast_info: dict[str, str]) -> str:
-    banner = (
-        '<p class="saved">Saved — takes effect on the next !sr, no restart needed.</p>' if saved else ""
-    )
+    banner = '<p class="saved">Saved — takes effect on the next !sr, no restart needed.</p>' if saved else ""
     broadcast_rows = "".join(
-        f"<tr><td>{label}</td><td><code>{value}</code></td></tr>"
-        for label, value in broadcast_info.items()
+        f"<tr><td>{label}</td><td><code>{value}</code></td></tr>" for label, value in broadcast_info.items()
     )
     return f"""<!DOCTYPE html>
 <html lang="en">

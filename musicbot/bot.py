@@ -475,9 +475,7 @@ async def _run_twitch_integration(bot: MusicBot, settings: Settings) -> None:
     await bot.wait_until_ready()
     music_cog = bot.get_cog("MusicCog")
     if music_cog is None:
-        logging.getLogger(__name__).error(
-            "Twitch integration enabled but MusicCog isn't loaded — skipping."
-        )
+        logging.getLogger(__name__).error("Twitch integration enabled but MusicCog isn't loaded — skipping.")
         return
 
     tunables = TwitchTunables.from_dict(await bot.database.get_twitch_tunables())
@@ -570,9 +568,7 @@ async def _async_run() -> None:
         tasks = [asyncio.create_task(bot.start(settings.token), name="discord-bot")]
         if settings.twitch_enabled:
             tasks.append(
-                asyncio.create_task(
-                    _run_twitch_integration_guarded(bot, settings), name="twitch-integration"
-                )
+                asyncio.create_task(_run_twitch_integration_guarded(bot, settings), name="twitch-integration")
             )
         else:
             logging.getLogger(__name__).info(

@@ -140,9 +140,7 @@ class TwitchRadioRelay:
         if self._task is not None:
             return
         if not self._background_image.is_file():
-            raise FileNotFoundError(
-                f"Twitch relay background image not found: {self._background_image}"
-            )
+            raise FileNotFoundError(f"Twitch relay background image not found: {self._background_image}")
         self._stopping = False
         self._task = asyncio.create_task(self._run_forever(), name="twitch-radio-relay")
 
@@ -179,15 +177,51 @@ class TwitchRadioRelay:
     async def _spawn_muxer(self) -> None:
         gop = max(1, self._video_fps * 2)  # Twitch requires a 2-second keyframe interval
         self._muxer = await asyncio.create_subprocess_exec(
-            "ffmpeg", "-hide_banner", "-loglevel", "warning",
-            "-loop", "1", "-i", str(self._background_image),
-            "-thread_queue_size", "4096",
-            "-f", "s16le", "-ar", str(AUDIO_RATE), "-ac", str(AUDIO_CHANNELS), "-i", "-",
-            "-r", str(self._video_fps), "-g", str(gop), "-keyint_min", str(gop),
-            "-c:v", "libx264", "-preset", "ultrafast", "-tune", "stillimage",
-            "-threads", "1", "-pix_fmt", "yuv420p", "-b:v", f"{self._video_bitrate_kbps}k",
-            "-c:a", "aac", "-b:a", "128k", "-ar", str(AUDIO_RATE),
-            "-f", "flv", self._rtmp_url,
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "warning",
+            "-loop",
+            "1",
+            "-i",
+            str(self._background_image),
+            "-thread_queue_size",
+            "4096",
+            "-f",
+            "s16le",
+            "-ar",
+            str(AUDIO_RATE),
+            "-ac",
+            str(AUDIO_CHANNELS),
+            "-i",
+            "-",
+            "-r",
+            str(self._video_fps),
+            "-g",
+            str(gop),
+            "-keyint_min",
+            str(gop),
+            "-c:v",
+            "libx264",
+            "-preset",
+            "ultrafast",
+            "-tune",
+            "stillimage",
+            "-threads",
+            "1",
+            "-pix_fmt",
+            "yuv420p",
+            "-b:v",
+            f"{self._video_bitrate_kbps}k",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "128k",
+            "-ar",
+            str(AUDIO_RATE),
+            "-f",
+            "flv",
+            self._rtmp_url,
             stdin=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
@@ -264,9 +298,20 @@ class TwitchRadioRelay:
         log.info("Twitch relay now playing: %s (requested by %s)", track.title, request.requester_name)
 
         decoder = await asyncio.create_subprocess_exec(
-            "ffmpeg", "-hide_banner", "-loglevel", "error",
-            "-re", "-i", track.stream_url,
-            "-f", "s16le", "-ar", str(AUDIO_RATE), "-ac", str(AUDIO_CHANNELS), "-",
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-re",
+            "-i",
+            track.stream_url,
+            "-f",
+            "s16le",
+            "-ar",
+            str(AUDIO_RATE),
+            "-ac",
+            str(AUDIO_CHANNELS),
+            "-",
             stdout=asyncio.subprocess.PIPE,
         )
         self._current_decoder = decoder

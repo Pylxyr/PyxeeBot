@@ -167,8 +167,7 @@ def load_settings() -> Settings:
         / os.getenv("TWITCH_BACKGROUND_IMAGE", "deploy/twitch_background.png").strip(),
         twitch_video_bitrate_kbps=max(300, min(3000, _int_env("TWITCH_VIDEO_BITRATE_KBPS", 800))),
         twitch_video_fps=max(1, min(10, _int_env("TWITCH_VIDEO_FPS", 2))),
-        twitch_nowplaying_host=os.getenv("TWITCH_NOWPLAYING_HOST", "127.0.0.1").strip()
-        or "127.0.0.1",
+        twitch_nowplaying_host=os.getenv("TWITCH_NOWPLAYING_HOST", "127.0.0.1").strip() or "127.0.0.1",
         twitch_nowplaying_port=max(1024, min(65535, _int_env("TWITCH_NOWPLAYING_PORT", 8098))),
         twitch_settings_password=os.getenv("TWITCH_SETTINGS_PASSWORD", "").strip() or None,
     )
