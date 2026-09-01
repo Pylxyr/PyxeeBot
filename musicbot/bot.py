@@ -474,9 +474,7 @@ async def _run_twitch_integration(bot: MusicBot, settings: Settings) -> None:
     await bot.wait_until_ready()
     music_cog = bot.get_cog("MusicCog")
     if music_cog is None:
-        logging.getLogger(__name__).error(
-            "Twitch integration enabled but MusicCog isn't loaded — skipping."
-        )
+        logging.getLogger(__name__).error("Twitch integration enabled but MusicCog isn't loaded — skipping.")
         return
 
     relay = TwitchRadioRelay(
