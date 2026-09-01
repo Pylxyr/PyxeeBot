@@ -376,8 +376,9 @@ PyxeeBot/
 │   ├── twitch/                     # Optional — only runs if TWITCH_STREAM_KEY is set (see config.twitch_enabled)
 │   │   ├── __init__.py
 │   │   ├── relay.py                # TwitchRadioRelay: persistent RTMP muxer, gapless request queue
-│   │   ├── chatbot.py              # TwitchChatBot + SongRequestComponent: !sr, EventSub chat
-│   │   └── nowplaying_server.py    # aiohttp JSON endpoint for OBS/StreamElements overlays
+│   │   ├── chatbot.py              # TwitchChatBot + SongRequestComponent: !sr, !skip, !queue, !nowplaying
+│   │   ├── tunables.py             # TwitchTunables: live request-limit settings, DB-backed
+│   │   └── admin_server.py         # aiohttp: /nowplaying.json overlay feed + /settings GUI
 │   └── cogs/
 │       ├── __init__.py
 │       ├── admin.py                # AdminCog: prefix, DJ, stay, autoplay, stats, ping, commands

@@ -467,15 +467,20 @@ async def _run_twitch_integration(bot: MusicBot, settings: Settings) -> None:
     for the Discord side to finish its own setup_hook (which is where MusicCog
     gets added) before reaching into it, since this needs the exact same
     extraction pipeline the Discord commands use rather than a second one."""
+    from musicbot.twitch.admin_server import run_admin_server
     from musicbot.twitch.chatbot import TwitchChatBot
-    from musicbot.twitch.nowplaying_server import run_nowplaying_server
     from musicbot.twitch.relay import TwitchRadioRelay
+    from musicbot.twitch.tunables import TwitchTunables
 
     await bot.wait_until_ready()
     music_cog = bot.get_cog("MusicCog")
     if music_cog is None:
-        logging.getLogger(__name__).error("Twitch integration enabled but MusicCog isn't loaded — skipping.")
+        logging.getLogger(__name__).error(
+            "Twitch integration enabled but MusicCog isn't loaded — skipping."
+        )
         return
+
+    tunables = TwitchTunables.from_dict(await bot.database.get_twitch_tunables())
 
     relay = TwitchRadioRelay(
         ingest_url=settings.twitch_ingest_url,
@@ -487,8 +492,20 @@ async def _run_twitch_integration(bot: MusicBot, settings: Settings) -> None:
     )
     relay.start()
 
-    nowplaying_runner = await run_nowplaying_server(
-        relay, host=settings.twitch_nowplaying_host, port=settings.twitch_nowplaying_port
+    admin_runner = await run_admin_server(
+        relay=relay,
+        tunables=tunables,
+        database=bot.database,
+        settings_password=settings.twitch_settings_password,
+        broadcast_info={
+            "Ingest URL": settings.twitch_ingest_url,
+            "Video bitrate": f"{settings.twitch_video_bitrate_kbps} kbps",
+            "Video framerate": f"{settings.twitch_video_fps} fps",
+            "Background image": str(settings.twitch_background_image),
+            "Chat command prefix": settings.twitch_prefix,
+        },
+        host=settings.twitch_nowplaying_host,
+        port=settings.twitch_nowplaying_port,
     )
 
     twitch_bot = TwitchChatBot(
@@ -499,13 +516,14 @@ async def _run_twitch_integration(bot: MusicBot, settings: Settings) -> None:
         prefix=settings.twitch_prefix,
         resolver=music_cog._extract_tracks,
         relay=relay,
+        tunables=tunables,
     )
     try:
         async with twitch_bot:
             await twitch_bot.start()
     finally:
         await relay.stop()
-        await nowplaying_runner.cleanup()
+        await admin_runner.cleanup()
 
 
 async def _run_twitch_integration_guarded(bot: MusicBot, settings: Settings) -> None:
@@ -552,7 +570,9 @@ async def _async_run() -> None:
         tasks = [asyncio.create_task(bot.start(settings.token), name="discord-bot")]
         if settings.twitch_enabled:
             tasks.append(
-                asyncio.create_task(_run_twitch_integration_guarded(bot, settings), name="twitch-integration")
+                asyncio.create_task(
+                    _run_twitch_integration_guarded(bot, settings), name="twitch-integration"
+                )
             )
         else:
             logging.getLogger(__name__).info(

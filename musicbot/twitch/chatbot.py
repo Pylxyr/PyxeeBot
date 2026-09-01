@@ -16,12 +16,14 @@ owner requirements section for the full acquisition checklist.
 from __future__ import annotations
 
 import logging
+import time
 from typing import TYPE_CHECKING
 
 from twitchio import eventsub
 from twitchio.ext import commands
 
 from musicbot.twitch.relay import QueuedRequest, TwitchRadioRelay
+from musicbot.twitch.tunables import TwitchTunables
 
 if TYPE_CHECKING:
     from musicbot.cogs.music.models import Track
@@ -29,15 +31,12 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
-MAX_REQUEST_DURATION_SECONDS = 600  # 10 minutes — keep one !sr from eating the whole queue
-QUEUE_CAP = 50
-MAX_PENDING_PER_CHATTER = 2  # stop one viewer from flooding the whole queue
-
 
 class SongRequestComponent(commands.Component):
     def __init__(self, bot: "TwitchChatBot") -> None:
         self.bot = bot
         self._pending_by_chatter: dict[str, int] = {}
+        self._last_request_at: dict[str, float] = {}
 
     @commands.command(name="sr", aliases=["songrequest"])
     async def song_request(self, ctx: commands.Context, *, query: str = "") -> None:
@@ -45,14 +44,24 @@ class SongRequestComponent(commands.Component):
             await ctx.reply("Usage: !sr <song name or URL>")
             return
 
-        if self.bot.relay.queue_length >= QUEUE_CAP:
+        tunables = self.bot.tunables
+        chatter_key = ctx.chatter.id
+
+        if tunables.request_cooldown_seconds > 0:
+            last = self._last_request_at.get(chatter_key)
+            if last is not None:
+                remaining = tunables.request_cooldown_seconds - (time.monotonic() - last)
+                if remaining > 0:
+                    await ctx.reply(f"Wait {round(remaining)}s before your next request.")
+                    return
+
+        if self.bot.relay.queue_length >= tunables.queue_cap:
             await ctx.reply("Queue's full right now — try again in a bit.")
             return
 
-        chatter_key = ctx.chatter.id
-        if self._pending_by_chatter.get(chatter_key, 0) >= MAX_PENDING_PER_CHATTER:
+        if self._pending_by_chatter.get(chatter_key, 0) >= tunables.max_pending_per_chatter:
             await ctx.reply(
-                f"You've already got {MAX_PENDING_PER_CHATTER} queued — wait for one to play first."
+                f"You've already got {tunables.max_pending_per_chatter} queued — wait for one to play first."
             )
             return
 
@@ -76,12 +85,13 @@ class SongRequestComponent(commands.Component):
             # ends, with no way to recover short of !skip.
             await ctx.reply("Can't queue a live stream or anything without a fixed length.")
             return
-        if track.duration > MAX_REQUEST_DURATION_SECONDS:
-            minutes = MAX_REQUEST_DURATION_SECONDS // 60
+        if track.duration > tunables.max_request_duration_seconds:
+            minutes = tunables.max_request_duration_seconds // 60
             await ctx.reply(f"That's over the {minutes}-minute limit — pick something shorter.")
             return
 
         requester_name = ctx.chatter.display_name or ctx.chatter.name
+        self._last_request_at[chatter_key] = time.monotonic()
         self._pending_by_chatter[chatter_key] = self._pending_by_chatter.get(chatter_key, 0) + 1
         position = self.bot.relay.enqueue(
             QueuedRequest(
@@ -144,6 +154,7 @@ class TwitchChatBot(commands.Bot):
         prefix: str,
         resolver: "TrackResolver",
         relay: TwitchRadioRelay,
+        tunables: TwitchTunables,
     ) -> None:
         super().__init__(
             client_id=client_id,
@@ -154,6 +165,7 @@ class TwitchChatBot(commands.Bot):
         )
         self.resolver = resolver
         self.relay = relay
+        self.tunables = tunables
         self._owner_id = owner_id
         self._bot_id = bot_id
 
