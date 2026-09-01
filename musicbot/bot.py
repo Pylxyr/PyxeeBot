@@ -474,7 +474,9 @@ async def _run_twitch_integration(bot: MusicBot, settings: Settings) -> None:
     await bot.wait_until_ready()
     music_cog = bot.get_cog("MusicCog")
     if music_cog is None:
-        logging.getLogger(__name__).error("Twitch integration enabled but MusicCog isn't loaded — skipping.")
+        logging.getLogger(__name__).error(
+            "Twitch integration enabled but MusicCog isn't loaded — skipping."
+        )
         return
 
     relay = TwitchRadioRelay(
@@ -508,6 +510,30 @@ async def _run_twitch_integration(bot: MusicBot, settings: Settings) -> None:
         await nowplaying_runner.cleanup()
 
 
+async def _run_twitch_integration_guarded(bot: MusicBot, settings: Settings) -> None:
+    """Wraps _run_twitch_integration with its own retry-with-backoff and, more
+    importantly, makes sure nothing it raises ever reaches the asyncio.gather in
+    _async_run. An unhandled exception in a gathered task cancels every other
+    task in that gather by default — confirmed with a standalone repro before
+    writing this fix — so without this wrapper, a bad Twitch credential or a
+    transient Twitch API failure would silently take the Discord bot down too.
+    That defeats the entire point of keeping Twitch's fault domain separate
+    from Discord's despite sharing one process."""
+    log = logging.getLogger(__name__)
+    backoff = 5.0
+    while True:
+        try:
+            await _run_twitch_integration(bot, settings)
+            return  # clean return: either MusicCog was missing (already logged,
+            # not transient, don't retry) or twitch_bot.start() ended on its own
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("Twitch integration failed — retrying in %.0fs", backoff)
+            await asyncio.sleep(backoff)
+            backoff = min(backoff * 2, 300.0)
+
+
 async def _async_run() -> None:
     settings = load_settings()
     configure_logging(settings)
@@ -528,7 +554,9 @@ async def _async_run() -> None:
         tasks = [asyncio.create_task(bot.start(settings.token), name="discord-bot")]
         if settings.twitch_enabled:
             tasks.append(
-                asyncio.create_task(_run_twitch_integration(bot, settings), name="twitch-integration")
+                asyncio.create_task(
+                    _run_twitch_integration_guarded(bot, settings), name="twitch-integration"
+                )
             )
         else:
             logging.getLogger(__name__).info(

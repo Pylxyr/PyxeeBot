@@ -31,11 +31,13 @@ log = logging.getLogger(__name__)
 
 MAX_REQUEST_DURATION_SECONDS = 600  # 10 minutes — keep one !sr from eating the whole queue
 QUEUE_CAP = 50
+MAX_PENDING_PER_CHATTER = 2  # stop one viewer from flooding the whole queue
 
 
 class SongRequestComponent(commands.Component):
     def __init__(self, bot: "TwitchChatBot") -> None:
         self.bot = bot
+        self._pending_by_chatter: dict[str, int] = {}
 
     @commands.command(name="sr", aliases=["songrequest"])
     async def song_request(self, ctx: commands.Context, *, query: str = "") -> None:
@@ -45,6 +47,11 @@ class SongRequestComponent(commands.Component):
 
         if self.bot.relay.queue_length >= QUEUE_CAP:
             await ctx.reply("Queue's full right now — try again in a bit.")
+            return
+
+        chatter_key = ctx.chatter.id
+        if self._pending_by_chatter.get(chatter_key, 0) >= MAX_PENDING_PER_CHATTER:
+            await ctx.reply(f"You've already got {MAX_PENDING_PER_CHATTER} queued — wait for one to play first.")
             return
 
         try:
@@ -59,12 +66,21 @@ class SongRequestComponent(commands.Component):
             return
 
         track: "Track" = tracks[0]
-        if track.duration and track.duration > MAX_REQUEST_DURATION_SECONDS:
+        if track.duration <= 0:
+            # yt-dlp reports duration as None (-> 0 in this codebase's Track
+            # construction) for live streams — there's no sane "duration limit"
+            # check for something with no end, and letting one through would
+            # hang the whole relay queue on it until the live stream itself
+            # ends, with no way to recover short of !skip.
+            await ctx.reply("Can't queue a live stream or anything without a fixed length.")
+            return
+        if track.duration > MAX_REQUEST_DURATION_SECONDS:
             minutes = MAX_REQUEST_DURATION_SECONDS // 60
             await ctx.reply(f"That's over the {minutes}-minute limit — pick something shorter.")
             return
 
         requester_name = ctx.chatter.display_name or ctx.chatter.name
+        self._pending_by_chatter[chatter_key] = self._pending_by_chatter.get(chatter_key, 0) + 1
         position = self.bot.relay.enqueue(
             QueuedRequest(
                 webpage_url=track.webpage_url,
@@ -73,9 +89,17 @@ class SongRequestComponent(commands.Component):
                 thumbnail_url=track.thumbnail_url,
                 requester_name=requester_name,
                 requester_id=0,
+                on_finished=lambda: self._release_pending(chatter_key),
             )
         )
         await ctx.reply(f"Queued: {track.title} (#{position} in line)")
+
+    def _release_pending(self, chatter_key: str) -> None:
+        remaining = self._pending_by_chatter.get(chatter_key, 0) - 1
+        if remaining <= 0:
+            self._pending_by_chatter.pop(chatter_key, None)
+        else:
+            self._pending_by_chatter[chatter_key] = remaining
 
     @commands.command(name="nowplaying", aliases=["np"])
     async def now_playing(self, ctx: commands.Context) -> None:
@@ -88,6 +112,15 @@ class SongRequestComponent(commands.Component):
     @commands.command(name="queue")
     async def queue(self, ctx: commands.Context) -> None:
         await ctx.reply(f"{self.bot.relay.queue_length} request(s) queued.")
+
+    @commands.is_elevated()
+    @commands.command(name="skip")
+    async def skip(self, ctx: commands.Context) -> None:
+        np = self.bot.relay.now_playing
+        if not self.bot.relay.skip_current():
+            await ctx.reply("Nothing's playing right now.")
+            return
+        await ctx.reply(f"Skipped: {np.title}" if np else "Skipped.")
 
 
 class TwitchChatBot(commands.Bot):

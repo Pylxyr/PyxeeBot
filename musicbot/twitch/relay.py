@@ -27,7 +27,7 @@ import logging
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Callable, Protocol
 
 if TYPE_CHECKING:
     from musicbot.cogs.music.models import Track
@@ -65,6 +65,12 @@ class QueuedRequest:
     thumbnail_url: str
     requester_name: str
     requester_id: int
+    on_finished: Callable[[], None] | None = None
+    """Called exactly once, whenever this request stops being "pending" for
+    whatever reason — played to completion, skipped, or failed to resolve.
+    Lets a caller (e.g. a per-chatter request cap) track in-flight requests
+    without the relay needing to know anything about chatters or Discord
+    users."""
 
 
 @dataclass(slots=True)
@@ -101,6 +107,7 @@ class TwitchRadioRelay:
 
         self._queue: asyncio.Queue[QueuedRequest] = asyncio.Queue()
         self._muxer: asyncio.subprocess.Process | None = None
+        self._current_decoder: asyncio.subprocess.Process | None = None
         self._task: asyncio.Task[None] | None = None
         self._now_playing: NowPlaying | None = None
         self._stopping = False
@@ -113,6 +120,17 @@ class TwitchRadioRelay:
     def queue_length(self) -> int:
         return self._queue.qsize()
 
+    def skip_current(self) -> bool:
+        """Kill the currently-playing track's decoder. _play_one's own read loop
+        sees this as a normal EOF and moves on to the next queued request — it
+        doesn't touch the muxer at all, so this never risks the RTMP connection
+        itself. Returns False if nothing is currently playing."""
+        if self._current_decoder is None:
+            return False
+        with contextlib.suppress(ProcessLookupError):
+            self._current_decoder.kill()
+        return True
+
     def enqueue(self, request: QueuedRequest) -> int:
         """Add a request to the queue. Returns its position (1 = next up)."""
         self._queue.put_nowait(request)
@@ -122,7 +140,9 @@ class TwitchRadioRelay:
         if self._task is not None:
             return
         if not self._background_image.is_file():
-            raise FileNotFoundError(f"Twitch relay background image not found: {self._background_image}")
+            raise FileNotFoundError(
+                f"Twitch relay background image not found: {self._background_image}"
+            )
         self._stopping = False
         self._task = asyncio.create_task(self._run_forever(), name="twitch-radio-relay")
 
@@ -159,51 +179,15 @@ class TwitchRadioRelay:
     async def _spawn_muxer(self) -> None:
         gop = max(1, self._video_fps * 2)  # Twitch requires a 2-second keyframe interval
         self._muxer = await asyncio.create_subprocess_exec(
-            "ffmpeg",
-            "-hide_banner",
-            "-loglevel",
-            "warning",
-            "-loop",
-            "1",
-            "-i",
-            str(self._background_image),
-            "-thread_queue_size",
-            "4096",
-            "-f",
-            "s16le",
-            "-ar",
-            str(AUDIO_RATE),
-            "-ac",
-            str(AUDIO_CHANNELS),
-            "-i",
-            "-",
-            "-r",
-            str(self._video_fps),
-            "-g",
-            str(gop),
-            "-keyint_min",
-            str(gop),
-            "-c:v",
-            "libx264",
-            "-preset",
-            "ultrafast",
-            "-tune",
-            "stillimage",
-            "-threads",
-            "1",
-            "-pix_fmt",
-            "yuv420p",
-            "-b:v",
-            f"{self._video_bitrate_kbps}k",
-            "-c:a",
-            "aac",
-            "-b:a",
-            "128k",
-            "-ar",
-            str(AUDIO_RATE),
-            "-f",
-            "flv",
-            self._rtmp_url,
+            "ffmpeg", "-hide_banner", "-loglevel", "warning",
+            "-loop", "1", "-i", str(self._background_image),
+            "-thread_queue_size", "4096",
+            "-f", "s16le", "-ar", str(AUDIO_RATE), "-ac", str(AUDIO_CHANNELS), "-i", "-",
+            "-r", str(self._video_fps), "-g", str(gop), "-keyint_min", str(gop),
+            "-c:v", "libx264", "-preset", "ultrafast", "-tune", "stillimage",
+            "-threads", "1", "-pix_fmt", "yuv420p", "-b:v", f"{self._video_bitrate_kbps}k",
+            "-c:a", "aac", "-b:a", "128k", "-ar", str(AUDIO_RATE),
+            "-f", "flv", self._rtmp_url,
             stdin=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
@@ -248,6 +232,14 @@ class TwitchRadioRelay:
             await self._play_one(request, muxer_stdin)
 
     async def _play_one(self, request: QueuedRequest, muxer_stdin: asyncio.StreamWriter) -> None:
+        try:
+            await self._play_one_inner(request, muxer_stdin)
+        finally:
+            if request.on_finished is not None:
+                with contextlib.suppress(Exception):
+                    request.on_finished()
+
+    async def _play_one_inner(self, request: QueuedRequest, muxer_stdin: asyncio.StreamWriter) -> None:
         # Re-resolve now, not at !sr time — a stream URL resolved when this was
         # queued may have expired if it sat behind a long queue.
         try:
@@ -272,22 +264,12 @@ class TwitchRadioRelay:
         log.info("Twitch relay now playing: %s (requested by %s)", track.title, request.requester_name)
 
         decoder = await asyncio.create_subprocess_exec(
-            "ffmpeg",
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-re",
-            "-i",
-            track.stream_url,
-            "-f",
-            "s16le",
-            "-ar",
-            str(AUDIO_RATE),
-            "-ac",
-            str(AUDIO_CHANNELS),
-            "-",
+            "ffmpeg", "-hide_banner", "-loglevel", "error",
+            "-re", "-i", track.stream_url,
+            "-f", "s16le", "-ar", str(AUDIO_RATE), "-ac", str(AUDIO_CHANNELS), "-",
             stdout=asyncio.subprocess.PIPE,
         )
+        self._current_decoder = decoder
         assert decoder.stdout is not None
         try:
             while True:
@@ -300,4 +282,5 @@ class TwitchRadioRelay:
             with contextlib.suppress(ProcessLookupError):
                 decoder.kill()
             await decoder.wait()
+            self._current_decoder = None
             self._now_playing = None

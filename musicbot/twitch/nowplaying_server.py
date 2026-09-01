@@ -16,7 +16,7 @@ request, nothing held in memory beyond the current NowPlaying dataclass).
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Awaitable, Callable
 
 from aiohttp import web
 
@@ -59,9 +59,29 @@ def build_nowplaying_app(relay: "TwitchRadioRelay") -> web.Application:
     async def handle_health(_: web.Request) -> web.Response:
         return web.json_response({"ok": True})
 
-    app = web.Application()
+    @web.middleware
+    async def cors_middleware(
+        request: web.Request, handler: "Callable[[web.Request], Awaitable[web.StreamResponse]]"
+    ) -> web.StreamResponse:
+        # This endpoint is read-only, unauthenticated, public metadata by design
+        # (song title/artist/art — nothing sensitive), so a permissive CORS
+        # policy costs nothing and is what actually lets a StreamElements-hosted
+        # custom widget (running on streamelements.com, not this server) fetch()
+        # it at all — without this header the browser blocks the response
+        # before your widget's JS ever sees it, even though the request itself
+        # succeeds.
+        if request.method == "OPTIONS":
+            response: web.StreamResponse = web.Response(status=204)
+        else:
+            response = await handler(request)
+        response.headers["Access-Control-Allow-Origin"] = "*"
+        response.headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
+        return response
+
+    app = web.Application(middlewares=[cors_middleware])
     app.router.add_get("/nowplaying.json", handle_nowplaying)
     app.router.add_get("/healthz", handle_health)
+    app.router.add_route("OPTIONS", "/{tail:.*}", lambda _: web.Response(status=204))
     return app
 
 
