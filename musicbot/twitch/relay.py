@@ -48,7 +48,13 @@ class TrackResolver(Protocol):
     to know anything about MusicCog beyond this one method."""
 
     async def __call__(
-        self, query: str, requester_id: int, *, guild_id: int | None = None, limit: int = 1
+        self,
+        query: str,
+        requester_id: int,
+        *,
+        guild_id: int | None = None,
+        twitch_mode: bool = False,
+        limit: int = 1,
     ) -> tuple[list["Track"], int]: ...
 
 
@@ -259,11 +265,29 @@ class TwitchRadioRelay:
                 # Nothing requested — trickle silence at the same pace real audio
                 # would arrive, so the muxer's stdin never starves and the live
                 # mux keeps flowing instead of stalling between songs.
-                muxer_stdin.write(_SILENCE_CHUNK)
-                await muxer_stdin.drain()
+                await self._write_silence_chunk(muxer_stdin)
                 await asyncio.sleep(_CHUNK_DURATION)
                 continue
             await self._play_one(request, muxer_stdin)
+
+    async def _write_silence_chunk(self, muxer_stdin: asyncio.StreamWriter) -> None:
+        muxer_stdin.write(_SILENCE_CHUNK)
+        await muxer_stdin.drain()
+
+    async def _trickle_silence_until_cancelled(self, muxer_stdin: asyncio.StreamWriter) -> None:
+        """Keeps the muxer fed while a track is being re-resolved and its decoder
+        spun up. Every track transition involves a live yt-dlp round trip (see
+        _play_one_inner) with no cached fallback, so without this the muxer's
+        stdin previously went completely silent — no audio, no filler — for
+        however long that resolve took, which could be tens of seconds under
+        contention or a slow extraction. Cancelled the moment real audio is
+        ready to write instead."""
+        try:
+            while True:
+                await self._write_silence_chunk(muxer_stdin)
+                await asyncio.sleep(_CHUNK_DURATION)
+        except asyncio.CancelledError:
+            raise
 
     async def _play_one(self, request: QueuedRequest, muxer_stdin: asyncio.StreamWriter) -> None:
         try:
@@ -275,54 +299,74 @@ class TwitchRadioRelay:
 
     async def _play_one_inner(self, request: QueuedRequest, muxer_stdin: asyncio.StreamWriter) -> None:
         # Re-resolve now, not at !sr time — a stream URL resolved when this was
-        # queued may have expired if it sat behind a long queue.
-        try:
-            tracks, _ = await self._resolver(request.webpage_url, request.requester_id, limit=1)
-        except Exception:
-            log.exception("Failed to re-resolve queued Twitch request: %s", request.webpage_url)
-            return
-        if not tracks:
-            log.warning("Re-resolve returned nothing for %s — skipping", request.webpage_url)
-            return
-        track = tracks[0]
-
-        self._now_playing = NowPlaying(
-            title=track.title,
-            uploader=track.uploader,
-            thumbnail_url=track.thumbnail_url,
-            requester_name=request.requester_name,
-            webpage_url=track.webpage_url,
-            started_at=time.monotonic(),
-            duration=track.duration,
+        # queued may have expired if it sat behind a long queue. This is a live
+        # network round trip (yt-dlp extraction, then ffmpeg decoder startup), so
+        # keep silence flowing into the muxer for its duration instead of leaving
+        # stdin starved — see _trickle_silence_until_cancelled.
+        silence_task = asyncio.create_task(
+            self._trickle_silence_until_cancelled(muxer_stdin), name="twitch-relay-prefeed-silence"
         )
-        log.info("Twitch relay now playing: %s (requested by %s)", track.title, request.requester_name)
-
-        decoder = await asyncio.create_subprocess_exec(
-            "ffmpeg",
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-re",
-            "-i",
-            track.stream_url,
-            "-f",
-            "s16le",
-            "-ar",
-            str(AUDIO_RATE),
-            "-ac",
-            str(AUDIO_CHANNELS),
-            "-",
-            stdout=asyncio.subprocess.PIPE,
-        )
-        self._current_decoder = decoder
-        assert decoder.stdout is not None
+        decoder: asyncio.subprocess.Process | None = None
+        first_chunk = b""
         try:
-            while True:
-                chunk = await decoder.stdout.read(_CHUNK_BYTES)
-                if not chunk:
-                    break
+            try:
+                tracks, _ = await self._resolver(
+                    request.webpage_url, request.requester_id, twitch_mode=True, limit=1
+                )
+            except Exception:
+                log.exception("Failed to re-resolve queued Twitch request: %s", request.webpage_url)
+                return
+            if not tracks:
+                log.warning("Re-resolve returned nothing for %s — skipping", request.webpage_url)
+                return
+            track = tracks[0]
+
+            self._now_playing = NowPlaying(
+                title=track.title,
+                uploader=track.uploader,
+                thumbnail_url=track.thumbnail_url,
+                requester_name=request.requester_name,
+                webpage_url=track.webpage_url,
+                started_at=time.monotonic(),
+                duration=track.duration,
+            )
+            log.info("Twitch relay now playing: %s (requested by %s)", track.title, request.requester_name)
+
+            decoder = await asyncio.create_subprocess_exec(
+                "ffmpeg",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-re",
+                "-i",
+                track.stream_url,
+                "-f",
+                "s16le",
+                "-ar",
+                str(AUDIO_RATE),
+                "-ac",
+                str(AUDIO_CHANNELS),
+                "-",
+                stdout=asyncio.subprocess.PIPE,
+            )
+            self._current_decoder = decoder
+            assert decoder.stdout is not None
+            # Still covered by the silence trickle: ffmpeg needs a moment after
+            # spawning before it produces its first decoded chunk.
+            first_chunk = await decoder.stdout.read(_CHUNK_BYTES)
+        finally:
+            silence_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await silence_task
+
+        if decoder is None:
+            return
+        try:
+            chunk = first_chunk
+            while chunk:
                 muxer_stdin.write(chunk)
                 await muxer_stdin.drain()
+                chunk = await decoder.stdout.read(_CHUNK_BYTES)
         finally:
             with contextlib.suppress(ProcessLookupError):
                 decoder.kill()

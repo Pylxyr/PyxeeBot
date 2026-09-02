@@ -28,6 +28,7 @@ A self-hosted Discord music bot built with [discord.py](https://github.com/Rappt
   - [Local setup](#local-setup)
 - [Running as a systemd service](#running-as-a-systemd-service)
 - [Configuration](#configuration)
+- [Twitch Integration](#twitch-integration)
 - [Commands](#commands)
 - [Project Structure](#project-structure)
 - [Architecture Notes](#architecture-notes)
@@ -264,17 +265,52 @@ All settings are read from `.env`. Every value has a default. See `deploy/.env.e
 | `YTDLP_SOCKET_TIMEOUT` | `15` | yt-dlp socket timeout |
 | `NEAR_END_PREFETCH_SECONDS` | `30` | Trigger stream URL refresh this many seconds before track end |
 | `YTDLP_COOKIES_FILE` | — | Path to Netscape cookies file |
-| `YTDLP_JS_RUNTIME_PATH` | — | Path to a Node.js binary, for sites requiring JS signature decryption. If unset, yt-dlp 2026.08+ will try to auto-detect and use a `deno` runtime on `PATH` instead; set this to pin Node explicitly |
+| `YTDLP_JS_RUNTIME_PATH` | — | Path to a JS runtime binary, for sites requiring JS signature decryption. If unset, yt-dlp auto-detects a `deno` binary on `PATH` — the setup wizards install Deno system-wide for exactly this. Only set this to pin a different runtime; note Node's JIT is incompatible with the systemd unit's `MemoryDenyWriteExecute=yes` hardening, Deno's is not (see [Twitch Integration](#twitch-integration) for the same caveat applied there) |
 | `OPUS_BITRATE_KBPS` | `64` | Opus encoding bitrate (64–256) |
 | `NP_AUTO_REFRESH` | `false` | Auto-refresh the now-playing panel on a timer |
 | `NP_AUTO_REFRESH_INTERVAL` | `30` | Auto-refresh interval in seconds |
 | `ERROR_ANNOUNCE` | `true` | Post playback errors to the announce channel |
 | `RESTORE_QUEUE_ON_RESTART` | `true` | Restore queue from snapshot after bot restart |
 | `BOT_ACTIVITY_URL` | `pylxyr.github.io/PyxeeBot-Page/` | Text shown in the bot's Discord status ("Watching …") |
+| `TWITCH_STREAM_KEY` | — | Setting this is what turns Twitch integration on; everything else below is inert without it. See [Twitch Integration](#twitch-integration) |
+| `TWITCH_CLIENT_ID` / `TWITCH_CLIENT_SECRET` | — | From your app at [dev.twitch.tv/console/apps](https://dev.twitch.tv/console/apps) |
+| `TWITCH_BOT_ID` / `TWITCH_OWNER_ID` | — | Numeric Twitch user IDs (not usernames) for the chatting account and the broadcaster account |
+| `TWITCH_INGEST_URL` | `rtmp://live.twitch.tv/app` | Twitch RTMP ingest endpoint |
+| `TWITCH_PREFIX` | `!` | Command prefix in Twitch chat (independent of `DEFAULT_PREFIX`) |
+| `TWITCH_BACKGROUND_IMAGE` | `deploy/twitch_background.png` | Static image the video track loops while streaming |
+| `TWITCH_VIDEO_BITRATE_KBPS` / `TWITCH_VIDEO_FPS` | `800` / `2` | Video encode settings for the RTMP push |
+| `TWITCH_NOWPLAYING_HOST` / `TWITCH_NOWPLAYING_PORT` | `127.0.0.1` / `8098` | Local HTTP surface: `/nowplaying.json` overlay feed, `/settings` GUI |
+| `TWITCH_SETTINGS_PASSWORD` | — | Password gate for the `/settings` GUI |
+| `TWITCH_TOKEN_FILE` | `twitch_tokens.json` | Filename (under `data/`) where the one-time OAuth token is persisted |
+| `TWITCH_YTDLP_CONCURRENCY` | `2` | Twitch's own yt-dlp extraction concurrency, kept separate from `YTDLP_CONCURRENT_EXTRACTS` so a Discord `!play` can never stall the live Twitch feed waiting on the same slot |
 
 ---
 
-## Commands
+## Twitch Integration
+
+Optional, and off by default — leave `TWITCH_STREAM_KEY` unset and none of this loads or runs. It streams a 24/7 audio "radio" to a Twitch channel (static background image, silence between tracks) driven by a `!sr <query>` chat command, plus the usual `!skip`/`!queue`/`!nowplaying`. It shares the music cog's yt-dlp resolver with the Discord side but keeps its own extraction concurrency slot (`TWITCH_YTDLP_CONCURRENCY`) so the two never contend for the same yt-dlp slot.
+
+**This is not covered by the setup wizards.** `deploy/setup_*.sh` install and configure the Discord bot only; Twitch has to be configured by hand, and — separately from filling in `.env` — getting the bot account authenticated is a manual, interactive, one-time step that can't be automated by a non-interactive script, because it requires you to approve an OAuth grant in a browser as two different Twitch accounts.
+
+**1. Fill in `.env`** — `TWITCH_CLIENT_ID`/`TWITCH_CLIENT_SECRET` (register an app at [dev.twitch.tv/console/apps](https://dev.twitch.tv/console/apps); OAuth Redirect URL `http://localhost:4343/oauth/callback`), `TWITCH_BOT_ID`/`TWITCH_OWNER_ID` (numeric Twitch user IDs), and `TWITCH_STREAM_KEY` (Creator Dashboard → Settings → Stream — treat it like a password). A dedicated bot account, made a moderator in your channel, is recommended over reusing your main account.
+
+**2. Start the bot once** with those set. TwitchIO starts a small local web server on port 4343 to complete the OAuth grant — it binds to `localhost` only, so on a remote VPS you'll need an SSH tunnel to reach it from your own machine:
+
+```bash
+ssh -L 4343:localhost:4343 <user>@<host>
+```
+
+Keep that open for the next step.
+
+**3. Authorize both accounts**, in a browser:
+- Logged in as the **bot account**: `http://localhost:4343/oauth?scopes=user:read:chat+user:write:chat+user:bot`
+- Logged in as the **broadcaster account**: `http://localhost:4343/oauth?scopes=channel:bot` (skippable if the bot account is already a moderator in your channel, since that alone satisfies Twitch's chat-read requirement — but it costs nothing to do anyway)
+
+The resulting tokens are saved to `data/twitch_tokens.json` (configurable via `TWITCH_TOKEN_FILE`) and reloaded automatically on every future start — this directory is both writable under the hardened systemd unit and already gitignored, unlike TwitchIO's own default location in the project root. You shouldn't need to repeat steps 2–3 unless that file is deleted or Twitch revokes the token.
+
+**A note on `MemoryDenyWriteExecute=yes`** in the systemd unit: if you ever point `YTDLP_JS_RUNTIME_PATH` at Node.js or Bun instead of the default Deno, expect it to crash — that hardening flag blocks the writable+executable memory their JIT compilers need. Deno runs JIT-less by default and isn't affected, which is why the setup scripts install it rather than Node.
+
+---
 
 ### Playback
 

@@ -77,6 +77,12 @@ class MusicCog(
         # playback commands (!play, !playnext, !search) of the single shared extraction
         # slot they rely on. See musicbot/cogs/music/_extraction.py::_extract_info.
         self.curation_extract_semaphore = asyncio.Semaphore(self.bot.settings.ytdlp_curation_concurrency)
+        # Same reasoning again, for the Twitch relay: it re-resolves a fresh stream
+        # URL right before every track change (musicbot/twitch/relay.py), and used
+        # to share extract_semaphore with Discord playback — meaning one Discord
+        # !play could stall the live Twitch feed for as long as that extraction
+        # took. Giving it its own slot(s) removes that contention.
+        self.twitch_extract_semaphore = asyncio.Semaphore(self.bot.settings.twitch_ytdlp_concurrency)
 
         self._restored_guilds: set[int] = set()
 

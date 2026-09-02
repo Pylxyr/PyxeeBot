@@ -57,6 +57,8 @@ class Settings:
     twitch_nowplaying_host: str
     twitch_nowplaying_port: int
     twitch_settings_password: str | None
+    twitch_token_path: Path
+    twitch_ytdlp_concurrency: int
 
     @property
     def twitch_enabled(self) -> bool:
@@ -170,4 +172,23 @@ def load_settings() -> Settings:
         twitch_nowplaying_host=os.getenv("TWITCH_NOWPLAYING_HOST", "127.0.0.1").strip() or "127.0.0.1",
         twitch_nowplaying_port=max(1024, min(65535, _int_env("TWITCH_NOWPLAYING_PORT", 8098))),
         twitch_settings_password=os.getenv("TWITCH_SETTINGS_PASSWORD", "").strip() or None,
+        # TwitchIO's own default ("./.tio.tokens.json", relative to the process's
+        # working directory) lands outside DATA_DIR — which is the only app
+        # directory the hardened systemd unit's ReadWritePaths actually allows
+        # writes to (see deploy/musicbot.service). Under that unit, the default
+        # location is read-only, so the one-time OAuth token would silently fail
+        # to persist and every restart would demand re-authorizing from scratch.
+        # Pointing it at DATA_DIR fixes that, and DATA_DIR is already gitignored
+        # (unlike a bare ".tio.tokens.json" in the project root), which matters
+        # since this file holds live access/refresh tokens.
+        twitch_token_path=DATA_DIR / os.getenv("TWITCH_TOKEN_FILE", "twitch_tokens.json").strip(),
+        # Separate from YTDLP_CONCURRENT_EXTRACTS on purpose: the Twitch relay
+        # re-resolves a fresh stream URL right before every single track change
+        # (see relay.py), and previously shared the one global playback semaphore
+        # with Discord's !play/!playnext/!search. Under the default
+        # YTDLP_CONCURRENT_EXTRACTS=1 that meant a single Discord extraction could
+        # stall the live Twitch feed for the extraction's full duration (up to
+        # YTDLP_EXTRACT_TIMEOUT_SECONDS). Giving Twitch its own slot(s) removes
+        # that contention; see twitch_mode in _extraction.py.
+        twitch_ytdlp_concurrency=max(1, min(4, _int_env("TWITCH_YTDLP_CONCURRENCY", 2))),
     )

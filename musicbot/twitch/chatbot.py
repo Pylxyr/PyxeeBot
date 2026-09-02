@@ -9,14 +9,48 @@ per Twitch's own chat bot guide): a single Twitch account (recommended: a
 dedicated account named after the bot, made a moderator in your channel) with
 a User Access Token carrying `user:read:chat` + `user:write:chat`. That
 moderator status is what satisfies the ChatMessageSubscription requirement
-without needing a separate broadcaster-side `channel:bot` grant — see the
-owner requirements section for the full acquisition checklist.
+without needing a separate broadcaster-side `channel:bot` grant.
+
+ONE-TIME SETUP — this part doesn't happen automatically and isn't optional:
+    Neither `client_id`/`client_secret` below nor anything else in this repo
+    can, by itself, obtain the User Access Token this bot needs — a
+    client-credentials ("app") token has no user scopes and can't read or send
+    chat as a specific account. TwitchIO 3.x handles the missing piece with a
+    small built-in web server (twitchio.web.AiohttpAdapter), started
+    automatically by commands.Bot when no custom adapter is supplied, that
+    listens on http://localhost:4343 and persists whatever token you
+    authorize through it (see load_tokens/save_tokens below for exactly
+    where). To complete it:
+
+      1. Start the bot once with valid TWITCH_CLIENT_ID / TWITCH_CLIENT_SECRET
+         / TWITCH_BOT_ID / TWITCH_OWNER_ID set (TWITCH_STREAM_KEY too, since
+         that's what gates whether any of this runs at all — see
+         Settings.twitch_enabled).
+      2. The adapter binds to localhost only, so on a remote VPS you'll need
+         an SSH tunnel to reach it: `ssh -L 4343:localhost:4343 <user>@<host>`
+         from your own machine, kept open while you do steps 3-4.
+      3. In a browser, logged in as the BOT's own Twitch account, visit:
+         http://localhost:4343/oauth?scopes=user:read:chat+user:write:chat+user:bot
+      4. In a browser, logged in as the BROADCASTER's account (i.e. the
+         channel this bot will post in), visit:
+         http://localhost:4343/oauth?scopes=channel:bot
+         (Step 4 is optional if the bot account already has moderator status
+         in that channel — see the auth-model paragraph above — but doing it
+         anyway costs nothing and removes the "is it still a mod" dependency.)
+
+    Once both are done, the tokens are saved to TWITCH_TOKEN_FILE (default:
+    data/twitch_tokens.json — inside DATA_DIR specifically so it survives
+    under the hardened systemd unit's ReadWritePaths, and is gitignored via
+    the existing `data/` entry) and reloaded automatically on every future
+    start. You will not need to repeat this unless that file is deleted or
+    Twitch revokes the token.
 """
 
 from __future__ import annotations
 
 import logging
 import time
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from twitchio import eventsub
@@ -66,7 +100,7 @@ class SongRequestComponent(commands.Component):
             return
 
         try:
-            tracks, _ = await self.bot.resolver(query, requester_id=0, limit=1)
+            tracks, _ = await self.bot.resolver(query, requester_id=0, twitch_mode=True, limit=1)
         except Exception:
             log.exception("Twitch !sr resolve failed for query: %s", query)
             await ctx.reply("Couldn't find or resolve that — try a different search or link.")
@@ -155,6 +189,7 @@ class TwitchChatBot(commands.Bot):
         resolver: "TrackResolver",
         relay: TwitchRadioRelay,
         tunables: TwitchTunables,
+        token_storage_path: Path,
     ) -> None:
         super().__init__(
             client_id=client_id,
@@ -168,6 +203,21 @@ class TwitchChatBot(commands.Bot):
         self.tunables = tunables
         self._owner_id = owner_id
         self._bot_id = bot_id
+        self._token_storage_path = token_storage_path
+
+    async def load_tokens(self, path: str | None = None, /) -> None:
+        # Overridden to redirect TwitchIO's default token file (".tio.tokens.json"
+        # in the process's working directory, which the hardened systemd unit's
+        # ReadWritePaths doesn't cover — see deploy/musicbot.service) into
+        # DATA_DIR instead, where it's both writable and already gitignored.
+        # `path` is only non-None if a caller explicitly overrides it; there
+        # isn't one here, so this always resolves to self._token_storage_path.
+        self._token_storage_path.parent.mkdir(parents=True, exist_ok=True)
+        await super().load_tokens(path or str(self._token_storage_path))
+
+    async def save_tokens(self, path: str | None = None, /) -> None:
+        self._token_storage_path.parent.mkdir(parents=True, exist_ok=True)
+        await super().save_tokens(path or str(self._token_storage_path))
 
     async def setup_hook(self) -> None:
         await self.add_component(SongRequestComponent(self))

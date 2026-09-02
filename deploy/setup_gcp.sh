@@ -59,6 +59,18 @@ provider_postflight() {
   info "    defaults new VMs to Balanced persistent disk, which isn't free."
   info "Consider setting a small budget alert (Billing → Budgets & alerts) as a"
   info "safety net."
+  if grep -q '^TWITCH_STREAM_KEY=.\+' "${ENV_PATH}" 2>/dev/null; then
+    echo ""
+    warn "Twitch integration looks configured — that 36-hour figure above is for"
+    warn "Discord voice ALONE and does not apply once Twitch is streaming. The"
+    warn "Twitch relay pushes video+audio continuously (by design — it streams"
+    warn "silence between requests too), at ~928 kbps by default"
+    warn "(TWITCH_VIDEO_BITRATE_KBPS + audio) — that's roughly 8-9 hours before"
+    warn "the ENTIRE 1 GB monthly allowance is gone, and about \$35-40/month in"
+    warn "egress charges if left running continuously for a full month. Oracle's"
+    warn "~10 TB allowance (deploy/setup_oracle.sh) has no such problem — worth"
+    warn "considering if you plan to run Twitch integration long-term."
+  fi
 }
 
 source "$(dirname "${BASH_SOURCE[0]}")/_common.sh"
