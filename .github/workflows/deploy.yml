@@ -41,6 +41,12 @@ jobs:
         run: ruff format musicbot/ bot.py
 
       - name: Commit formatting changes
+        # Only on push: for pull_request (including from forks), GITHUB_TOKEN is
+        # read-only regardless of the `permissions: contents: write` declared
+        # above — GitHub enforces that restriction itself for fork PRs — so this
+        # step would just fail (or silently do nothing) on external contributions
+        # instead of committing anything.
+        if: github.event_name == 'push'
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
           commit_message: "style: auto-format python code with ruff"
