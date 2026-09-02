@@ -2,8 +2,6 @@
 .venv/
 data/
 logs/
-.role
-conf/failover.conf
 __pycache__/
 *.pyc
 cookies.txt
