@@ -28,22 +28,29 @@ PrivateTmp=yes
 NoNewPrivileges=yes
 ProtectHome=read-only
 # Only data/ and logs/ are writable under ProtectHome=read-only — anything the
-# app needs to persist (the sqlite DB, Twitch's OAuth token file at
-# data/twitch_tokens.json, cookies.txt if used) has to live under one of
-# these two paths or writes will silently fail with a read-only filesystem
-# error. See musicbot/config.py's DATA_DIR / twitch_token_path.
+# app needs to persist (the sqlite DB, cookies.txt if used) has to live under
+# one of these two paths or writes will silently fail with a read-only
+# filesystem error. See musicbot/config.py's DATA_DIR.
 ReadWritePaths=/home/ubuntu/musicbot/data /home/ubuntu/musicbot/logs
 CapabilityBoundingSet=
 AmbientCapabilities=
 LockPersonality=yes
 RestrictRealtime=yes
 RestrictSUIDSGID=yes
-# Blocks writable+executable memory mappings, which breaks JIT-based
-# JavaScript runtimes (Node.js/V8, Bun) with a SIGSYS crash if yt-dlp is ever
-# pointed at one via YTDLP_JS_RUNTIME_PATH. Deno (the default/recommended
-# runtime — see deploy/_common.sh and .env.example) runs JIT-less and is not
-# affected; this only bites if you deliberately switch to Node or Bun.
-MemoryDenyWriteExecute=yes
+# Deliberately NOT setting MemoryDenyWriteExecute=yes. It looks like an easy
+# win — block writable+executable memory mappings, a real anti-exploit
+# hardening — but it's fundamentally incompatible with V8-based JS runtimes,
+# and this bot needs one: yt-dlp requires an external JS runtime for YouTube
+# (its primary source) as of the version pinned in requirements.txt, and Deno
+# is the runtime the setup scripts install for it (see deploy/_common.sh).
+# Tested directly (Linux 6.18, native PR_SET_MDWE, equivalent enforcement to
+# this systemd directive): Deno panics with ENOMEM on the very first script
+# it runs under this restriction — not just under a heavy/JIT-tiered
+# workload, a trivial one-liner crashes it immediately, every time. This
+# isn't a Node-specific caveat as a previous version of this comment claimed
+# ("Deno runs JIT-less by default") — that was wrong; Deno's --jitless V8
+# flag defaults to false same as everyone else's. Enabling this directive
+# would break YouTube extraction outright, not just for edge cases.
 ProtectKernelTunables=yes
 ProtectKernelModules=yes
 ProtectControlGroups=yes

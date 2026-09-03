@@ -280,10 +280,14 @@ run_setup() {
   # (this bot's primary source) degrades or fails for a meaningful fraction of
   # videos. Installed system-wide to /usr/local/bin so it's on PATH for the
   # systemd unit too (that unit sets an explicit PATH that doesn't include a
-  # per-user ~/.deno/bin — see deploy/musicbot.service). Deno runs JIT-less by
-  # default, which is why it's the recommended runtime rather than Node: the
-  # unit's MemoryDenyWriteExecute=yes hardening blocks the writable+executable
-  # memory Node's V8 JIT needs, but doesn't affect a JIT-less runtime.
+  # per-user ~/.deno/bin — see deploy/musicbot.service). Deno is the
+  # recommended default (per yt-dlp's own EJS wiki) and the only runtime
+  # enabled automatically with no extra config — that's the reason it's
+  # installed here, not any special safety property: it's V8-based like Node,
+  # needs the same writable+executable memory for its JIT, and is NOT exempt
+  # from MemoryDenyWriteExecute=yes — which is exactly why that directive
+  # isn't set in deploy/musicbot.service. See that file's comment for the
+  # empirical test behind this.
   if command -v deno >/dev/null 2>&1; then
     info "Deno already installed ($(deno --version | head -n1)) — skipping."
   else
@@ -402,19 +406,6 @@ run_setup() {
       printf '\n'
       printf '# Last.fm API key — enables !vibe / !vibe-load and the per-server !autoplay toggle\n'
       printf 'LASTFM_API_KEY=%s\n' "${LASTFM_API_KEY_VALUE}"
-      printf '\n'
-      printf '# Twitch integration — optional, not covered by this wizard. Leave\n'
-      printf '# TWITCH_STREAM_KEY unset (as below) and none of this loads or runs.\n'
-      printf '# To enable it: fill these in by hand, then see the one-time OAuth\n'
-      printf '# walkthrough in musicbot/twitch/chatbot.py'"'"'s module docstring (or the\n'
-      printf '# Twitch section of README.md) — getting the bot account authenticated\n'
-      printf '# is a manual step that has to happen after these are set.\n'
-      printf '# TWITCH_CLIENT_ID=\n'
-      printf '# TWITCH_CLIENT_SECRET=\n'
-      printf '# TWITCH_BOT_ID=\n'
-      printf '# TWITCH_OWNER_ID=\n'
-      printf '# TWITCH_STREAM_KEY=\n'
-      printf '# TWITCH_INGEST_URL=rtmp://live.twitch.tv/app\n'
     } > "${ENV_PATH}"
     success "Wrote ${ENV_PATH}"
   else
@@ -470,7 +461,4 @@ run_setup() {
   echo "  sudo systemctl restart ${SERVICE_NAME}     — restart after editing .env"
   echo ""
   echo "In Discord, run !commands to see everything the bot can do."
-  echo ""
-  echo "Twitch integration is optional and wasn't configured by this wizard —"
-  echo "see the Twitch section of README.md if you want to set it up."
 }

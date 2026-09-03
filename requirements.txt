@@ -2,7 +2,3 @@ discord.py[voice]==2.7.1
 yt-dlp[default,curl-cffi]==2026.08.19
 python-dotenv==1.2.2
 aiosqlite==0.21.0
-
-# Optional: only needed if you configure Twitch integration (see .env.example).
-# aiohttp is not listed separately — discord.py already requires it.
-twitchio==3.3.2

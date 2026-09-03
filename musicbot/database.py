@@ -125,17 +125,6 @@ class Database:
         await conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_play_history_url ON play_history(guild_id, webpage_url, played_at)"
         )
-        await conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS twitch_tunables (
-                id                            INTEGER NOT NULL PRIMARY KEY CHECK (id = 1),
-                max_pending_per_chatter      INTEGER NOT NULL DEFAULT 2,
-                request_cooldown_seconds     INTEGER NOT NULL DEFAULT 0,
-                queue_cap                    INTEGER NOT NULL DEFAULT 50,
-                max_request_duration_seconds INTEGER NOT NULL DEFAULT 600
-            )
-            """
-        )
 
         await self._run_migrations(conn)
         await conn.commit()
@@ -595,63 +584,3 @@ class Database:
             (guild_id, limit),
         ) as cursor:
             return list(await cursor.fetchall())
-
-    async def get_twitch_tunables(self) -> dict[str, int]:
-        """Single-row settings table (id=1) — there's only ever one Twitch
-        channel per bot, unlike the per-guild_id settings above. Returns
-        this table's own hardcoded defaults if no row has been saved yet
-        (i.e. the settings panel has never been used) — NOT musicbot.config's
-        env var defaults, since those two default sets are allowed to drift
-        independently and this table is the source of truth once anything's
-        been saved through the panel."""
-        defaults = {
-            "max_pending_per_chatter": 2,
-            "request_cooldown_seconds": 0,
-            "queue_cap": 50,
-            "max_request_duration_seconds": 600,
-        }
-        if self._conn is None:
-            return defaults
-        async with self._conn.execute(
-            """
-            SELECT max_pending_per_chatter, request_cooldown_seconds,
-                   queue_cap, max_request_duration_seconds
-            FROM twitch_tunables WHERE id = 1
-            """
-        ) as cursor:
-            row = await cursor.fetchone()
-        if row is None:
-            return defaults
-        return {
-            "max_pending_per_chatter": row["max_pending_per_chatter"],
-            "request_cooldown_seconds": row["request_cooldown_seconds"],
-            "queue_cap": row["queue_cap"],
-            "max_request_duration_seconds": row["max_request_duration_seconds"],
-        }
-
-    async def set_twitch_tunables(
-        self,
-        *,
-        max_pending_per_chatter: int,
-        request_cooldown_seconds: int,
-        queue_cap: int,
-        max_request_duration_seconds: int,
-    ) -> None:
-        if self._conn is None:
-            return
-        async with self._write_lock:
-            await self._conn.execute(
-                """
-                INSERT INTO twitch_tunables
-                    (id, max_pending_per_chatter, request_cooldown_seconds,
-                     queue_cap, max_request_duration_seconds)
-                VALUES (1, ?, ?, ?, ?)
-                ON CONFLICT(id) DO UPDATE SET
-                    max_pending_per_chatter = excluded.max_pending_per_chatter,
-                    request_cooldown_seconds = excluded.request_cooldown_seconds,
-                    queue_cap = excluded.queue_cap,
-                    max_request_duration_seconds = excluded.max_request_duration_seconds
-                """,
-                (max_pending_per_chatter, request_cooldown_seconds, queue_cap, max_request_duration_seconds),
-            )
-            await self._conn.commit()

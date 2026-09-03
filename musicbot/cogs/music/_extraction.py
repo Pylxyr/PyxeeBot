@@ -136,7 +136,6 @@ class ExtractionMixin(MusicCogBase):
         flat_playlist: bool = False,
         flat_search: bool = False,
         curation_mode: bool = False,
-        twitch_mode: bool = False,
     ) -> dict[str, Any]:
         key = (flat_playlist, flat_search)
         options = self._build_ytdl_options(flat_playlist=flat_playlist, flat_search=flat_search)
@@ -155,17 +154,8 @@ class ExtractionMixin(MusicCogBase):
         # Curation's bulk resolve (potentially 25 tracks from a single !vibe confirm) must
         # never compete with playback-critical commands for the same global slot — otherwise
         # !play/!playnext/!search can appear to hang indefinitely behind a large curation
-        # batch, with no feedback beyond a stuck typing indicator. Twitch's !sr and its
-        # per-track re-resolve (relay.py) get their own slot(s) for the same reason: they
-        # used to fall through to extract_semaphore (guild_id is always None for Twitch,
-        # so curation_mode never applied here), meaning a single Discord playback
-        # extraction could stall the live Twitch feed for the extraction's full duration.
-        if twitch_mode:
-            global_sem = self.twitch_extract_semaphore
-        elif curation_mode:
-            global_sem = self.curation_extract_semaphore
-        else:
-            global_sem = self.extract_semaphore
+        # batch, with no feedback beyond a stuck typing indicator.
+        global_sem = self.curation_extract_semaphore if curation_mode else self.extract_semaphore
         async with sem_ctx:
             async with global_sem:
                 try:
@@ -259,12 +249,10 @@ class ExtractionMixin(MusicCogBase):
         )
 
     async def _extract_playlist_tracks(
-        self, query: str, requester_id: int, *, curation_mode: bool = False, twitch_mode: bool = False
+        self, query: str, requester_id: int, *, curation_mode: bool = False
     ) -> tuple[list[Track], int]:
         try:
-            info = await self._extract_info(
-                query, flat_playlist=True, curation_mode=curation_mode, twitch_mode=twitch_mode
-            )
+            info = await self._extract_info(query, flat_playlist=True, curation_mode=curation_mode)
         except commands.BadArgument:
             raise
         except DownloadError as exc:
@@ -307,13 +295,10 @@ class ExtractionMixin(MusicCogBase):
         requester_id: int,
         *,
         curation_mode: bool = False,
-        twitch_mode: bool = False,
     ) -> Track | None:
         if "url" not in item and item.get("webpage_url"):
             try:
-                item = await self._extract_info(
-                    item["webpage_url"], curation_mode=curation_mode, twitch_mode=twitch_mode
-                )
+                item = await self._extract_info(item["webpage_url"], curation_mode=curation_mode)
             except (DownloadError, commands.BadArgument) as exc:
                 self.logger.warning("Skipping unplayable item %s: %s", item.get("webpage_url"), exc)
                 return None
@@ -338,10 +323,10 @@ class ExtractionMixin(MusicCogBase):
         )
 
     async def _extract_full_tracks(
-        self, query: str, requester_id: int, *, curation_mode: bool = False, twitch_mode: bool = False
+        self, query: str, requester_id: int, *, curation_mode: bool = False
     ) -> tuple[list[Track], int]:
         try:
-            info = await self._extract_info(query, curation_mode=curation_mode, twitch_mode=twitch_mode)
+            info = await self._extract_info(query, curation_mode=curation_mode)
         except commands.BadArgument:
             raise
         except DownloadError as exc:
@@ -359,9 +344,7 @@ class ExtractionMixin(MusicCogBase):
 
         tracks, skipped = [], 0
         for item in info_items:
-            track = await self._extract_single_track(
-                item, query, requester_id, curation_mode=curation_mode, twitch_mode=twitch_mode
-            )
+            track = await self._extract_single_track(item, query, requester_id, curation_mode=curation_mode)
             if track is None:
                 skipped += 1
                 continue
@@ -392,12 +375,9 @@ class ExtractionMixin(MusicCogBase):
         *,
         limit: int = SEARCH_SELECTION_LIMIT,
         curation_mode: bool = False,
-        twitch_mode: bool = False,
     ) -> tuple[list[Track], int]:
         try:
-            info = await self._extract_info(
-                query, flat_search=True, curation_mode=curation_mode, twitch_mode=twitch_mode
-            )
+            info = await self._extract_info(query, flat_search=True, curation_mode=curation_mode)
         except commands.BadArgument:
             raise
         except DownloadError as exc:
@@ -427,21 +407,16 @@ class ExtractionMixin(MusicCogBase):
         *,
         guild_id: int | None = None,
         curation_mode: bool = False,
-        twitch_mode: bool = False,
         limit: int = 1,
     ) -> tuple[list[Track], int]:
         token = _CURRENT_GUILD_ID.set(guild_id)
         try:
             if query.startswith("ytsearch"):
                 return await self._extract_search_candidates(
-                    query, requester_id, limit=limit, curation_mode=curation_mode, twitch_mode=twitch_mode
+                    query, requester_id, limit=limit, curation_mode=curation_mode
                 )
             if self._is_playlist_query(query):
-                return await self._extract_playlist_tracks(
-                    query, requester_id, curation_mode=curation_mode, twitch_mode=twitch_mode
-                )
-            return await self._extract_full_tracks(
-                query, requester_id, curation_mode=curation_mode, twitch_mode=twitch_mode
-            )
+                return await self._extract_playlist_tracks(query, requester_id, curation_mode=curation_mode)
+            return await self._extract_full_tracks(query, requester_id, curation_mode=curation_mode)
         finally:
             _CURRENT_GUILD_ID.reset(token)

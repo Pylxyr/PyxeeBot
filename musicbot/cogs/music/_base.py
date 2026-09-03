@@ -45,7 +45,6 @@ class MusicCogBase(commands.Cog):
     _curation_semaphores: dict[int, asyncio.Semaphore]
     extract_semaphore: asyncio.Semaphore
     curation_extract_semaphore: asyncio.Semaphore
-    twitch_extract_semaphore: asyncio.Semaphore
     _restored_guilds: set[int]
 
     def _bg_task(self, coro: Any, *, name: str | None = None) -> asyncio.Task[Any]: ...
@@ -100,11 +99,10 @@ class MusicCogBase(commands.Cog):
         *,
         guild_id: int | None = None,
         curation_mode: bool = False,
-        twitch_mode: bool = False,
         limit: int = 1,
     ) -> tuple[list[Track], int]: ...
     async def _extract_full_tracks(
-        self, query: str, requester_id: int, *, curation_mode: bool = False, twitch_mode: bool = False
+        self, query: str, requester_id: int, *, curation_mode: bool = False
     ) -> tuple[list[Track], int]: ...
     async def _extract_search_candidates(
         self,
@@ -113,7 +111,6 @@ class MusicCogBase(commands.Cog):
         *,
         limit: int = 0,
         curation_mode: bool = False,
-        twitch_mode: bool = False,
     ) -> tuple[list[Track], int]: ...
     def _normalize_query(self, query: str) -> str: ...
     def _is_playlist_query(self, query: str) -> bool: ...

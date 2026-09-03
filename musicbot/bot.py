@@ -462,106 +462,6 @@ def configure_logging(settings: Settings) -> None:
     logging.getLogger("yt_dlp").setLevel(logging.WARNING)
 
 
-async def _run_twitch_integration(bot: MusicBot, settings: Settings) -> None:
-    """Only scheduled at all when settings.twitch_enabled — see run() below. Waits
-    for the Discord side to finish its own setup_hook (which is where MusicCog
-    gets added) before reaching into it, since this needs the exact same
-    extraction pipeline the Discord commands use rather than a second one."""
-    from musicbot.twitch.admin_server import run_admin_server
-    from musicbot.twitch.chatbot import TwitchChatBot
-    from musicbot.twitch.relay import TwitchRadioRelay
-    from musicbot.twitch.tunables import TwitchTunables
-
-    await bot.wait_until_ready()
-    music_cog = bot.get_cog("MusicCog")
-    if music_cog is None:
-        logging.getLogger(__name__).error("Twitch integration enabled but MusicCog isn't loaded — skipping.")
-        return
-
-    tunables = TwitchTunables.from_dict(await bot.database.get_twitch_tunables())
-
-    relay = TwitchRadioRelay(
-        ingest_url=settings.twitch_ingest_url,
-        stream_key=settings.twitch_stream_key,  # type: ignore[arg-type]  # guarded by twitch_enabled
-        background_image=settings.twitch_background_image,
-        resolver=music_cog._extract_tracks,
-        video_bitrate_kbps=settings.twitch_video_bitrate_kbps,
-        video_fps=settings.twitch_video_fps,
-    )
-    # relay.start() spawns a persistent background task (and, once it's running, a
-    # live ffmpeg RTMP push). Everything from here on is wrapped in nested
-    # try/finally blocks — one per resource acquired — instead of a single try
-    # around just the TwitchChatBot usage. That single-try version used to leak
-    # the relay's task (and, further down, the admin server's bound port) if
-    # anything *after* relay.start() failed — e.g. run_admin_server() hitting a
-    # port already in use, or the TwitchChatBot() constructor raising. Since
-    # _run_twitch_integration_guarded retries this whole function on any
-    # exception, that leak compounded on every retry: a new relay (new ffmpeg
-    # process) and a new attempt to bind the same port, every backoff cycle,
-    # forever, on a box this project explicitly targets at 1 GB RAM. Nesting the
-    # try/finally per-resource means each one is torn down as soon as it's no
-    # longer needed, regardless of what fails afterward.
-    relay.start()
-    try:
-        admin_runner = await run_admin_server(
-            relay=relay,
-            tunables=tunables,
-            database=bot.database,
-            settings_password=settings.twitch_settings_password,
-            broadcast_info={
-                "Ingest URL": settings.twitch_ingest_url,
-                "Video bitrate": f"{settings.twitch_video_bitrate_kbps} kbps",
-                "Video framerate": f"{settings.twitch_video_fps} fps",
-                "Background image": str(settings.twitch_background_image),
-                "Chat command prefix": settings.twitch_prefix,
-            },
-            host=settings.twitch_nowplaying_host,
-            port=settings.twitch_nowplaying_port,
-        )
-        try:
-            twitch_bot = TwitchChatBot(
-                client_id=settings.twitch_client_id,  # type: ignore[arg-type]
-                client_secret=settings.twitch_client_secret,  # type: ignore[arg-type]
-                bot_id=settings.twitch_bot_id,  # type: ignore[arg-type]
-                owner_id=settings.twitch_owner_id,  # type: ignore[arg-type]
-                prefix=settings.twitch_prefix,
-                resolver=music_cog._extract_tracks,
-                relay=relay,
-                tunables=tunables,
-                token_storage_path=settings.twitch_token_path,
-            )
-            async with twitch_bot:
-                await twitch_bot.start()
-        finally:
-            await admin_runner.cleanup()
-    finally:
-        await relay.stop()
-
-
-async def _run_twitch_integration_guarded(bot: MusicBot, settings: Settings) -> None:
-    """Wraps _run_twitch_integration with its own retry-with-backoff and, more
-    importantly, makes sure nothing it raises ever reaches the asyncio.gather in
-    _async_run. An unhandled exception in a gathered task cancels every other
-    task in that gather by default — confirmed with a standalone repro before
-    writing this fix — so without this wrapper, a bad Twitch credential or a
-    transient Twitch API failure would silently take the Discord bot down too.
-    That defeats the entire point of keeping Twitch's fault domain separate
-    from Discord's despite sharing one process."""
-    log = logging.getLogger(__name__)
-    backoff = 5.0
-    while True:
-        try:
-            await _run_twitch_integration(bot, settings)
-            return  # clean return: either MusicCog was missing (already logged,
-            # not transient, don't retry) or twitch_bot.start() ended on its own
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            log.exception("Twitch integration failed — retrying in %.0fs", backoff)
-            await asyncio.sleep(backoff)
-            backoff = min(backoff * 2, 300.0)
-
-
 async def _async_run() -> None:
     settings = load_settings()
     configure_logging(settings)
@@ -579,37 +479,7 @@ async def _async_run() -> None:
         with contextlib.suppress(NotImplementedError):
             loop.add_signal_handler(signal.SIGTERM, _handle_sigterm)
 
-        tasks = [asyncio.create_task(bot.start(settings.token), name="discord-bot")]
-        if settings.twitch_enabled:
-            tasks.append(
-                asyncio.create_task(_run_twitch_integration_guarded(bot, settings), name="twitch-integration")
-            )
-        else:
-            logging.getLogger(__name__).info(
-                "Twitch integration not configured (TWITCH_STREAM_KEY unset) — skipping."
-            )
-
-        # Not asyncio.gather(*tasks): gather() waits for every task to finish
-        # before returning, but _run_twitch_integration_guarded retries forever
-        # and nothing was cancelling it when the Discord task ended (e.g. via
-        # bot.close() on SIGTERM). That let a stuck or mid-backoff Twitch task
-        # stall shutdown past the systemd unit's TimeoutStopSec=30, risking a
-        # SIGKILL instead of a clean exit. Wait for whichever task finishes
-        # first, then explicitly cancel and await the rest with a bounded
-        # timeout so shutdown always completes.
-        done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
-        for task in pending:
-            task.cancel()
-        if pending:
-            await asyncio.wait(pending, timeout=15)
-        for task in (*done, *pending):
-            if not task.done() or task.cancelled():
-                continue
-            exc = task.exception()
-            if exc is not None:
-                logging.getLogger(__name__).error(
-                    "%s task ended with an error", task.get_name(), exc_info=exc
-                )
+        await bot.start(settings.token)
 
 
 def run() -> None:
