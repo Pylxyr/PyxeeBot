@@ -16,7 +16,7 @@ Stream from YouTube · Last.fm curation · Live controls
 
 </div>
 
-A self-hosted Discord music bot built with [discord.py](https://github.com/Rapptz/discord.py), yt-dlp, and aiosqlite. Designed to run well on a single-core, 1 GB RAM VPS (tested on both Oracle Cloud's Always Free AMD E2.1.Micro and Google Cloud's Always Free e2-micro, running Ubuntu).
+A self-hosted Discord music bot built with [discord.py](https://github.com/Rapptz/discord.py), yt-dlp, and aiosqlite. Designed to run well on a single-core, 1 GB RAM VPS (tested on both Oracle Cloud's Always Free AMD E2.1.Micro and Google Cloud's Always Free e2-micro, running Ubuntu) — or directly on an Android phone via Termux, no VPS required.
 
 ## Contents
 
@@ -25,6 +25,7 @@ A self-hosted Discord music bot built with [discord.py](https://github.com/Rappt
 - [Requirements](#requirements)
 - [Installation](#installation)
   - [Automated VPS setup](#automated-vps-setup)
+  - [Automated Termux (Android) setup](#automated-termux-android-setup)
   - [Local setup](#local-setup)
 - [Running as a systemd service](#running-as-a-systemd-service)
 - [Configuration](#configuration)
@@ -125,6 +126,19 @@ cd ~/musicbot
 
 `APP_DIR` defaults to wherever you actually cloned the repo (not a hardcoded path), so it doesn't matter what you name the folder or where it lives — `cd` into it and run the matching script. All three also add a 1 GB swap file automatically on any host with ≤2 GB RAM, since a single yt-dlp/ffmpeg burst can otherwise pressure a 1 GB box hard enough to risk an OOM-killed SSH session.
 
+### Automated Termux (Android) setup
+
+**Running on your phone instead of a VPS?** `deploy/setup_termux.sh` is a separate, self-contained installer for Termux — Android has no systemd, no apt/sudo, and building the voice stack (PyNaCl, davey) from source needs a couple of Rust-toolchain workarounds a VPS never touches (correct `CARGO_BUILD_TARGET` for the device's architecture, and an `ANDROID_API_LEVEL` floor of 34, without which `maturin` fails outright). It walks through the same interactive wizard as the VPS scripts — Discord token and an optional Last.fm key, both live-validated — then gets the bot running immediately, via `termux-services` if available, falling back to a detached `tmux` session otherwise.
+
+```bash
+pkg install git
+git clone https://github.com/Pylxyr/PyxeeBot.git ~/musicbot
+cd ~/musicbot
+bash deploy/setup_termux.sh
+```
+
+Use Termux from [F-Droid](https://f-droid.org/packages/com.termux/), not the Play Store — that build has been unmaintained since 2021. Two optional companion apps (also F-Droid) round it out: **Termux:Boot** starts Termux — and the bot with it, if you set up the `termux-services` option — automatically when your phone reboots, and **Termux:API** enables `termux-wake-lock` so Android doesn't kill the session in the background.
+
 ### Local setup
 
 The steps below are for local development or platforms other than the automated script above.
@@ -175,7 +189,7 @@ python bot.py
 
 ## Running as a systemd service
 
-> If you used one of the `deploy/setup_*.sh` scripts, this is already done — the bot is running as a systemd service. The steps below are for setting it up manually.
+> If you used one of the VPS scripts (`setup.sh` / `setup_oracle.sh` / `setup_gcp.sh`), this is already done — the bot is running as a systemd service. The steps below are for setting it up manually. Termux has no systemd; `setup_termux.sh` sets up the closest equivalent (`termux-services`) instead — see [Automated Termux (Android) setup](#automated-termux-android-setup).
 
 Create `/etc/systemd/system/musicbot.service`:
 
@@ -363,6 +377,7 @@ PyxeeBot/
 │   ├── setup_oracle.sh             # Interactive one-run setup wizard for Oracle Cloud
 │   ├── setup_gcp.sh                # Interactive one-run setup wizard for Google Cloud
 │   ├── setup.sh                    # Interactive one-run setup wizard for any other Ubuntu/Debian VPS
+│   ├── setup_termux.sh             # Standalone interactive setup wizard for Termux (Android) — doesn't use _common.sh
 │   ├── musicbot.service            # systemd unit (ProtectHome, MemoryMax, SystemCallFilter, logrotate)
 │   ├── musicbot-logrotate          # logrotate config (weekly, copytruncate)
 │   └── .env.example                # Annotated environment template
