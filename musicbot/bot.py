@@ -345,7 +345,12 @@ class MusicBot(commands.Bot):
                 self.owner_id = app_info.owner.id
 
     async def _resolve_prefix(self, _: commands.Bot, message: discord.Message) -> list[str]:
-        prefixes = [self.settings.default_prefix]
+        # A guild's custom prefix REPLACES the global default (matches both the
+        # README's "per-server overrides" wording and !setprefix's own "Prefix
+        # set to X" confirmation) — it doesn't just add an extra alias on top of
+        # it. @mentioning the bot always still works as a fallback either way,
+        # so admins can't lock themselves out by forgetting a custom prefix.
+        prefix = self.settings.default_prefix
         if message.guild:
             guild_id = message.guild.id
             if guild_id in self._prefix_cache:
@@ -353,9 +358,9 @@ class MusicBot(commands.Bot):
             else:
                 custom = await self.database.get_prefix(guild_id)
                 self._prefix_cache[guild_id] = custom or ""
-            if custom and custom not in prefixes:
-                prefixes.insert(0, custom)
-        return commands.when_mentioned_or(*prefixes)(self, message)
+            if custom:
+                prefix = custom
+        return commands.when_mentioned_or(prefix)(self, message)
 
     async def get_active_prefix(self, guild: discord.Guild | None) -> str:
         if guild is None:
