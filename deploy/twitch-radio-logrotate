@@ -1,0 +1,10 @@
+/home/ubuntu/twitch-radio-bot/logs/twitch-radio.log {
+    su ubuntu ubuntu
+    weekly
+    rotate 4
+    compress
+    delaycompress
+    missingok
+    notifempty
+    copytruncate
+}

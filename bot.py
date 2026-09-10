@@ -1,4 +1,4 @@
-from musicbot.bot import run
+from twitch_radio.bot import run
 
 if __name__ == "__main__":
     run()
