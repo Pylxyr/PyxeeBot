@@ -62,6 +62,8 @@ A self-hosted Discord music bot built with [discord.py](https://github.com/Rappt
 - `!stop` — clears the queue and disconnects
 - `!loop` — cycles through Off → Single track → Entire queue
 - `!repeat` / `!replay` — aliases for one-track loop
+- `!seek <time>` — jump to a position in the current track (`1:30`, `90`, or relative `+30`/`-15`); current requester or a DJ
+- `!volume [0-200]` — show the current volume, or set it (DJ-only); applied via an ffmpeg filter so it stays on the low-CPU FFmpegOpusAudio path rather than switching to PCM
 - `!nowplaying` — live now-playing embed with queue preview
 
 ### Vibe Curation (Last.fm)
@@ -307,6 +309,8 @@ All settings are read from `.env`. Every value has a default. See `deploy/.env.e
 | `!loop` | — | Cycle loop mode: Off → Single track → Entire queue (DJ-only) |
 | `!repeat` | `rp` | Toggle single-track loop on/off for the current track |
 | `!replay` | — | Re-queue the current track to play immediately next (DJ-only) |
+| `!seek <time>` | — | Jump to a position in the current track — `1:30`, `90`, or relative `+30`/`-15` (requester or DJ) |
+| `!volume [0-200]` | `vol` | Show the current volume, or set it (DJ-only) |
 | `!nowplaying` | `np` | Show the now-playing embed |
 
 ### Queue
@@ -368,10 +372,10 @@ All settings are read from `.env`. Every value has a default. See `deploy/.env.e
 PyxeeBot/
 ├── bot.py                          # Entry point
 ├── requirements.txt
-├── pyproject.toml                  # ruff (py311, E/F/W) and mypy (strict) config
+├── pyproject.toml                  # ruff (py311, E/F/W) and mypy (disallow_untyped_defs) config
 ├── .github/
 │   └── workflows/
-│       └── deploy.yml              # CI: lint → format-check → security-audit → SSH deploy to the configured VPS
+│       └── deploy.yml              # CI: lint → format-check (PRs) / auto-format (push) → mypy (report-only) → security-audit → SSH deploy
 ├── deploy/
 │   ├── _common.sh                  # Shared install engine — sourced by the three setup_*.sh scripts, not run directly
 │   ├── setup_oracle.sh             # Interactive one-run setup wizard for Oracle Cloud
@@ -433,7 +437,7 @@ PyxeeBot/
 
 ## Contributing
 
-Issues and pull requests are welcome. `pyproject.toml` config: `ruff` (`py311`, `E`/`F`/`W`) for linting and `mypy --strict` for type checking — please run both before opening a PR.
+Issues and pull requests are welcome. `pyproject.toml` config: `ruff` (`py311`, `E`/`F`/`W`) for linting and `mypy` (with `disallow_untyped_defs`) for type checking. CI now runs both — `ruff check`/`ruff format` gate PRs, and `mypy` runs too but is currently non-blocking (`continue-on-error`), since a first real run surfaces ~70 pre-existing findings — mostly discord.py's `@commands.hybrid_command` decorator confusing mypy's method-assignment check, a known false-positive pattern with this library, plus a couple of genuine `Any`-return gaps in the yt-dlp extraction path. See the comment in `deploy.yml` for the recommended cleanup path. Please run `ruff` and `mypy` locally before opening a PR regardless, and try not to add to the `mypy` count.
 
 ---
 

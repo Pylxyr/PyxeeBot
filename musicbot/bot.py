@@ -135,6 +135,8 @@ class PyxeeHelpCommand(commands.HelpCommand):
         "toptracks": "Show the most-played tracks for this server, all-time.",
         "toprequestors": "Show the top track requestors for this server, all-time.",
         "repeat": "Toggle single-track repeat for the current track.",
+        "seek": "Jump to a position in the current track (`1:30`, `90`, `+30`, `-15`).",
+        "volume": "Show or set playback volume (0-200%, DJ-only to change).",
         "vibe": "Discover similar songs via Last.fm and curate a playlist.",
         "vibe-save": "Save the active curation session as a named playlist.",
         "vibe-load": "Load a saved curated playlist into the queue.",

@@ -120,13 +120,30 @@ class ExtractionMixin(MusicCogBase):
             self.logger.debug("Stream URL HEAD check unexpected error (assuming valid): %s", exc)
             return True
 
-    async def _build_audio_source(self, track: Track) -> discord.AudioSource:
+    async def _build_audio_source(self, track: Track, volume_percent: int = 100) -> discord.AudioSource:
         bitrate = int(track.abr) if track.abr > 0 else self.bot.settings.opus_bitrate_kbps
+        before_options = FFMPEG_BEFORE_OPTIONS
+        # -ss before -i is a fast, demuxer-level seek (nearest keyframe) rather than a slow
+        # decode-and-discard seek, so it belongs in before_options alongside the other
+        # pre-input flags. This is single-use: GuildPlayer.seek() sets it, and it's reset
+        # here right after being read so a later natural replay of the same Track (loop
+        # mode, !replay) doesn't silently restart from this position again.
+        start_offset, track.start_offset = track.start_offset, 0
+        if start_offset > 0:
+            before_options = f"{before_options} -ss {start_offset}"
+        options = FFMPEG_OPTIONS
+        if volume_percent != 100:
+            # Applied as an ffmpeg filter (rather than discord.py's PCMVolumeTransformer)
+            # so playback keeps using FFmpegOpusAudio's pre-encoded-in-ffmpeg pipeline —
+            # PCMVolumeTransformer requires a raw PCM source and would push Opus encoding
+            # onto the bot process itself, which is exactly the CPU cost this project's
+            # audio pipeline is designed to avoid on a resource-constrained VPS.
+            options = f"{options} -af volume={max(0, volume_percent) / 100:.2f}"
         return discord.FFmpegOpusAudio(
             track.stream_url,
             bitrate=bitrate,
-            before_options=FFMPEG_BEFORE_OPTIONS,
-            options=FFMPEG_OPTIONS,
+            before_options=before_options,
+            options=options,
         )
 
     async def _extract_info(

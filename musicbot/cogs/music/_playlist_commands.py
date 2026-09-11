@@ -102,13 +102,12 @@ class PlaylistCommandsMixin(MusicCogBase):
                     hit_user_limit = True
                     break
                 query = row["query"]
-                webpage_url = row["webpage_url"] or query
-                if not query or not webpage_url:
+                if not query:
                     continue
                 await player.enqueue(
                     Track(
                         title=row["title"],
-                        webpage_url=webpage_url,
+                        webpage_url=row["webpage_url"] or "",
                         stream_url="",
                         uploader="Saved playlist",
                         duration=0,

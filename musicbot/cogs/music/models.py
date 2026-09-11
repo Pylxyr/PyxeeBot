@@ -37,6 +37,10 @@ class Track:
     tags: list[str] = field(default_factory=list)
     acodec: str = ""
     abr: float = 0.0
+    # Seconds into the track FFmpeg should seek to on the next audio-source build. Set by
+    # GuildPlayer.seek() and consumed (and reset to 0) by _build_audio_source — playback
+    # plumbing rather than a property of the track, so it's excluded from comparisons.
+    start_offset: int = field(default=0, compare=False)
 
     _escaped_title: str | None = field(default=None, init=False, repr=False, compare=False)
     _escaped_uploader: str | None = field(default=None, init=False, repr=False, compare=False)

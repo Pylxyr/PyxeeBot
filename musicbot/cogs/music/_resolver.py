@@ -122,12 +122,6 @@ class ResolverMixin(MusicCogBase):
             return None
         return self._apply_resolved_track_data(track, data)
 
-    async def _materialize_track(self, query: str, requester_id: int) -> Track | None:
-        tracks, _ = await self._extract_tracks(query, requester_id=requester_id)
-        if not tracks:
-            return None
-        return await self._resolve_track(tracks[0])
-
     def _kick_pipeline(self, guild_id: int) -> None:
         task = self._pipeline_tasks.get(guild_id)
         if task and not task.done():

@@ -26,7 +26,7 @@ class GuildPlayer:
         bot: "MusicBot",
         guild: discord.Guild,
         track_resolver: Callable[[Track], Awaitable[Track | None]],
-        audio_source_factory: Callable[[Track], Awaitable[discord.AudioSource]],
+        audio_source_factory: Callable[[Track, int], Awaitable[discord.AudioSource]],
         validate_stream_url: Callable[[Track], Awaitable[bool]],
     ) -> None:
         self.bot = bot
@@ -35,6 +35,7 @@ class GuildPlayer:
         self.audio_source_factory = audio_source_factory
         self.validate_stream_url = validate_stream_url
         self.logger = logging.getLogger(f"musicbot.player.{guild.id}")
+        self.volume_percent: int = 100
 
         self.voice_client: discord.VoiceClient | None = None
         self.queue: deque[Track] = deque(maxlen=bot.settings.max_queue_size)
@@ -71,7 +72,7 @@ class GuildPlayer:
         bot: "MusicBot",
         guild: discord.Guild,
         track_resolver: Callable[[Track], Awaitable[Track | None]],
-        audio_source_factory: Callable[[Track], Awaitable[discord.AudioSource]],
+        audio_source_factory: Callable[[Track, int], Awaitable[discord.AudioSource]],
         validate_stream_url: Callable[[Track], Awaitable[bool]],
     ) -> "GuildPlayer":
         player = cls(bot, guild, track_resolver, audio_source_factory, validate_stream_url)
@@ -187,6 +188,43 @@ class GuildPlayer:
         self.next_event.set()
         if self.voice_client and (self.voice_client.is_playing() or self.voice_client.is_paused()):
             self.voice_client.stop()
+        return True
+
+    def seek(self, position_seconds: int) -> bool:
+        """Restart the currently-playing track's audio pipeline at a new position.
+
+        Reuses the same requeue-and-stop trick as `play_previous`: the current track is
+        pushed back to the front of the queue (carrying the requested start offset) and
+        `rewind_requested` is set so the player loop's post-playback bookkeeping treats
+        this as a reposition rather than a completed/skipped track — no history entry,
+        no loop-mode requeue, and the resolver's `track.stream_url` cache is left intact
+        so the track doesn't need to be re-extracted just to play from a new spot.
+        """
+        if not self.current or not self.voice_client:
+            return False
+        if not (self.voice_client.is_playing() or self.voice_client.is_paused()):
+            return False
+        track = self.current
+        offset = max(0, position_seconds)
+        if track.duration > 0:
+            offset = min(offset, max(track.duration - 1, 0))
+        track.start_offset = offset
+        if len(self.queue) == self.queue.maxlen:
+            self._total_duration = max(0, self._total_duration - self.queue[-1].duration)
+        self._total_duration += track.duration
+        self.queue.appendleft(track)
+        self.rewind_requested = True
+        self.next_event.set()
+        self.voice_client.stop()
+        return True
+
+    def set_volume(self, volume_percent: int) -> bool:
+        """Change playback volume, taking effect immediately by repositioning the current
+        track (if any) at its current elapsed position under the new volume. If nothing
+        is playing yet, the new value is simply picked up by the next track."""
+        self.volume_percent = max(0, min(200, volume_percent))
+        if self.current and self.voice_client and self.voice_client.is_playing():
+            return self.seek(int(self.elapsed_seconds))
         return True
 
     async def disconnect(self, *, intentional: bool = False) -> None:
@@ -383,7 +421,12 @@ class GuildPlayer:
                             await asyncio.sleep(wait)
                         self._connected_at = 0.0
 
-                    source = await self.audio_source_factory(self.current)
+                    # Read before building the source: _build_audio_source consumes (and
+                    # zeroes) start_offset as a side effect, so it must be captured here to
+                    # correctly back-date started_at for a resumed-from-seek/volume-change
+                    # elapsed_seconds reading.
+                    resume_offset = self.current.start_offset
+                    source = await self.audio_source_factory(self.current, self.volume_percent)
                     finished = asyncio.Event()
                     _loop = asyncio.get_running_loop()
 
@@ -397,18 +440,23 @@ class GuildPlayer:
                             )
                         _loop.call_soon_threadsafe(finished.set)
 
-                    self.started_at = time.monotonic()
+                    self.started_at = time.monotonic() - resume_offset
                     self._pause_started = self._total_paused = 0.0
                     if self.voice_client is None:
                         break
                     self.voice_client.play(source, after=after_playback)
 
-                    if self.current.duration > self.bot.settings.near_end_prefetch_seconds and (
+                    # Account for resume_offset (e.g. after a !seek) so a reposition close
+                    # to the end of a track doesn't schedule the preload as if playback
+                    # had just started from 0:00 — it would fire far later than the actual
+                    # remaining runtime, or never, if the track finishes first.
+                    remaining = self.current.duration - resume_offset
+                    if remaining > self.bot.settings.near_end_prefetch_seconds and (
                         self.queue or self.loop_mode != "off"
                     ):
                         self.near_end_task = asyncio.create_task(
                             self._trigger_near_end_preload(
-                                max(self.current.duration - self.bot.settings.near_end_prefetch_seconds, 0)
+                                max(remaining - self.bot.settings.near_end_prefetch_seconds, 0)
                             )
                         )
                     if self.bot.settings.np_auto_refresh:

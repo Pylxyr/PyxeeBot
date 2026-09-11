@@ -23,10 +23,25 @@ class LifecycleMixin(MusicCogBase):
         async with lock:
             player = self.players.get(guild.id)
             if not player:
+                guild_id = guild.id
+
+                async def _guild_scoped_resolve(track: Track) -> Track | None:
+                    # The player loop resolves the currently-playing track directly (it's
+                    # not routed through the pipeline/safety-net/search call sites, which
+                    # all set this themselves) — without setting it here too, every resolve
+                    # on the main playback path would run with guild_id=None and silently
+                    # skip the per-guild extraction semaphore, defeating the guild isolation
+                    # it's meant to provide.
+                    token = _CURRENT_GUILD_ID.set(guild_id)
+                    try:
+                        return await self._resolve_track(track)
+                    finally:
+                        _CURRENT_GUILD_ID.reset(token)
+
                 player = await GuildPlayer.create(
                     self.bot,
                     guild,
-                    self._resolve_track,
+                    _guild_scoped_resolve,
                     self._build_audio_source,
                     self._validate_stream_url,
                 )
@@ -34,6 +49,7 @@ class LifecycleMixin(MusicCogBase):
                 player.stay_connected = await self.bot.database.get_stay_connected(guild.id)
                 player.show_mentions = await self.bot.database.get_show_requester_mentions(guild.id)
                 player.show_link_previews = await self.bot.database.get_show_link_previews(guild.id)
+                player.volume_percent = await self.bot.database.get_volume(guild.id)
                 await self._restore_snapshot(player)
             return player
 

@@ -127,11 +127,18 @@ class PlaybackCommandsMixin(MusicCogBase):
             else "🔍 Searching…"
         )
         async with context.typing():
-            tracks, skipped = await self._extract_tracks(
-                query,
-                requester_id=context.author.id,
-                guild_id=context.guild.id,
-            )
+            try:
+                tracks, skipped = await self._extract_tracks(
+                    query,
+                    requester_id=context.author.id,
+                    guild_id=context.guild.id,
+                )
+            except commands.BadArgument as exc:
+                # Caught here (rather than left to bubble to cog_command_error) so the
+                # "Fetching…/Searching…" placeholder gets replaced by the failure instead
+                # of being left stuck on screen next to an unrelated new error message.
+                await (fetch_msg.edit(content=str(exc)) if fetch_msg else context.send(str(exc)))
+                return
         if not tracks:
             msg = (
                 f"No playable results found. Skipped `{skipped}` unavailable items."
@@ -185,11 +192,15 @@ class PlaybackCommandsMixin(MusicCogBase):
         query = self._normalize_query(query)
         fetch_msg = await context.send("🔍 Searching…")
         async with context.typing():
-            tracks, _ = await self._extract_tracks(
-                query,
-                requester_id=context.author.id,
-                guild_id=context.guild.id,
-            )
+            try:
+                tracks, _ = await self._extract_tracks(
+                    query,
+                    requester_id=context.author.id,
+                    guild_id=context.guild.id,
+                )
+            except commands.BadArgument as exc:
+                await fetch_msg.edit(content=str(exc))
+                return
         track = tracks[0] if tracks else None
         if track is None:
             await fetch_msg.edit(content="No playable result found.")
@@ -350,4 +361,78 @@ class PlaybackCommandsMixin(MusicCogBase):
         label = LOOP_LABELS.get(player.loop_mode, "Off")
         icon = LOOP_ICONS.get(player.loop_mode, "→")
         await context.send(f"Loop changed: **{prev_label}** → {icon} **{label}**")
+        await self._refresh_now_playing_message(context.guild.id)
+
+    @staticmethod
+    def _format_timestamp(seconds: int) -> str:
+        minutes, secs = divmod(max(0, seconds), 60)
+        hours, minutes = divmod(minutes, 60)
+        if hours:
+            return f"{hours}:{minutes:02d}:{secs:02d}"
+        return f"{minutes}:{secs:02d}"
+
+    @staticmethod
+    def _parse_seek_position(raw: str) -> tuple[bool, int]:
+        """Parse `90`, `1:30`, `1:02:03`, or a relative `+30`/`-15` into
+        ``(is_relative, seconds)``. Raises ValueError on anything else."""
+        raw = raw.strip()
+        is_relative = raw.startswith(("+", "-"))
+        negative = raw.startswith("-")
+        body = raw[1:] if is_relative else raw
+        parts = body.split(":")
+        if not body or len(parts) > 3 or not all(p.isdigit() for p in parts):
+            raise ValueError(f"Unrecognised time format: {raw!r}")
+        values = [int(p) for p in parts]
+        while len(values) < 3:
+            values.insert(0, 0)
+        hours, minutes, secs = values
+        total = hours * 3600 + minutes * 60 + secs
+        return is_relative, (-total if negative else total)
+
+    @commands.hybrid_command(name="seek")
+    @commands.guild_only()
+    @commands.cooldown(3, 5, commands.BucketType.user)
+    async def seek(self, context: GuildContext, *, position: str) -> None:
+        player = self.players.get(context.guild.id)
+        if not player or not player.current:
+            await context.send("Nothing is playing.")
+            return
+        if not self._is_in_player_voice(player, context.author):
+            await context.send("Join my voice channel first.")
+            return
+        if player.current.requester_id != context.author.id and not await self._is_dj(context.author):
+            await context.send("Only the current requester or a DJ can seek.")
+            return
+        self._remember_channel(player, context.channel)
+        try:
+            is_relative, value = self._parse_seek_position(position)
+        except ValueError:
+            await context.send("Give a time like `1:30`, `90`, or a relative `+30`/`-15`.")
+            return
+        target = max(0, int(player.elapsed_seconds) + value if is_relative else value)
+        if not player.seek(target):
+            await context.send("Nothing is playing.")
+            return
+        await context.send(f"⏩ Seeked to `{self._format_timestamp(target)}`.")
+        await self._refresh_now_playing_message(context.guild.id)
+
+    @commands.hybrid_command(name="volume", aliases=["vol"])
+    @commands.guild_only()
+    @commands.cooldown(3, 5, commands.BucketType.user)
+    async def volume(self, context: GuildContext, level: int | None = None) -> None:
+        player = self.players.get(context.guild.id)
+        if not player:
+            await context.send("I am not connected.")
+            return
+        if level is None:
+            await context.send(f"🔊 Current volume: `{player.volume_percent}%`.")
+            return
+        await self._require_dj(context)
+        self._remember_channel(player, context.channel)
+        player.set_volume(level)
+        await self.bot.database.set_volume(
+            context.guild.id, player.volume_percent, default_prefix=self.bot.settings.default_prefix
+        )
+        suffix = " (above 100% may clip on some tracks)" if player.volume_percent > 100 else ""
+        await context.send(f"🔊 Volume set to `{player.volume_percent}%`.{suffix}")
         await self._refresh_now_playing_message(context.guild.id)
