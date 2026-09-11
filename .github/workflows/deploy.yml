@@ -32,12 +32,21 @@ jobs:
       - name: Install Python dependencies
         run: |
           pip install --upgrade pip "setuptools>=83.0.0"
-          pip install -r requirements.txt ruff pip-audit
+          pip install -r requirements.txt ruff mypy pip-audit
 
       - name: Lint
         run: ruff check musicbot/ bot.py
 
+      - name: Format check (pull requests)
+        # Fork PRs can't push the auto-commit below (GITHUB_TOKEN is read-only for
+        # them regardless of the `permissions: contents: write` above), so this is
+        # the only real formatting gate they get — `ruff format` without `--check`
+        # always exits 0, so it can't fail a PR on its own.
+        if: github.event_name == 'pull_request'
+        run: ruff format --check musicbot/ bot.py
+
       - name: Auto-format with Ruff
+        if: github.event_name != 'pull_request'
         run: ruff format musicbot/ bot.py
 
       - name: Commit formatting changes
@@ -51,7 +60,25 @@ jobs:
         with:
           commit_message: "style: auto-format python code with ruff"
 
+      - name: Type check
+        # Non-blocking for now: a from-scratch `mypy` run against this codebase currently
+        # surfaces ~70 pre-existing findings (mostly discord.py's @commands.hybrid_command
+        # decorator confusing mypy's method-assignment check — a well-known false-positive
+        # pattern with this library — plus a couple of genuine `Any`-return gaps). None of
+        # that was caught before because mypy was never actually wired into CI despite
+        # pyproject.toml configuring it and the README instructing contributors to run it.
+        # Surfacing it now, visibly, without turning CI red for unrelated in-flight PRs.
+        # Recommended follow-up: triage the report, silence the decorator false-positives
+        # with a narroly-scoped `# type: ignore[arg-type]` (or a discord.py mypy plugin, if
+        # one is adopted), fix the couple of real `no-any-return` gaps, then drop
+        # `continue-on-error` here to make it a real gate.
+        run: mypy musicbot/ bot.py
+        continue-on-error: true
+
       - name: Security audit
+        # NB: if you add an --ignore-vuln here, leave a comment above it explaining
+        # why (false positive / not reachable / fix pending upstream) and revisit
+        # it periodically — an unexplained ignore is easy to forget about.
         run: pip-audit --ignore-vuln CVE-2025-69277
 
   deploy:
