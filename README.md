@@ -375,7 +375,7 @@ PyxeeBot/
 ├── pyproject.toml                  # ruff (py311, E/F/W) and mypy (disallow_untyped_defs) config
 ├── .github/
 │   └── workflows/
-│       └── deploy.yml              # CI: lint → format-check (PRs) / auto-format (push) → mypy (report-only) → security-audit → SSH deploy
+│       └── deploy.yml              # CI: lint → format-check (PRs) / auto-format (push) → mypy → security-audit → SSH deploy
 ├── deploy/
 │   ├── _common.sh                  # Shared install engine — sourced by the three setup_*.sh scripts, not run directly
 │   ├── setup_oracle.sh             # Interactive one-run setup wizard for Oracle Cloud
@@ -437,7 +437,7 @@ PyxeeBot/
 
 ## Contributing
 
-Issues and pull requests are welcome. `pyproject.toml` config: `ruff` (`py311`, `E`/`F`/`W`) for linting and `mypy` (with `disallow_untyped_defs`) for type checking. CI now runs both — `ruff check`/`ruff format` gate PRs, and `mypy` runs too but is currently non-blocking (`continue-on-error`), since a first real run surfaces ~70 pre-existing findings — mostly discord.py's `@commands.hybrid_command` decorator confusing mypy's method-assignment check, a known false-positive pattern with this library, plus a couple of genuine `Any`-return gaps in the yt-dlp extraction path. See the comment in `deploy.yml` for the recommended cleanup path. Please run `ruff` and `mypy` locally before opening a PR regardless, and try not to add to the `mypy` count.
+Issues and pull requests are welcome. `pyproject.toml` config: `ruff` (`py311`, `E`/`F`/`W`) for linting and `mypy` (with `disallow_untyped_defs`) for type checking — both are real, failing gates in CI (`ruff check`, `ruff format --check` on PRs, and `mypy`). One `mypy` override is scoped to the command-decorator modules (`admin.py`, `curation.py`, and the `music/_*_commands.py` files) to silence a confirmed discord.py/mypy ParamSpec-inference false positive that otherwise fires on essentially every `@commands.command`/`@commands.hybrid_command` definition — see the comment above that override in `pyproject.toml` before adding more modules to it. Please run `ruff` and `mypy` locally before opening a PR.
 
 ---
 

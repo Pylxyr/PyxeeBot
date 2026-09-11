@@ -5,7 +5,8 @@ import contextlib
 import logging
 import signal
 import time
-from typing import Any
+from collections.abc import Mapping
+from typing import Any, cast
 
 import discord
 from discord.ext import commands
@@ -62,7 +63,7 @@ class HelpOverviewView(discord.ui.View):
             placeholder="Browse a category…",
             options=options,
         )
-        select.callback = self._on_select
+        select.callback = self._on_select  # type: ignore[method-assign]  # documented discord.py pattern: Item.callback is meant to be assigned for programmatically-built components
         self.add_item(select)
 
     def _category_embed(self, index: int) -> discord.Embed:
@@ -79,7 +80,11 @@ class HelpOverviewView(discord.ui.View):
         return embed
 
     async def _on_select(self, interaction: discord.Interaction) -> None:
-        value = interaction.data.get("values", ["overview"])[0]
+        # interaction.data is typed as a union covering every interaction kind (slash
+        # command, button, select, modal, ...); this callback only ever fires for this
+        # Select, so it's always the select-component shape at runtime.
+        data = cast("dict[str, Any]", interaction.data or {})
+        value = data.get("values", ["overview"])[0]
         embed = self.overview_embed if value == "overview" else self._category_embed(int(value))
         await interaction.response.edit_message(embed=embed, view=self)
 
@@ -190,7 +195,7 @@ class PyxeeHelpCommand(commands.HelpCommand):
         return f"`{sig}` — {blurb}"
 
     async def send_bot_help(
-        self, mapping: dict[commands.Cog | None, list[commands.Command[Any, ..., Any]]]
+        self, mapping: Mapping[commands.Cog | None, list[commands.Command[Any, ..., Any]]]
     ) -> None:
         prefix = self.context.clean_prefix
 
@@ -397,7 +402,7 @@ class MusicBot(commands.Bot):
                 continue
             self._reconnect_announced_at[guild.id] = now
             music_cog = self.cogs.get("MusicCog")
-            player = music_cog.players.get(guild.id) if music_cog else None
+            player = music_cog.players.get(guild.id) if isinstance(music_cog, MusicCog) else None
             if player is not None and player.voice_client is not None and player.voice_client.is_connected():
                 continue
             announce_id = player.announce_channel_id if player else None

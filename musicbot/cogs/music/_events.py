@@ -117,7 +117,13 @@ class EventsMixin(MusicCogBase):
                         name=f"grace-cleanup-{member.guild.id}",
                     )
             elif after.channel is not None and after.channel != before.channel:
-                player.voice_client = member.guild.voice_client
+                # Guild.voice_client is typed as the generic VoiceProtocol since discord.py
+                # supports pluggable voice clients, but this bot never connects with a
+                # custom cls=, so it's always the concrete VoiceClient in practice — this
+                # isinstance just makes that assumption explicit instead of asserting it.
+                voice_client = member.guild.voice_client
+                if isinstance(voice_client, discord.VoiceClient):
+                    player.voice_client = voice_client
                 await player.refresh_empty_channel_state()
             return
         if before.channel == tracked_channel or after.channel == tracked_channel:

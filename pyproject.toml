@@ -15,3 +15,24 @@ disallow_untyped_defs = true
 [[tool.mypy.overrides]]
 module = "musicbot.cogs.music._base"
 ignore_errors = true
+
+[[tool.mypy.overrides]]
+# discord.py's command decorators (@commands.command / @commands.hybrid_command) type
+# their callback parameter as a Union of two Concatenate-based Callables (see
+# discord.ext.commands.hybrid.CommandCallback). mypy 2.3.1 can't solve that ParamSpec
+# unification against an actual bound Cog method and falls back to `Never`, producing
+# an [arg-type] false positive on essentially every command definition in these
+# modules — confirmed by it firing on commands untouched by any recent change, not
+# just new ones. Scoped to exactly the files where every current arg-type finding is
+# this one pattern (verified by hand; see the project's CI comment on the mypy step)
+# — if a genuinely different arg-type bug is ever introduced in one of these files,
+# this will hide it too, so re-check that before adding more modules to this list.
+module = [
+    "musicbot.cogs.admin",
+    "musicbot.cogs.curation",
+    "musicbot.cogs.music._playback_commands",
+    "musicbot.cogs.music._playlist_commands",
+    "musicbot.cogs.music._queue_commands",
+    "musicbot.cogs.music._search_commands",
+]
+disable_error_code = ["arg-type"]

@@ -5,7 +5,7 @@ import contextlib
 import re
 import time
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any
+from typing import Any, cast
 from urllib.parse import parse_qs, urlparse
 
 import aiohttp
@@ -54,7 +54,13 @@ class ExtractionMixin(MusicCogBase):
     def _build_ytdl_options(
         self, *, flat_playlist: bool = False, flat_search: bool = False
     ) -> dict[str, Any]:
-        if self._ytdl_base_options is None:
+        # Built via a local (rather than re-reading self._ytdl_variants at the end) so
+        # this stays trivially type-safe: self._ytdl_base_options and self._ytdl_variants
+        # are always set/cleared together (see _reset_ytdl_options above), but that's an
+        # invariant across two separate attributes that mypy has no way to see, so
+        # indexing the attribute directly at the end would need an unwarranted ignore.
+        variants = self._ytdl_variants
+        if variants is None or self._ytdl_base_options is None:
             base = dict(YTDL_OPTIONS)
             base["socket_timeout"] = self.bot.settings.ytdlp_socket_timeout
             base["playlistend"] = self.bot.settings.max_playlist_size
@@ -77,13 +83,14 @@ class ExtractionMixin(MusicCogBase):
             fs["extract_flat"] = True
             fps = dict(fp)
             fps["extract_flat"] = True
-            self._ytdl_variants = {
+            variants = {
                 (False, False): dict(base),
                 (True, False): fp,
                 (False, True): fs,
                 (True, True): fps,
             }
-        return self._ytdl_variants[(flat_playlist, flat_search)]
+            self._ytdl_variants = variants
+        return variants[(flat_playlist, flat_search)]
 
     async def _validate_stream_url(self, track: Track) -> bool:
         url = track.stream_url
@@ -186,7 +193,7 @@ class ExtractionMixin(MusicCogBase):
                         if ydl is None:
                             ydl = YoutubeDL(options)
                             tlocal.instances[key] = ydl
-                        return ydl.extract_info(query, download=False)
+                        return cast("dict[str, Any] | None", ydl.extract_info(query, download=False))
 
                     result = await asyncio.wait_for(
                         loop.run_in_executor(self._ytdl_executor, _run),

@@ -83,7 +83,12 @@ class MusicCog(
     async def cog_load(self) -> None:
         self._http_session = aiohttp.ClientSession()
 
-    def cog_unload(self) -> None:
+    def cog_unload(self) -> None:  # type: ignore[override]
+        # discord.py's own Cog.cog_unload is stubbed as async, but its runtime dispatch
+        # (see discord.ext.commands.Cog._eject / maybe_coroutine) accepts a plain sync
+        # override too — this is intentionally sync (it only ever *schedules* async
+        # cleanup via _bg_task below; see shutdown() for the awaited equivalent used on
+        # a full bot stop), so the override mismatch is a stub-vs-runtime gap, not a bug.
         self.now_playing_messages.clear()
         for player in self.players.values():
             self._bg_task(player.destroy(), name="cog-unload-destroy")

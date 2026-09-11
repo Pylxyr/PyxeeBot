@@ -14,12 +14,21 @@ import yt_dlp
 from discord.ext import commands
 
 from musicbot.cogs.music._context import GuildContext
+from musicbot.cogs.music.cog import MusicCog
 
 if TYPE_CHECKING:
     from musicbot.bot import MusicBot
 
 COOKIES_TEST_URL = "https://www.youtube.com/watch?v=jNQXAC9IVRw"
 COOKIES_MAX_BYTES = 1_048_576
+
+
+def _music_cog(bot: "MusicBot") -> MusicCog | None:
+    # get_cog() is typed as returning the base Cog, so every call site needs this
+    # narrowed to MusicCog before touching anything MusicCog-specific (.players,
+    # ._extract_tracks, etc.) — mirrors the isinstance check already used in bot.py.
+    cog = bot.get_cog("MusicCog")
+    return cog if isinstance(cog, MusicCog) else None
 
 
 async def _is_authorized_owner(context: commands.Context[Any]) -> bool:
@@ -96,7 +105,7 @@ class AdminCog(commands.Cog):
         await self.bot.database.set_stay_connected(
             guild_id, new_value, default_prefix=self.bot.settings.default_prefix
         )
-        music = self.bot.get_cog("MusicCog")
+        music = _music_cog(self.bot)
         player = music.players.get(guild_id) if music else None
         if player is not None:
             player.stay_connected = new_value
@@ -133,7 +142,7 @@ class AdminCog(commands.Cog):
         await self.bot.database.set_show_requester_mentions(
             guild_id, new_value, default_prefix=self.bot.settings.default_prefix
         )
-        music = self.bot.get_cog("MusicCog")
+        music = _music_cog(self.bot)
         player = music.players.get(guild_id) if music else None
         if player is not None:
             player.show_mentions = new_value
@@ -156,7 +165,7 @@ class AdminCog(commands.Cog):
         await self.bot.database.set_show_link_previews(
             guild_id, new_value, default_prefix=self.bot.settings.default_prefix
         )
-        music = self.bot.get_cog("MusicCog")
+        music = _music_cog(self.bot)
         player = music.players.get(guild_id) if music else None
         if player is not None:
             player.show_link_previews = new_value
@@ -171,7 +180,7 @@ class AdminCog(commands.Cog):
     @commands.hybrid_command(name="stats")
     @_bot_owner_check()
     async def stats(self, context: GuildContext) -> None:
-        music = self.bot.get_cog("MusicCog")
+        music = _music_cog(self.bot)
         active_players = len(music.players) if music else 0
         playing = sum(1 for p in music.players.values() if p.current is not None) if music else 0
 
@@ -266,7 +275,7 @@ class AdminCog(commands.Cog):
             )
             return
 
-        music = self.bot.get_cog("MusicCog")
+        music = _music_cog(self.bot)
         if music is None:
             await context.author.send("Music cog isn't loaded — aborted.")
             return

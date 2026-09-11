@@ -5,7 +5,7 @@ import contextlib
 import logging
 import re
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import aiohttp
 import discord
@@ -15,13 +15,21 @@ from musicbot.cogs.music._context import GuildContext
 
 if TYPE_CHECKING:
     from musicbot.bot import MusicBot
-    from musicbot.cogs.music.cog import MusicCog
     from musicbot.cogs.music.models import Track
 
 from musicbot.cogs.music.constants import EMBED_COLOUR
+from musicbot.cogs.music.cog import MusicCog
 from musicbot.cogs.music.views import _close_interaction_message
 
 log = logging.getLogger(__name__)
+
+
+def _music_cog(bot: "MusicBot") -> MusicCog | None:
+    # See the identical helper in admin.py — get_cog() only returns the base Cog
+    # type, so this narrows it to MusicCog before .players/etc. are touched.
+    cog = bot.get_cog("MusicCog")
+    return cog if isinstance(cog, MusicCog) else None
+
 
 LASTFM_API = "https://ws.audioscrobbler.com/2.0/"
 MAX_PLAYLIST = 25
@@ -159,11 +167,13 @@ class CurationView(discord.ui.View):
             max_values=len(options),
             options=options,
         )
-        select.callback = self._on_remove_select
+        select.callback = self._on_remove_select  # type: ignore[method-assign]  # see bot.py's _on_select for why this discord.py pattern is safe
         self.add_item(select)
 
     async def _on_remove_select(self, interaction: discord.Interaction) -> None:
-        to_remove = set(int(v) for v in interaction.data.get("values", []))
+        # See bot.py's _on_select — this callback only ever fires for this Select.
+        data = cast("dict[str, Any]", interaction.data or {})
+        to_remove = set(int(v) for v in data.get("values", []))
         if not to_remove:
             await interaction.response.defer()
             return
@@ -291,11 +301,12 @@ class RefillView(discord.ui.View):
             max_values=len(options),
             options=options,
         )
-        select.callback = self._on_exclude_select
+        select.callback = self._on_exclude_select  # type: ignore[method-assign]  # see bot.py's _on_select for why this discord.py pattern is safe
         self.add_item(select)
 
     async def _on_exclude_select(self, interaction: discord.Interaction) -> None:
-        count = len(interaction.data.get("values", []))
+        data = cast("dict[str, Any]", interaction.data or {})
+        count = len(data.get("values", []))
         if count:
             msg = f"{count} track{'s' if count != 1 else ''} marked for exclusion — click **Add All** to confirm."
         else:
@@ -436,7 +447,14 @@ class CurationCog(commands.Cog, name="CurationCog"):
                         except Exception as exc:
                             log.warning("Last.fm %s: JSON decode failed: %s", method, exc)
                             return None
-                        if isinstance(data, dict) and "error" in data:
+                        if not isinstance(data, dict):
+                            log.warning(
+                                "Last.fm %s: unexpected non-object JSON response (%s)",
+                                method,
+                                type(data).__name__,
+                            )
+                            return None
+                        if "error" in data:
                             log.debug(
                                 "Last.fm API error %s for %s: %s",
                                 data.get("error"),
@@ -637,7 +655,7 @@ class CurationCog(commands.Cog, name="CurationCog"):
         tracks: list[CuratedTrack],
         interaction: discord.Interaction,
     ) -> tuple[int, int]:
-        music: MusicCog | None = self.bot.get_cog("MusicCog")
+        music = _music_cog(self.bot)
         if music is None:
             await interaction.followup.send("MusicCog is not loaded.", ephemeral=True)
             return 0, len(tracks)
@@ -864,7 +882,7 @@ class CurationCog(commands.Cog, name="CurationCog"):
             )
             return
 
-        music: MusicCog | None = self.bot.get_cog("MusicCog")
+        music = _music_cog(self.bot)
         if music is None:
             return
 
@@ -963,7 +981,7 @@ class CurationCog(commands.Cog, name="CurationCog"):
     async def on_musicbot_queue_updated(self, guild: discord.Guild) -> None:
         if not self._key:
             return
-        music: MusicCog | None = self.bot.get_cog("MusicCog")
+        music = _music_cog(self.bot)
         if music is None:
             return
         player = music.players.get(guild.id)
@@ -1030,7 +1048,7 @@ class CurationCog(commands.Cog, name="CurationCog"):
         task.add_done_callback(_on_refill_done)
 
     async def _do_autoplay(self, guild: discord.Guild, artist: str, track: str) -> None:
-        music: MusicCog | None = self.bot.get_cog("MusicCog")
+        music = _music_cog(self.bot)
         if music is None:
             return
         player = music.players.get(guild.id)
@@ -1085,7 +1103,7 @@ class CurationCog(commands.Cog, name="CurationCog"):
             self._unregister_resolve_task(guild.id)
 
     async def _do_refill(self, guild: discord.Guild, artist: str, track: str) -> None:
-        music: MusicCog | None = self.bot.get_cog("MusicCog")
+        music = _music_cog(self.bot)
         if music is None:
             return
 
