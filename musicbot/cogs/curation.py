@@ -358,13 +358,18 @@ class RefillView(discord.ui.View):
 class CurationCog(commands.Cog, name="CurationCog"):
     def __init__(self, bot: "MusicBot") -> None:
         self.bot = bot
-        self._key = getattr(bot.settings, "lastfm_api_key", None)
+        self._key = bot.settings.lastfm_api_key
         self._session: aiohttp.ClientSession | None = None
         self._sessions: dict[int, CurationSession] = {}
         self._last_queue_len: dict[int, int] = {}
         self._refill_seeds: dict[int, tuple[str, str]] = {}
         self._refill_in_progress: set[int] = set()
-        self._curation_sem: dict[int, asyncio.Semaphore] = {}
+        # No local per-guild concurrency semaphore here on purpose: every curation-mode
+        # extraction call funnels through ExtractionMixin._extract_info, which already
+        # applies its own per-guild AND global `ytdlp_curation_concurrency`-sized
+        # semaphores. A second per-guild semaphore at this layer, sized to the same
+        # value, wouldn't add any extra protection (see `_resolve_one`/`_load_one`
+        # below) — it would just track the same "N concurrent extractions" limit twice.
         self._curation_enqueue_locks: dict[int, asyncio.Lock] = {}
         self._resolve_tasks: dict[int, set[asyncio.Task[Any]]] = {}
         self._epoch: dict[int, int] = {}
@@ -712,8 +717,6 @@ class CurationCog(commands.Cog, name="CurationCog"):
         added: list[str] = []
         resolved_count = 0
 
-        concurrency = max(1, getattr(self.bot.settings, "ytdlp_curation_concurrency", 3))
-        sem = self._curation_sem.setdefault(guild_id, asyncio.Semaphore(concurrency))
         enqueue_lock = self._curation_enqueue_locks.setdefault(guild_id, asyncio.Lock())
 
         async def _resolve_one(ct: CuratedTrack) -> None:
@@ -756,10 +759,6 @@ class CurationCog(commands.Cog, name="CurationCog"):
             finally:
                 resolved_count += 1
 
-        async def _resolve_bounded(ct: CuratedTrack) -> None:
-            async with sem:
-                await _resolve_one(ct)
-
         async def _progress_reporter() -> None:
             while True:
                 done = resolved_count
@@ -776,7 +775,10 @@ class CurationCog(commands.Cog, name="CurationCog"):
                     break
                 await asyncio.sleep(1.5)
 
-        tasks = [asyncio.create_task(_resolve_bounded(ct)) for ct in tracks]
+        # `_resolve_one` isn't gated by a local semaphore here — `music._extract_tracks`
+        # (called with curation_mode=True below) already rate-limits actual concurrent
+        # extraction per-guild and globally, so all of these can be launched at once.
+        tasks = [asyncio.create_task(_resolve_one(ct)) for ct in tracks]
         reporter = asyncio.create_task(_progress_reporter())
 
         try:
@@ -921,47 +923,44 @@ class CurationCog(commands.Cog, name="CurationCog"):
         queued = 0
         failed = 0
         limit_hit = asyncio.Event()
-        concurrency = max(1, getattr(self.bot.settings, "ytdlp_curation_concurrency", 3))
-        sem = self._curation_sem.setdefault(context.guild.id, asyncio.Semaphore(concurrency))
         enqueue_lock = self._curation_enqueue_locks.setdefault(context.guild.id, asyncio.Lock())
 
         async def _load_one(entry: dict[str, Any]) -> None:
+            # No local semaphore here either (see the comment in __init__) — actual
+            # concurrent extraction is already bounded inside `_extract_tracks`.
             nonlocal queued, failed
             if limit_hit.is_set():
                 return
-            async with sem:
-                if limit_hit.is_set():
+            query = str(entry["query"])
+            try:
+                tracks, _ = await music._extract_tracks(
+                    f"ytsearch{CURATION_CANDIDATE_POOL}:{query}",
+                    requester_id=context.author.id,
+                    guild_id=context.guild.id,
+                    curation_mode=True,
+                    limit=CURATION_CANDIDATE_POOL,
+                )
+                if not self._is_current(context.guild.id, my_epoch):
                     return
-                query = str(entry["query"])
-                try:
-                    tracks, _ = await music._extract_tracks(
-                        f"ytsearch{CURATION_CANDIDATE_POOL}:{query}",
-                        requester_id=context.author.id,
-                        guild_id=context.guild.id,
-                        curation_mode=True,
-                        limit=CURATION_CANDIDATE_POOL,
-                    )
-                    if not self._is_current(context.guild.id, my_epoch):
-                        return
-                    best = _pick_best_candidate(tracks)
-                    if best is None:
-                        failed += 1
-                        return
-                    async with enqueue_lock:
-                        if limit_hit.is_set():
-                            return
-                        if music._check_per_user_limit(player, context.author.id):
-                            limit_hit.set()
-                            return
-                        if len(player.queue) >= music.bot.settings.max_queue_size:
-                            limit_hit.set()
-                            return
-                        await player.enqueue(best)
-                    queued += 1
-                except asyncio.CancelledError:
-                    raise
-                except Exception:
+                best = _pick_best_candidate(tracks)
+                if best is None:
                     failed += 1
+                    return
+                async with enqueue_lock:
+                    if limit_hit.is_set():
+                        return
+                    if music._check_per_user_limit(player, context.author.id):
+                        limit_hit.set()
+                        return
+                    if len(player.queue) >= music.bot.settings.max_queue_size:
+                        limit_hit.set()
+                        return
+                    await player.enqueue(best)
+                queued += 1
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                failed += 1
 
         try:
             await asyncio.gather(*(_load_one(dict(entry)) for entry in entries), return_exceptions=True)

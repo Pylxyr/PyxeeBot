@@ -114,7 +114,18 @@ class GuildPlayer:
         if any(t is track for t in self.queue):
             self._total_duration = max(0, self._total_duration + delta)
 
-    async def enqueue(self, track: Track, *, front: bool = False) -> None:
+    def _insert_track(self, track: Track, *, front: bool) -> None:
+        """Insert `track` at either end of the (maxlen-bounded) queue, evicting the
+        opposite end first if the queue is already full, and keeping `_total_duration`
+        in sync either way.
+
+        This is the one place that owns the "evict-then-insert" bookkeeping; `enqueue`
+        and every other call site that needs to push a track back onto the front or
+        back of the queue (skip/previous, seek, the player loop's resolve-retry
+        requeue, and both loop-mode requeues) should go through this instead of
+        repeating the maxlen/duration arithmetic inline, so the invariant only has to
+        be kept correct in one spot.
+        """
         if len(self.queue) == self.queue.maxlen:
             evicted = self.queue[-1] if front else self.queue[0]
             self._total_duration = max(0, self._total_duration - evicted.duration)
@@ -123,6 +134,9 @@ class GuildPlayer:
             self.queue.appendleft(track)
         else:
             self.queue.append(track)
+
+    async def enqueue(self, track: Track, *, front: bool = False) -> None:
+        self._insert_track(track, front=front)
         self.next_event.set()
 
     def pause(self) -> bool:
@@ -175,14 +189,8 @@ class GuildPlayer:
         previous_track = self.history.pop()
         was_playing = self.current is not None
         if self.current:
-            if len(self.queue) == self.queue.maxlen:
-                self._total_duration = max(0, self._total_duration - self.queue[-1].duration)
-            self._total_duration += self.current.duration
-            self.queue.appendleft(self.current)
-        if len(self.queue) == self.queue.maxlen:
-            self._total_duration = max(0, self._total_duration - self.queue[-1].duration)
-        self._total_duration += previous_track.duration
-        self.queue.appendleft(previous_track)
+            self._insert_track(self.current, front=True)
+        self._insert_track(previous_track, front=True)
         if was_playing:
             self.rewind_requested = True
         self.next_event.set()
@@ -209,10 +217,7 @@ class GuildPlayer:
         if track.duration > 0:
             offset = min(offset, max(track.duration - 1, 0))
         track.start_offset = offset
-        if len(self.queue) == self.queue.maxlen:
-            self._total_duration = max(0, self._total_duration - self.queue[-1].duration)
-        self._total_duration += track.duration
-        self.queue.appendleft(track)
+        self._insert_track(track, front=True)
         self.rewind_requested = True
         self.next_event.set()
         self.voice_client.stop()
@@ -367,11 +372,17 @@ class GuildPlayer:
                         )
                         self.current = None
                         if will_retry:
+                            # Put the track back on the queue *before* backing off, not
+                            # after: it needs to keep counting towards `_total_duration`
+                            # and stay visible to `!queue`/`!nowplaying` for the whole
+                            # backoff window, not just pop back into existence once the
+                            # sleep ends. The `musicbot_queue_updated` dispatch below is
+                            # still deferred until after the sleep completes, though —
+                            # that event also kicks the prefetch pipeline, and firing it
+                            # early would send the pipeline straight back at the same
+                            # URL that just failed, defeating the point of backing off.
+                            self._insert_track(failed_track, front=True)
                             await asyncio.sleep(backoff)
-                            if len(self.queue) == self.queue.maxlen:
-                                self._total_duration = max(0, self._total_duration - self.queue[-1].duration)
-                            self._total_duration += failed_track.duration
-                            self.queue.appendleft(failed_track)
                         else:
                             self._resolve_fail_counts.pop(key, None)
                         self.bot.dispatch("musicbot_queue_updated", self.guild)
@@ -487,17 +498,11 @@ class GuildPlayer:
                             if played_track.resolved_at > 0 and age >= STREAM_URL_REFRESH_AGE_SECONDS:
                                 played_track.stream_url = ""
                                 played_track.resolved_at = 0.0
-                            if len(self.queue) == self.queue.maxlen:
-                                self._total_duration = max(0, self._total_duration - self.queue[-1].duration)
-                            self._total_duration += played_track.duration
-                            self.queue.appendleft(played_track)
+                            self._insert_track(played_track, front=True)
                         elif self.loop_mode == "all":
                             played_track.stream_url = ""
                             played_track.resolved_at = 0.0
-                            if len(self.queue) == self.queue.maxlen:
-                                self._total_duration = max(0, self._total_duration - self.queue[0].duration)
-                            self._total_duration += played_track.duration
-                            self.queue.append(played_track)
+                            self._insert_track(played_track, front=False)
                     self.rewind_requested = False
                     self.bot.dispatch("musicbot_queue_updated", self.guild)
 

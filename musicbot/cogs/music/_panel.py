@@ -18,6 +18,7 @@ from musicbot.cogs.music.constants import (
 )
 from musicbot.cogs.music.models import NowPlayingController, format_requester
 from musicbot.cogs.music.player import GuildPlayer
+from musicbot.cogs.music.views import NowPlayingView
 
 
 class NPanelMixin(MusicCogBase):
@@ -132,8 +133,6 @@ class NPanelMixin(MusicCogBase):
         replace_existing: bool = False,
         status_text: str = "",
     ) -> discord.Message | None:
-        from musicbot.cogs.music.views import NowPlayingView
-
         target_channel = channel or await self._fetch_announce_channel(guild, player)
         if target_channel is None:
             return None
@@ -198,7 +197,7 @@ class NPanelMixin(MusicCogBase):
             queue_count,
             queue_dur_bucket,
         )
-        if getattr(controller, "_last_render_key", None) == state_key:
+        if controller._last_render_key == state_key:
             return
         controller._last_render_key = state_key
 
