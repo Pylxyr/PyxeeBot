@@ -16,87 +16,34 @@ Stream from YouTube · Last.fm curation · Live controls
 
 </div>
 
-A self-hosted Discord music bot built with [discord.py](https://github.com/Rapptz/discord.py), yt-dlp, and aiosqlite. Designed to run well on a single-core, 1 GB RAM VPS (tested on both Oracle Cloud's Always Free AMD E2.1.Micro and Google Cloud's Always Free e2-micro, running Ubuntu) — or directly on an Android phone via Termux, no VPS required.
+A self-hosted Discord music bot built on [discord.py](https://github.com/Rapptz/discord.py), yt-dlp and aiosqlite. It is designed to run comfortably on a single-core, 1 GB RAM VPS — tested on Oracle Cloud's Always Free AMD E2.1.Micro and Google Cloud's Always Free e2-micro, both on Ubuntu.
 
 ## Contents
 
-- [Overview](#overview)
-- [Features](#features)
+- [Highlights](#highlights)
 - [Requirements](#requirements)
 - [Installation](#installation)
   - [Automated VPS setup](#automated-vps-setup)
-  - [Automated Termux (Android) setup](#automated-termux-android-setup)
-  - [Local setup](#local-setup)
-- [Running as a systemd service](#running-as-a-systemd-service)
+  - [Manual setup](#manual-setup)
+  - [Running as a systemd service](#running-as-a-systemd-service)
 - [Configuration](#configuration)
 - [Commands](#commands)
-- [Project Structure](#project-structure)
-- [Architecture Notes](#architecture-notes)
-- [Contributing](#contributing)
+- [Security notes](#security-notes)
+- [Architecture notes](#architecture-notes)
+- [Project structure](#project-structure)
+- [Development](#development)
 - [License](#license)
 
 ---
 
-## Overview
+## Highlights
 
-- Plays audio from YouTube and YouTube Music
-- `!play`/`!playnext` queue yt-dlp's own top search result directly; `!search` shows a list of candidates to pick from manually when the top hit isn't the one you want
-- Last.fm integration for `!vibe` similar-track curation and per-server `!autoplay`
-- Persistent queue snapshots survive restarts; per-server DJ role, prefix, 24/7 mode, and autoplay settings stored in SQLite
-- Designed around the constraints of a 1/8-core shared VPS: single-threaded yt-dlp pool, 64 kbps Opus encoding, debounced panel refreshes, bounded deque-based queue
-
----
-
-## Features
-
-### Playback
-
-- `!play` accepts YouTube/YouTube Music URLs, playlist URLs, or plain text search queries — for a text query, the first yt-dlp search result is queued directly
-- `!playnext` queues a track immediately after the current one
-- `!search` shows up to 10 interactive results before committing — use this when `!play` picks the wrong track
-- Vote-skip (`!skip`): instant if you're the requester or a DJ; otherwise requires ≥50% of listeners to call it
-- `!forceskip` — immediate skip, DJ-only
-- `!skipto <position>` — jump to a queue position, dropping everything before it (DJ-only)
-- `!prev` — requeue the last-played track
-- `!pause` / `!resume`
-- `!stop` — clears the queue and disconnects
-- `!loop` — cycles through Off → Single track → Entire queue
-- `!repeat` / `!replay` — aliases for one-track loop
-- `!seek <time>` — jump to a position in the current track (`1:30`, `90`, or relative `+30`/`-15`); current requester or a DJ
-- `!volume [0-200]` — show the current volume, or set it (DJ-only); applied via an ffmpeg filter so it stays on the low-CPU FFmpegOpusAudio path rather than switching to PCM
-- `!nowplaying` — live now-playing embed with queue preview
-
-### Vibe Curation (Last.fm)
-
-`!vibe <query>` discovers similar tracks via Last.fm's `track.getSimilar` API. Results are sorted by match confidence (0.0–1.0). A curation panel lets you deselect tracks before queuing. When the queue drops to ≤10 tracks during an active vibe session, a refill prompt surfaces automatically offering more similar tracks.
-
-Curation resolutions for a single guild run up to `YTDLP_CURATION_CONCURRENCY` at a time (own per-guild semaphore, separate from the playback path). Curation also has its own dedicated global semaphore, sized by the same `YTDLP_CURATION_CONCURRENCY` value — a large `!vibe` batch resolving in the background can no longer starve `!play`/`!playnext`/`!search` of the single global playback slot (`YTDLP_CONCURRENT_EXTRACTS`).
-
-Each similar track from Last.fm is resolved to YouTube by taking yt-dlp's top search result for `<artist> - <title>` — no re-ranking.
-
-Save and reload named curated playlists with `!vibe-save` / `!vibe-load`.
-
-If autoplay is enabled for the server (`!autoplay`), the bot queues one similar track (via the same Last.fm pipeline) whenever the queue fully empties, using the last completed track as the seed — no `!vibe` required.
-
-### URL Pipeline
-
-- YouTube watch URLs, short URLs (`youtu.be`), and playlist URLs all resolve correctly
-- Playlist URLs respect `MAX_PLAYLIST_SIZE` (default 25)
-- yt-dlp selects `bestaudio[ext=webm]` → `bestaudio[ext=m4a]` → `bestaudio` → `best[height<=480]`
-- Stream URLs are cached per-track (128 entries, 30-minute TTL by default) and refreshed automatically 30s before the track ends
-- Audio re-encodes through libopus at 64 kbps by default — copy mode is intentionally avoided to prevent pacing irregularities
-
-### Performance
-
-- yt-dlp runs in a `ThreadPoolExecutor(max_workers=2)` to avoid blocking the event loop
-- A global semaphore (`YTDLP_CONCURRENT_EXTRACTS`, default 1) limits concurrent playback-path extractions on the constrained vCPU
-- Curation (`!vibe`) resolves through its own separate global semaphore (sized by `YTDLP_CURATION_CONCURRENCY`), so a large curated playlist resolving in the background can't block ordinary playback commands
-- Per-guild playback semaphore (`Semaphore(1)`) isolates guilds from each other
-- Curation resolutions use a separate per-guild semaphore sized by `YTDLP_CURATION_CONCURRENCY`
-- Thread pool automatically recycles after 3 consecutive extraction timeouts
-- Bounded yt-dlp socket timeout (`socket_timeout: 15`) prevents stalled connections from permanently consuming a worker slot
-- Now-playing panel refresh is debounced (0.8s) with a state-key check to skip redundant Discord edits
-- Queue duration tracked as a running total (`O(1)`) rather than summing on every render
+- **Playback** — YouTube and YouTube Music URLs, playlists, or plain-text queries. `!play` queues yt-dlp's top search result; `!search` lets you pick from up to 10 candidates.
+- **Controls** — vote-skip, `!seek`, `!volume`, loop modes, `!prev`, shuffle/move/remove, and a live now-playing panel.
+- **Last.fm curation** *(optional)* — `!vibe` finds similar tracks via `track.getSimilar` and lets you deselect before queuing; `!autoplay` queues a similar track whenever the queue runs dry; curated lists can be saved with `!vibe-save` / `!vibe-load`.
+- **Persistence** — queue snapshots survive restarts; per-server prefix, DJ role, 24/7 mode, volume and autoplay live in SQLite; named server playlists and play-history stats (`!toptracks`, `!toprequestors`).
+- **Low-resource by design** — bounded yt-dlp thread pool, 64 kbps Opus re-encode, debounced panel refreshes, per-guild isolation of extraction work, and a stream-URL cache with automatic refresh before a track ends.
+- **Safe by default** — URLs that resolve to private or local addresses are refused, mentions in track titles can't ping roles or `@everyone`, and the systemd unit is sandboxed.
 
 ---
 
@@ -104,8 +51,9 @@ If autoplay is enabled for the server (`!autoplay`), the bot queues one similar 
 
 - Python 3.11+
 - FFmpeg on `PATH`
-- Discord bot token
-- Last.fm API key *(optional — required for `!vibe` curation and the per-server `!autoplay` toggle only)*
+- A Discord bot token, with the **Message Content** privileged intent enabled in the Developer Portal
+- A JS runtime for yt-dlp (Deno) — installed automatically by the setup scripts
+- Last.fm API key *(optional — only needed for `!vibe` and `!autoplay`)*
 
 ---
 
@@ -113,87 +61,54 @@ If autoplay is enabled for the server (`!autoplay`), the bot queues one similar 
 
 ### Automated VPS setup
 
-**Deploying to a fresh Ubuntu VPS?** Clone the repo to the server, then run the setup script for your host — it installs everything, walks you through getting a Discord token and (optionally) a Last.fm key with live validation, and starts the bot as a systemd service in one go. All three scripts share the same installer under the hood (`deploy/_common.sh`); they only differ in a couple of host-specific checks and reminders.
+On a fresh Ubuntu/Debian VPS, clone the repo and run the script for your host. It installs everything, walks you through creating a Discord token and (optionally) a Last.fm key with live validation, prints the bot's invite link, and starts the bot as a systemd service.
 
 ```bash
 git clone https://github.com/Pylxyr/PyxeeBot.git ~/musicbot
 cd ~/musicbot
 ```
 
-| Host | Script | What it adds on top of the shared installer |
+| Host | Script | What it adds |
 |---|---|---|
 | Oracle Cloud | `bash deploy/setup_oracle.sh` | Reports whether you're on the AMD (E2.1.Micro) or ARM (Ampere A1) Always Free shape; notes Oracle's ~10 TB/month egress allowance |
-| Google Cloud | `bash deploy/setup_gcp.sh` | Checks the VM's region against GCP's Always Free eligibility (`us-west1`/`us-central1`/`us-east1`) via the instance metadata server; warns about the 1 GB/month egress cap and the Network Service Tier / boot disk type gotchas that void the free tier |
-| Anything else (DigitalOcean, Hetzner, AWS, bare metal, etc.) | `bash deploy/setup.sh` | Nothing extra — just the shared installer |
+| Google Cloud | `bash deploy/setup_gcp.sh` | Checks the VM's region against Always Free eligibility (`us-west1`/`us-central1`/`us-east1`); warns about the 1 GB/month egress cap and the network-tier and boot-disk gotchas that void the free tier |
+| Anything else | `bash deploy/setup.sh` | Just the shared installer |
 
-`APP_DIR` defaults to wherever you actually cloned the repo (not a hardcoded path), so it doesn't matter what you name the folder or where it lives — `cd` into it and run the matching script. All three also add a 1 GB swap file automatically on any host with ≤2 GB RAM, since a single yt-dlp/ffmpeg burst can otherwise pressure a 1 GB box hard enough to risk an OOM-killed SSH session.
+All three share one installer (`deploy/_common.sh`). `APP_DIR` is wherever you cloned the repo, so the folder name doesn't matter. On hosts with ≤2 GB RAM a 1 GB swap file is added, since a yt-dlp/ffmpeg burst can otherwise get an SSH session OOM-killed. Deno is installed from a pinned release and its SHA-256 is verified before it is placed in `/usr/local/bin`, and the generated `.env` is created owner-readable only (`chmod 600`).
 
-### Automated Termux (Android) setup
+### Manual setup
 
-**Running on your phone instead of a VPS?** `deploy/setup_termux.sh` is a separate, self-contained installer for Termux — Android has no systemd, no apt/sudo, and building the voice stack (PyNaCl, davey) from source needs a couple of Rust-toolchain workarounds a VPS never touches (correct `CARGO_BUILD_TARGET` for the device's architecture, and an `ANDROID_API_LEVEL` floor of 34, without which `maturin` fails outright). It walks through the same interactive wizard as the VPS scripts — Discord token and an optional Last.fm key, both live-validated — then gets the bot running immediately, via `termux-services` if available, falling back to a detached `tmux` session otherwise.
-
-```bash
-pkg install git
-git clone https://github.com/Pylxyr/PyxeeBot.git ~/musicbot
-cd ~/musicbot
-bash deploy/setup_termux.sh
-```
-
-Use Termux from [F-Droid](https://f-droid.org/packages/com.termux/), not the Play Store — that build has been unmaintained since 2021. Two optional companion apps (also F-Droid) round it out: **Termux:Boot** starts Termux — and the bot with it, if you set up the `termux-services` option — automatically when your phone reboots, and **Termux:API** enables `termux-wake-lock` so Android doesn't kill the session in the background.
-
-### Local setup
-
-The steps below are for local development or platforms other than the automated script above.
-
-**1. Clone**
+For local development or any platform the scripts don't cover.
 
 ```bash
 git clone https://github.com/Pylxyr/PyxeeBot.git
 cd PyxeeBot
-```
-
-**2. Create a virtual environment**
-
-```bash
 python3 -m venv .venv
 source .venv/bin/activate
-```
-
-**3. Install dependencies**
-
-```bash
 pip install -r requirements.txt
+
+cp deploy/.env.example .env     # then edit .env and set DISCORD_TOKEN
+python bot.py
 ```
 
-**4. Configure**
-
-Copy `deploy/.env.example` to `.env` in the project root and fill in your token:
-
-```bash
-cp deploy/.env.example .env
-```
+Minimal `.env`:
 
 ```env
 DISCORD_TOKEN=your_discord_bot_token
+BOT_OWNERS=your_discord_user_id
 
 # Optional
 LASTFM_API_KEY=your_lastfm_api_key
 DEFAULT_PREFIX=!
 ```
 
-**5. Run**
+To invite the bot, use `https://discord.com/oauth2/authorize?client_id=<APPLICATION_ID>&permissions=3230720&scope=bot%20applications.commands` — that permission set is View Channels, Send Messages, Embed Links, Read Message History, Connect and Speak, and nothing more.
 
-```bash
-python bot.py
-```
+### Running as a systemd service
 
----
+> The VPS scripts already do this. These are the manual steps.
 
-## Running as a systemd service
-
-> If you used one of the VPS scripts (`setup.sh` / `setup_oracle.sh` / `setup_gcp.sh`), this is already done — the bot is running as a systemd service. The steps below are for setting it up manually. Termux has no systemd; `setup_termux.sh` sets up the closest equivalent (`termux-services`) instead — see [Automated Termux (Android) setup](#automated-termux-android-setup).
-
-Create `/etc/systemd/system/musicbot.service`:
+Create `/etc/systemd/system/musicbot.service` (adjust `User` and the paths to your install):
 
 ```ini
 [Unit]
@@ -244,18 +159,19 @@ WantedBy=multi-user.target
 
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl enable musicbot
-sudo systemctl start musicbot
+sudo systemctl enable --now musicbot
 journalctl -u musicbot -f -o cat
 ```
 
-**A note on `MemoryDenyWriteExecute=yes`:** you'll notice it's absent from the hardening directives above, even though it's normally a reasonable default. yt-dlp needs an external JS runtime (Deno by default — see `YTDLP_JS_RUNTIME_PATH` below and the Deno install step in `deploy/_common.sh`) to fully support YouTube, this bot's primary source. Deno is V8-based, same as Node, and needs writable+executable memory for its JIT compiler — which is exactly what this directive blocks. Tested directly: Deno panics immediately, on a trivial one-line script, under this restriction. Enabling it would break YouTube playback outright, not just as a narrow edge case, so it's deliberately left out.
+`ReadWritePaths` limits writes to `data/` and `logs/`, so keep anything the bot writes — including the cookies file — under one of them.
+
+**Why there is no `MemoryDenyWriteExecute=yes`:** yt-dlp needs a JS runtime (Deno) for YouTube, and Deno's V8 JIT requires writable+executable memory. Under that directive Deno panics on even a one-line script, which would break YouTube playback outright, so it is deliberately left out.
 
 ---
 
 ## Configuration
 
-All settings are read from `.env`. Every value has a default. See `deploy/.env.example` for the full annotated list.
+Settings are read from `.env`; every value except `DISCORD_TOKEN` has a default. `deploy/.env.example` is the annotated template.
 
 | Variable | Default | Description |
 |---|---|---|
@@ -291,6 +207,10 @@ All settings are read from `.env`. Every value has a default. See `deploy/.env.e
 | `BOT_ACTIVITY_URL` | `pylxyr.github.io/PyxeeBot-Page/` | Text shown in the bot's Discord status ("Watching …") |
 
 ---
+
+## Commands
+
+Default prefix is `!` (change per server with `!setprefix`). "DJ" means the configured DJ role *or* the Manage Server permission.
 
 ### Playback
 
@@ -362,86 +282,103 @@ All settings are read from `.env`. Every value has a default. See `deploy/.env.e
 | `!stay` | — | Toggle 24/7 mode — bot stays connected when the queue empties (Manage Server) |
 | `!autoplay` | — | Toggle per-server autoplay — queues a similar track when the queue empties (Manage Server) |
 | `!stats` | — | Show bot process stats: versions, guild count, voice connections, RSS, latency (owner only) |
+| `!refreshcookies` | — | Replace the yt-dlp cookies file by DM; the new file is live-tested and rolled back on failure (owner only) |
 | `!ping` | — | Check gateway latency |
 | `!commands` | `cmds` | Open the command help menu |
 
 ---
 
-## Project Structure
+## Security notes
+
+- **Private addresses are blocked.** Any `http(s)` URL — user-supplied, taken from a playlist, or returned by yt-dlp as a stream URL — must resolve only to public addresses, so users can't aim the bot at `localhost`, your LAN or cloud metadata endpoints. Set `ALLOW_PRIVATE_URLS=true` only if you need to play from a LAN stream server. Redirects followed inside yt-dlp/ffmpeg and DNS rebinding are not covered by this check.
+- **Mentions are restricted.** The bot can mention users (for the opt-in requester tags) but never `@everyone`, `@here` or roles, so a track title can't ping a server.
+- **Owner-only commands** (`!stats`, `!refreshcookies`) are limited to `BOT_OWNERS` and the application/team owners.
+- **Cookies.** `!refreshcookies` takes a Netscape cookies file by DM, tests it with a live extraction, and rolls back (or removes the new file if there was none) when the test fails. `cookies.txt*` is git-ignored.
+- **Secrets.** `.env` is git-ignored and created `chmod 600` by the setup scripts; the systemd unit runs with no capabilities and a read-only home.
+
+---
+
+## Architecture notes
+
+**Player loop.** Each guild has one `GuildPlayer` with a long-running loop task. Creation is guarded by a per-guild lock so a simultaneous `!join` and `!play` can't create two players. The loop pre-resolves the next track's stream URL into a TTL cache (128 entries, 30 minutes by default), refreshes the current track's URL `NEAR_END_PREFETCH_SECONDS` before it ends, and re-resolves any URL older than 4 hours before playing it.
+
+**Queue.** The queue is a plain deque with an explicit cap (`MAX_QUEUE_SIZE`) enforced when users add tracks. Internal re-queues (seek, volume change, `!prev`, resolve retry, loop modes) may exceed it by the one track they put back, so they never silently drop another queued track.
+
+**Audio pipeline.** yt-dlp extracts a direct stream URL; FFmpeg reads it over HTTP and re-encodes to Opus at the configured bitrate. Copy mode is avoided on purpose: discord.py maps a detected `opus` codec to copy mode, which bypasses the encoder and causes pacing irregularities. The FFmpeg process is started immediately before `voice_client.play()`, after the voice connection has settled, to avoid pre-buffered audio causing a fast-forward at the start of a session. Volume is applied with an FFmpeg filter so playback stays on the low-CPU `FFmpegOpusAudio` path.
+
+**yt-dlp concurrency.** Extractions run in a `ThreadPoolExecutor` sized from the two concurrency settings (minimum 2, maximum 16 workers). A global semaphore (`YTDLP_CONCURRENT_EXTRACTS`) gates playback-path work and a separate one (`YTDLP_CURATION_CONCURRENCY`) gates `!vibe`, so a large curation batch can't starve `!play`; per-guild semaphores isolate guilds from each other. A semaphore slot is held until the worker thread actually finishes — a timeout gives up waiting, but the slot stays taken so abandoned threads can't exceed the configured limit — and waiting for a slot is itself time-bounded. After 3 consecutive timeouts the pool is recycled.
+
+**Database.** One shared `aiosqlite` connection in WAL mode; every write holds a process-wide lock because SQLite transactions are connection-scoped and a concurrent `commit()` could otherwise commit another guild's open transaction. Tables: `guild_settings` (the `prefix` column is nullable — `NULL` follows `DEFAULT_PREFIX`), `saved_playlists` + `saved_playlist_items`, `queue_snapshots`, `play_history` (capped at 5,000 rows per guild, trimmed every 50 inserts). The schema is versioned and migrated on startup.
+
+**Search resolution.** A text query fetches `YTDLP_SEARCH_RESULTS` raw candidates in YouTube's relevance order and uses the first with a usable webpage URL — a guard against malformed entries, not a re-ranking. `!search` presents up to 10 candidates and lets the user choose.
+
+**Owner resolution.** `setup_hook` calls `application_info()` to populate `owner_id` (personal app) or `owner_ids` (team app, admin/developer roles). If the API is unavailable the bot falls back to `BOT_OWNERS` rather than failing to start.
+
+**Permissions.** DJ-gated actions accept either the DJ role or Manage Server. Vote-skip counts active human listeners in the voice channel, not guild members.
+
+---
+
+## Project structure
 
 ```
 PyxeeBot/
 ├── bot.py                          # Entry point
 ├── requirements.txt
-├── pyproject.toml                  # ruff (py311, E/F/W) and mypy (disallow_untyped_defs) config
-├── .github/
-│   └── workflows/
-│       └── deploy.yml              # CI: lint → format-check (PRs) / auto-format (push) → mypy → pytest → security-audit → SSH deploy
+├── pyproject.toml                  # ruff, mypy and pytest config
+├── .github/workflows/deploy.yml    # CI: lint → format → mypy → pytest → pip-audit → SSH deploy
 ├── deploy/
-│   ├── _common.sh                  # Shared install engine — sourced by the three setup_*.sh scripts, not run directly
-│   ├── setup_oracle.sh             # Interactive one-run setup wizard for Oracle Cloud
-│   ├── setup_gcp.sh                # Interactive one-run setup wizard for Google Cloud
-│   ├── setup.sh                    # Interactive one-run setup wizard for any other Ubuntu/Debian VPS
-│   ├── setup_termux.sh             # Standalone interactive setup wizard for Termux (Android) — doesn't use _common.sh
-│   ├── musicbot.service            # systemd unit (ProtectHome, MemoryMax, SystemCallFilter, logrotate)
+│   ├── _common.sh                  # Shared install engine (sourced by the setup scripts)
+│   ├── setup_oracle.sh             # Setup wizard: Oracle Cloud
+│   ├── setup_gcp.sh                # Setup wizard: Google Cloud
+│   ├── setup.sh                    # Setup wizard: any other Ubuntu/Debian VPS
+│   ├── musicbot.service            # Hardened systemd unit
 │   ├── musicbot-logrotate          # logrotate config (weekly, copytruncate)
 │   └── .env.example                # Annotated environment template
-├── musicbot/
-│   ├── __init__.py
-│   ├── bot.py                      # MusicBot subclass, help command, startup, owner resolution
-│   ├── config.py                   # Settings dataclass, env var loading
-│   ├── database.py                 # aiosqlite wrapper; all write methods hold a shared write lock
-│   └── cogs/
-│       ├── __init__.py
-│       ├── admin.py                # AdminCog: prefix, DJ, stay, autoplay, stats, ping, commands
-│       ├── curation.py             # CurationCog: !vibe family, autoplay queue trigger
-│       └── music/
-│           ├── __init__.py         # Public surface: exports MusicCog and EMBED_COLOUR
-│           ├── cog.py              # MusicCog: composes all mixins, owns shared state dicts
-│           ├── _base.py            # MusicCogBase: shared attribute and method stubs for all mixins
-│           ├── constants.py        # FFmpeg options, YTDL options, LoopMode, UI limits
-│           ├── models.py           # Track, ResolvedTrackData, NowPlayingController dataclasses
-│           ├── views.py            # Discord UI views: SearchSelection, Queue, NowPlaying
-│           ├── player.py           # GuildPlayer: queue, playback loop, history, stay-connected flag
-│           ├── _context.py         # _CURRENT_GUILD_ID ContextVar for yt-dlp pool; GuildContext type
-│           ├── _extraction.py      # ExtractionMixin: yt-dlp wrapper, audio source construction
-│           ├── _resolver.py        # ResolverMixin: stream URL resolution, per-track TTL cache
-│           ├── _lifecycle.py       # LifecycleMixin: player creation (race-condition lock), snapshot restore
-│           ├── _panel.py           # NPanelMixin: now-playing embed, debounced refresh loop
-│           ├── _events.py          # EventsMixin: voice state and disconnect event handlers
-│           ├── _helpers.py         # CommandHelpersMixin: DJ checks, skip votes, owner checks
-│           ├── _playback_commands.py   # join, leave, play, playnext, pause, resume, skip, etc.
-│           ├── _queue_commands.py      # queue, clear, shuffle, move, remove, history, toptracks, toprequestors
-│           ├── _search_commands.py     # search
-│           └── _playlist_commands.py  # playlist save/load/list/show/delete
+├── tests/                          # pytest suite (extraction, player queue, database)
+└── musicbot/
+    ├── bot.py                      # MusicBot subclass, help, startup, owner resolution, error handling
+    ├── config.py                   # Settings dataclass and env loading
+    ├── database.py                 # aiosqlite wrapper, schema + migrations
+    └── cogs/
+        ├── admin.py                # Prefix, DJ, stay, autoplay, stats, ping, cookies refresh
+        ├── curation.py             # !vibe family, Last.fm client, autoplay trigger
+        └── music/
+            ├── cog.py              # MusicCog: composes the mixins, owns shared state
+            ├── player.py           # GuildPlayer: queue, playback loop, history
+            ├── models.py           # Track and related dataclasses
+            ├── views.py            # Discord UI views (search, queue, now playing)
+            ├── constants.py        # FFmpeg/yt-dlp options, limits
+            ├── _base.py            # Shared attribute/method stubs for the mixins
+            ├── _context.py         # Guild ContextVar and GuildContext type
+            ├── _extraction.py      # yt-dlp wrapper, slot handling, audio sources
+            ├── _urlsafety.py       # Public-address check for user-supplied URLs
+            ├── _resolver.py        # Stream URL resolution and TTL cache
+            ├── _lifecycle.py       # Player creation, snapshot restore
+            ├── _panel.py           # Now-playing embed and debounced refresh
+            ├── _events.py          # Voice-state and disconnect handlers
+            ├── _helpers.py         # DJ checks, skip votes, owner checks
+            ├── _playback_commands.py
+            ├── _queue_commands.py
+            ├── _search_commands.py
+            └── _playlist_commands.py
 ```
 
 ---
 
-## Architecture Notes
+## Development
 
-**Player loop.** Each guild has one `GuildPlayer` with a long-running `_player_loop` asyncio task. Creation is protected by a per-guild `asyncio.Lock` to prevent a TOCTOU race where two concurrent commands (`!join` and `!play`) could each create an independent player before either writes to `self.players`. The loop pre-resolves the next track's stream URL via `_resolve_track_data` and stores it in a TTL cache (128 entries, 30-min TTL). Stream URLs are also refreshed 30s before the current track ends (`NEAR_END_PREFETCH_SECONDS`), and any cached stream URL older than 4 hours (`STREAM_URL_REFRESH_AGE_SECONDS`) is considered stale and re-resolved before playback.
+```bash
+pip install -r requirements.txt ruff mypy pytest pip-audit
+ruff check musicbot/ bot.py tests/
+ruff format musicbot/ bot.py tests/
+mypy musicbot/ bot.py
+pytest
+```
 
-**Audio pipeline.** yt-dlp extracts a direct stream URL; FFmpeg reads it over HTTP and re-encodes to Opus at the configured bitrate. Copy mode (`-c:a copy`) is explicitly avoided — discord.py's constructor maps any detected `opus`/`libopus` codec to copy mode, which bypasses the libopus encoder and causes pacing irregularities. The bitrate is read from yt-dlp's `abr` field (available in the manifest), so no second probe connection is ever made. The FFmpeg subprocess is created immediately before `voice_client.play()` — after the voice connection has stabilised and any reconnect delay has elapsed — to prevent pre-buffered audio causing fast-forward at the start of the first track in a session.
-
-**Database.** A single `aiosqlite.Connection` is shared across the process. All write methods hold a module-level `asyncio.Lock` before executing — SQLite transactions are connection-scoped, so a concurrent single-statement `commit()` from one guild can otherwise land inside and force-commit another guild's still-open `BEGIN IMMEDIATE` transaction silently. Tables: `guild_settings` (prefix, DJ role, stay-connected, autoplay per guild), `saved_playlists` + `saved_playlist_items` (named server playlists), `queue_snapshots` (queue restored on restart), `play_history` (backing `!toptracks` and `!toprequestors`). `play_history` is capped at 5 000 rows per guild (trimmed every 50 inserts). Two indexes cover it: `(guild_id, played_at)` for recency scans and `(guild_id, webpage_url, played_at)` for the `GROUP BY webpage_url` pattern used by `!toptracks`. A `PRAGMA wal_checkpoint(PASSIVE)` runs every 100 play-history writes to prevent WAL file growth on long sessions.
-
-**Search resolution.** `!play`/`!playnext` and Last.fm curation resolve a text query by fetching `YTDLP_SEARCH_RESULTS` raw candidates from yt-dlp (in YouTube's own relevance order) and taking the first one that has a usable webpage URL — this is a safety margin against occasional malformed search entries, not a ranking step. `!search` fetches `SEARCH_SELECTION_LIMIT` candidates the same way and presents all of them for the user to pick from directly.
-
-**yt-dlp concurrency.** All extractions run in `ThreadPoolExecutor(max_workers=2)`. Two separate global semaphores gate concurrent work: `asyncio.Semaphore(YTDLP_CONCURRENT_EXTRACTS)` for playback-path extractions, and a dedicated `asyncio.Semaphore(YTDLP_CURATION_CONCURRENCY)` for curation — kept separate so a `!vibe` confirmation resolving a large batch in the background can never monopolize the single playback slot and stall `!play`/`!playnext`/`!search`. A further per-guild semaphore (`Semaphore(1)`) isolates playback-path extractions from other guilds, and curation (`!vibe`) also has its own per-guild semaphore sized by `YTDLP_CURATION_CONCURRENCY`. The thread pool is automatically recycled after 3 consecutive `asyncio.wait_for` timeouts, since a genuinely-stuck thread (e.g. blocked in DNS resolution outside a socket timeout) can't be force-killed and would otherwise permanently consume a worker slot.
-
-**Bot owner resolution.** `setup_hook` calls `application_info()` to populate `owner_id` (personal app) or `owner_ids` (team-owned app, admin/developer roles only) at startup. If the Discord API is temporarily unavailable, the call is caught and the bot falls back to `BOT_OWNERS` only rather than aborting startup. discord.py would otherwise only populate these lazily on first `is_owner()` call, which nothing in this codebase triggers — meaning owner-only commands would silently fail for anyone not listed in `BOT_OWNERS`.
-
-**Permissions.** DJ-gated actions (`!forceskip`, `!skipto`, `!clear`, `!shuffle`, `!move`, `!loop`, `!replay`, `!playnext`, etc.) accept either the configured DJ role (`!setdj`) or the Manage Server permission — a server manager always has DJ-level access, even before a DJ role is set. Vote-skip (`!skip`) is based on active human listeners in the voice channel, not guild member count.
-
----
-
-## Contributing
-
-Issues and pull requests are welcome. `pyproject.toml` config: `ruff` (`py311`, `E`/`F`/`W`) for linting and `mypy` (with `disallow_untyped_defs`) for type checking — both are real, failing gates in CI (`ruff check`, `ruff format --check` on PRs, and `mypy`). One `mypy` override is scoped to the command-decorator modules (`admin.py`, `curation.py`, and the `music/_*_commands.py` files) to silence a confirmed discord.py/mypy ParamSpec-inference false positive that otherwise fires on essentially every `@commands.command`/`@commands.hybrid_command` definition — see the comment above that override in `pyproject.toml` before adding more modules to it. Tests live in `tests/` (`pip install pytest && pytest`) and run in CI too. Please run `ruff`, `mypy` and `pytest` locally before opening a PR.
+CI runs the same checks on every push and pull request (formatting is auto-committed on pushes to `main`, and `--check`ed on pull requests); a push to `main` that passes is deployed over SSH, at the exact commit that was tested. `mypy` has one override for the command-decorator modules to silence a known discord.py ParamSpec false positive — see the comment in `pyproject.toml` before adding modules to it. Issues and pull requests are welcome.
 
 ---
 
 ## License
 
-MIT
+MIT — see [LICENSE](LICENSE).
