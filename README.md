@@ -334,7 +334,7 @@ PyxeeBot/
 │   ├── musicbot.service            # Hardened systemd unit
 │   ├── musicbot-logrotate          # logrotate config (weekly, copytruncate)
 │   └── .env.example                # Annotated environment template
-├── tests/                          # pytest suite (extraction, player queue, database)
+├── tests/                          # pytest suite (extraction, player queue, database, UI views)
 └── musicbot/
     ├── bot.py                      # MusicBot subclass, help, startup, owner resolution, error handling
     ├── config.py                   # Settings dataclass and env loading

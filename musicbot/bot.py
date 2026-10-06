@@ -15,6 +15,7 @@ from musicbot.cogs.admin import AdminCog
 from musicbot.cogs.curation import CurationCog
 from musicbot.cogs.music import MusicCog
 from musicbot.cogs.music.constants import EMBED_COLOUR
+from musicbot.cogs.music.views import _close_interaction_message
 from musicbot.config import Settings, load_settings
 from musicbot.database import Database
 
@@ -38,8 +39,10 @@ class HelpOverviewView(discord.ui.View):
         overview_embed: discord.Embed,
         colour: discord.Colour,
         total_commands: int,
+        author_id: int,
     ) -> None:
         super().__init__(timeout=HELP_VIEW_TIMEOUT_SECONDS)
+        self.author_id = author_id
         self.categories = categories
         self.overview_embed = overview_embed
         self.colour = colour
@@ -62,6 +65,7 @@ class HelpOverviewView(discord.ui.View):
         select: discord.ui.Select[Any] = discord.ui.Select(
             placeholder="Browse a category…",
             options=options,
+            row=0,
         )
         select.callback = self._on_select  # type: ignore[method-assign]  # documented discord.py pattern: Item.callback is meant to be assigned for programmatically-built components
         self.add_item(select)
@@ -87,6 +91,18 @@ class HelpOverviewView(discord.ui.View):
         value = data.get("values", ["overview"])[0]
         embed = self.overview_embed if value == "overview" else self._category_embed(int(value))
         await interaction.response.edit_message(embed=embed, view=self)
+
+    @discord.ui.button(label="Close", style=discord.ButtonStyle.danger, row=1)
+    async def close_help(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
+        # The menu is a shared message anyone can browse, but only whoever opened it
+        # (or a moderator) may remove it.
+        if interaction.user.id != self.author_id and not interaction.permissions.manage_messages:
+            await interaction.response.send_message(
+                "Only the person who opened this menu (or a moderator) can close it.", ephemeral=True
+            )
+            return
+        self.stop()
+        await _close_interaction_message(interaction, closed_text="Help closed.")
 
     async def on_timeout(self) -> None:
         for item in self.children:
@@ -241,6 +257,7 @@ class PyxeeHelpCommand(commands.HelpCommand):
             overview_embed=overview_embed,
             colour=EMBED_COLOUR,
             total_commands=total_commands,
+            author_id=self.context.author.id,
         )
         message = await self.get_destination().send(embed=overview_embed, view=view)
         view.message = message

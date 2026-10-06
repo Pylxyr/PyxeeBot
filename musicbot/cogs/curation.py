@@ -195,20 +195,33 @@ class CurationView(discord.ui.View):
 
     @discord.ui.button(label="Queue All", style=discord.ButtonStyle.success, row=1)
     async def queue_all(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
+        selected = [t for t in self.session.tracks if t.selected]
+        if not selected:
+            # Checked *before* disabling anything: the old order froze the whole panel
+            # (Cancel included) with nothing left to click.
+            await interaction.response.send_message(
+                "No tracks selected — nothing to queue. Use **Cancel** to close this panel.",
+                ephemeral=True,
+            )
+            return
+
         self._disable_all()
         await interaction.response.edit_message(
             content="Resolving tracks and adding to queue…",
             view=self,
         )
-
-        selected = [t for t in self.session.tracks if t.selected]
-        if not selected:
-            await interaction.followup.send("No tracks selected.", ephemeral=True)
+        try:
+            queued, failed = await self.cog._resolve_and_queue(
+                self.session.guild_id, self.session.author_id, selected, interaction
+            )
+        except Exception:
+            log.exception("Queueing curated tracks failed")
+            self._enable_all()
+            with contextlib.suppress(discord.HTTPException):
+                await interaction.edit_original_response(
+                    content="Something went wrong while queuing — try again, or cancel.", view=self
+                )
             return
-
-        queued, failed = await self.cog._resolve_and_queue(
-            self.session.guild_id, self.session.author_id, selected, interaction
-        )
         result_msg = f"Queued {queued} track(s)." + (f" ({failed} could not be resolved.)" if failed else "")
         await interaction.edit_original_response(content=result_msg, embed=None, view=None)
         self.cog._sessions.pop(self.session.guild_id, None)
@@ -228,6 +241,11 @@ class CurationView(discord.ui.View):
         for item in self.children:
             if hasattr(item, "disabled"):
                 item.disabled = True
+
+    def _enable_all(self) -> None:
+        for item in self.children:
+            if hasattr(item, "disabled"):
+                item.disabled = False
 
     async def on_timeout(self) -> None:
         self._disable_all()
@@ -321,20 +339,38 @@ class RefillView(discord.ui.View):
 
     @discord.ui.button(label="Add All", style=discord.ButtonStyle.success, row=1)
     async def add_all(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
-        self._disable()
-        await interaction.response.edit_message(
-            content="Resolving tracks and adding to queue…",
-            view=self,
-        )
         for item in self.children:
             if isinstance(item, discord.ui.Select) and item.values:
                 for idx_str in item.values:
                     self.tracks[int(idx_str)].selected = False
 
         selected = [t for t in self.tracks if t.selected]
-        queued, failed = await self.cog._resolve_and_queue(
-            self.guild_id, self.author_id, selected, interaction
+        if not selected:
+            await interaction.response.send_message(
+                "Every suggestion is excluded — nothing to add. Use **Dismiss** to close this prompt.",
+                ephemeral=True,
+            )
+            for t in self.tracks:
+                t.selected = True
+            return
+
+        self._disable()
+        await interaction.response.edit_message(
+            content="Resolving tracks and adding to queue…",
+            view=self,
         )
+        try:
+            queued, failed = await self.cog._resolve_and_queue(
+                self.guild_id, self.author_id, selected, interaction
+            )
+        except Exception:
+            log.exception("Queueing refill tracks failed")
+            self._enable()
+            with contextlib.suppress(discord.HTTPException):
+                await interaction.edit_original_response(
+                    content="Something went wrong while queuing — try again, or dismiss.", view=self
+                )
+            return
         result_msg = f"Refilled queue with {queued} track(s)." + (f" ({failed} failed.)" if failed else "")
         await interaction.edit_original_response(content=result_msg, embed=None, view=None)
 
@@ -347,6 +383,11 @@ class RefillView(discord.ui.View):
         for item in self.children:
             if hasattr(item, "disabled"):
                 item.disabled = True
+
+    def _enable(self) -> None:
+        for item in self.children:
+            if hasattr(item, "disabled"):
+                item.disabled = False
 
     async def on_timeout(self) -> None:
         self._disable()

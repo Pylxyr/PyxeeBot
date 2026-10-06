@@ -33,12 +33,26 @@ def _disable_view_items(view: discord.ui.View) -> None:
 async def _close_interaction_message(
     interaction: discord.Interaction, *, closed_text: str = "❌ Closed."
 ) -> None:
+    """Remove the panel a Close/Cancel button was pressed on.
+
+    The message is first edited to a short text with no components, so even if the delete
+    below fails the panel is dead rather than a stale menu. Ephemeral messages can't be
+    deleted through the bot's own message handle, so those fall back to the interaction's
+    original response.
+    """
     with contextlib.suppress(discord.HTTPException, discord.NotFound, discord.Forbidden):
         await interaction.response.edit_message(content=closed_text, embed=None, view=None)
+    deleted = False
     message = interaction.message
     if message is not None:
-        with contextlib.suppress(discord.HTTPException, discord.NotFound, discord.Forbidden):
+        try:
             await message.delete()
+            deleted = True
+        except (discord.HTTPException, discord.NotFound, discord.Forbidden):
+            pass
+    if not deleted:
+        with contextlib.suppress(discord.HTTPException, discord.NotFound, discord.Forbidden):
+            await interaction.delete_original_response()
 
 
 class SearchSelectionMenu(discord.ui.Select):
