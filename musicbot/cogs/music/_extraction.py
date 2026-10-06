@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import re
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -15,6 +14,7 @@ from yt_dlp import DownloadError, YoutubeDL
 
 from musicbot.cogs.music._base import MusicCogBase
 from musicbot.cogs.music._context import _CURRENT_GUILD_ID
+from musicbot.cogs.music._urlsafety import is_public_http_url
 from musicbot.cogs.music.constants import (
     FFMPEG_BEFORE_OPTIONS,
     FFMPEG_OPTIONS,
@@ -96,6 +96,9 @@ class ExtractionMixin(MusicCogBase):
         url = track.stream_url
         if not url or not url.startswith("http"):
             return False
+        if not await self._url_allowed(url):
+            self.logger.warning("Refusing non-public stream URL for %s", track.webpage_url)
+            return False
 
         session = self._http_session
         if session is None or session.closed:
@@ -106,7 +109,9 @@ class ExtractionMixin(MusicCogBase):
             async with session.head(
                 url,
                 timeout=aiohttp.ClientTimeout(total=5),
-                allow_redirects=True,
+                # Not followed: a redirect target would bypass the host check above.
+                # 3xx is < 400, so it still counts as "URL is alive".
+                allow_redirects=False,
             ) as resp:
                 if resp.status < 400:
                     return True
@@ -153,6 +158,19 @@ class ExtractionMixin(MusicCogBase):
             options=options,
         )
 
+    async def _url_allowed(self, url: str) -> bool:
+        if self.bot.settings.allow_private_urls:
+            return True
+        return await is_public_http_url(url)
+
+    async def _acquire_extract_slot(self, sem: asyncio.Semaphore) -> None:
+        # Bounded wait so a wedged extraction can never make every later lookup hang
+        # silently — the caller gets a normal "try again" error instead.
+        try:
+            await asyncio.wait_for(sem.acquire(), timeout=self.bot.settings.ytdlp_extract_timeout_seconds * 2)
+        except asyncio.TimeoutError as exc:
+            raise commands.BadArgument("Too many lookups in progress — try again shortly.") from exc
+
     async def _extract_info(
         self,
         query: str,
@@ -161,6 +179,8 @@ class ExtractionMixin(MusicCogBase):
         flat_search: bool = False,
         curation_mode: bool = False,
     ) -> dict[str, Any]:
+        if query.startswith(("http://", "https://")) and not await self._url_allowed(query):
+            raise commands.BadArgument("That URL points at a private or local address and isn't allowed.")
         key = (flat_playlist, flat_search)
         options = self._build_ytdl_options(flat_playlist=flat_playlist, flat_search=flat_search)
         guild_id = _CURRENT_GUILD_ID.get()
@@ -174,52 +194,71 @@ class ExtractionMixin(MusicCogBase):
         else:
             guild_sem = self._guild_extract_semaphores.setdefault(guild_id, asyncio.Semaphore(1))
 
-        sem_ctx = guild_sem if guild_sem is not None else contextlib.nullcontext()
         # Curation's bulk resolve (potentially 25 tracks from a single !vibe confirm) must
         # never compete with playback-critical commands for the same global slot — otherwise
         # !play/!playnext/!search can appear to hang indefinitely behind a large curation
         # batch, with no feedback beyond a stuck typing indicator.
         global_sem = self.curation_extract_semaphore if curation_mode else self.extract_semaphore
-        async with sem_ctx:
-            async with global_sem:
-                try:
-                    loop = asyncio.get_running_loop()
 
-                    def _run() -> dict[str, Any] | None:
-                        tlocal = self._ytdl_tlocal
-                        if not hasattr(tlocal, "instances"):
-                            tlocal.instances = {}
-                        ydl = tlocal.instances.get(key)
-                        if ydl is None:
-                            ydl = YoutubeDL(options)
-                            tlocal.instances[key] = ydl
-                        return cast("dict[str, Any] | None", ydl.extract_info(query, download=False))
+        # The slots are released when the worker *thread* finishes, not when the caller
+        # gives up waiting: asyncio.wait_for can't stop a running yt-dlp call, so
+        # releasing on timeout would let abandoned threads pile up past the configured
+        # concurrency. Hence manual acquire/release instead of `async with`.
+        held: list[asyncio.Semaphore] = []
+        try:
+            for sem in (guild_sem, global_sem):
+                if sem is None:
+                    continue
+                await self._acquire_extract_slot(sem)
+                held.append(sem)
 
-                    result = await asyncio.wait_for(
-                        loop.run_in_executor(self._ytdl_executor, _run),
-                        timeout=self.bot.settings.ytdlp_extract_timeout_seconds,
-                    )
-                    if result is None:
-                        raise commands.BadArgument(
-                            "No information could be extracted for the provided source."
-                        )
-                    self._ytdl_timeout_count = 0
-                    return result
-                except asyncio.TimeoutError as exc:
-                    self.logger.warning("yt-dlp timed out for query %r", query)
-                    self._ytdl_timeout_count += 1
-                    if self._ytdl_timeout_count >= 3:
-                        self.logger.warning(
-                            "3 consecutive yt-dlp timeouts — recycling extraction thread pool."
-                        )
-                        old_executor = self._ytdl_executor
-                        self._ytdl_executor = self._new_ytdl_executor()
-                        self._ytdl_timeout_count = 0
-                        old_executor.shutdown(wait=False)
-                    raise commands.BadArgument(
-                        f"Source lookup timed out after "
-                        f"{self.bot.settings.ytdlp_extract_timeout_seconds} seconds."
-                    ) from exc
+            loop = asyncio.get_running_loop()
+
+            def _run() -> dict[str, Any] | None:
+                tlocal = self._ytdl_tlocal
+                if not hasattr(tlocal, "instances"):
+                    tlocal.instances = {}
+                ydl = tlocal.instances.get(key)
+                if ydl is None:
+                    ydl = YoutubeDL(options)
+                    tlocal.instances[key] = ydl
+                return cast("dict[str, Any] | None", ydl.extract_info(query, download=False))
+
+            future = loop.run_in_executor(self._ytdl_executor, _run)
+        except BaseException:
+            for sem in held:
+                sem.release()
+            raise
+
+        def _on_thread_done(done: asyncio.Future[Any]) -> None:
+            for sem in held:
+                sem.release()
+            if not done.cancelled():
+                done.exception()  # mark retrieved; the awaiting side may already be gone
+
+        future.add_done_callback(_on_thread_done)
+
+        try:
+            result = await asyncio.wait_for(
+                asyncio.shield(future),
+                timeout=self.bot.settings.ytdlp_extract_timeout_seconds,
+            )
+            if result is None:
+                raise commands.BadArgument("No information could be extracted for the provided source.")
+            self._ytdl_timeout_count = 0
+            return cast("dict[str, Any]", result)
+        except asyncio.TimeoutError as exc:
+            self.logger.warning("yt-dlp timed out for query %r", query)
+            self._ytdl_timeout_count += 1
+            if self._ytdl_timeout_count >= 3:
+                self.logger.warning("3 consecutive yt-dlp timeouts — recycling extraction thread pool.")
+                old_executor = self._ytdl_executor
+                self._ytdl_executor = self._new_ytdl_executor()
+                self._ytdl_timeout_count = 0
+                old_executor.shutdown(wait=False)
+            raise commands.BadArgument(
+                f"Source lookup timed out after {self.bot.settings.ytdlp_extract_timeout_seconds} seconds."
+            ) from exc
 
     def _is_playlist_query(self, query: str) -> bool:
         if not query.startswith(("http://", "https://")):
@@ -330,6 +369,9 @@ class ExtractionMixin(MusicCogBase):
         stream_url = item.get("url")
         webpage_url = item.get("webpage_url") or query
         if not stream_url:
+            return None
+        if not await self._url_allowed(stream_url):
+            self.logger.warning("Skipping %s: stream URL resolves to a non-public address", webpage_url)
             return None
         return Track(
             title=item.get("title", "Unknown title"),

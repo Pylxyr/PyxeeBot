@@ -36,3 +36,6 @@ module = [
     "musicbot.cogs.music._search_commands",
 ]
 disable_error_code = ["arg-type"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

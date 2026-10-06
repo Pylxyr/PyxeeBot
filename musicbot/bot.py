@@ -313,6 +313,10 @@ class MusicBot(commands.Bot):
             max_messages=256,
             help_command=PyxeeHelpCommand(),
             case_insensitive=True,
+            # Track titles and other user-controlled text end up in plain-content messages;
+            # never let them ping @everyone/@here or roles. User mentions stay on for the
+            # opt-in requester-tag feature (!mentions).
+            allowed_mentions=discord.AllowedMentions(everyone=False, roles=False, users=True),
         )
         self.settings = settings
         self.database = database
@@ -432,7 +436,12 @@ class MusicBot(commands.Bot):
             await context.send(str(error), delete_after=8)
             return
         if isinstance(error, commands.CheckFailure):
-            await context.send("You do not have permission to use this command.", delete_after=8)
+            # Single place that reports check failures (including the DJ check's own
+            # message) — MusicCog no longer has a second handler, which used to make
+            # every such error show up twice.
+            await context.send(
+                str(error) or "You do not have permission to use this command.", delete_after=8
+            )
             return
 
         logging.getLogger(__name__).exception("Unhandled command error", exc_info=error)

@@ -280,7 +280,8 @@ All settings are read from `.env`. Every value has a default. See `deploy/.env.e
 | `YTDLP_EXTRACT_TIMEOUT_SECONDS` | `45` | Per-extraction timeout |
 | `YTDLP_SOCKET_TIMEOUT` | `15` | yt-dlp socket timeout |
 | `NEAR_END_PREFETCH_SECONDS` | `30` | Trigger stream URL refresh this many seconds before track end |
-| `YTDLP_COOKIES_FILE` | — | Path to Netscape cookies file |
+| `YTDLP_COOKIES_FILE` | — | Path to Netscape cookies file. Use `data/cookies.txt` — the systemd unit only makes `data/` and `logs/` writable, which `!refreshcookies` needs |
+| `ALLOW_PRIVATE_URLS` | `false` | Allow URLs that resolve to private/loopback/link-local addresses (blocked by default to stop users pointing the bot at your internal network) |
 | `YTDLP_JS_RUNTIME_PATH` | — | Path to a JS runtime binary, for sites requiring JS signature decryption. If unset, yt-dlp auto-detects a `deno` binary on `PATH` — the setup wizards install Deno system-wide for exactly this. Only set this to pin a different runtime/path (e.g. Node) instead |
 | `OPUS_BITRATE_KBPS` | `64` | Opus encoding bitrate (64–256) |
 | `NP_AUTO_REFRESH` | `false` | Auto-refresh the now-playing panel on a timer |
@@ -336,7 +337,7 @@ All settings are read from `.env`. Every value has a default. See `deploy/.env.e
 
 | Command | Aliases | Description |
 |---|---|---|
-| `!playlist save <name>` | — | Save the current queue as a named server playlist |
+| `!playlist save <name>` | — | Save the current queue as a named server playlist (overwriting an existing one needs its creator or a DJ; max 50 per server) |
 | `!playlist load <name>` | — | Load a saved playlist into the queue |
 | `!playlist list` | — | List saved playlists for this server |
 | `!playlist show <name>` | — | Preview the tracks in a saved playlist |
@@ -375,7 +376,7 @@ PyxeeBot/
 ├── pyproject.toml                  # ruff (py311, E/F/W) and mypy (disallow_untyped_defs) config
 ├── .github/
 │   └── workflows/
-│       └── deploy.yml              # CI: lint → format-check (PRs) / auto-format (push) → mypy → security-audit → SSH deploy
+│       └── deploy.yml              # CI: lint → format-check (PRs) / auto-format (push) → mypy → pytest → security-audit → SSH deploy
 ├── deploy/
 │   ├── _common.sh                  # Shared install engine — sourced by the three setup_*.sh scripts, not run directly
 │   ├── setup_oracle.sh             # Interactive one-run setup wizard for Oracle Cloud
@@ -437,7 +438,7 @@ PyxeeBot/
 
 ## Contributing
 
-Issues and pull requests are welcome. `pyproject.toml` config: `ruff` (`py311`, `E`/`F`/`W`) for linting and `mypy` (with `disallow_untyped_defs`) for type checking — both are real, failing gates in CI (`ruff check`, `ruff format --check` on PRs, and `mypy`). One `mypy` override is scoped to the command-decorator modules (`admin.py`, `curation.py`, and the `music/_*_commands.py` files) to silence a confirmed discord.py/mypy ParamSpec-inference false positive that otherwise fires on essentially every `@commands.command`/`@commands.hybrid_command` definition — see the comment above that override in `pyproject.toml` before adding more modules to it. Please run `ruff` and `mypy` locally before opening a PR.
+Issues and pull requests are welcome. `pyproject.toml` config: `ruff` (`py311`, `E`/`F`/`W`) for linting and `mypy` (with `disallow_untyped_defs`) for type checking — both are real, failing gates in CI (`ruff check`, `ruff format --check` on PRs, and `mypy`). One `mypy` override is scoped to the command-decorator modules (`admin.py`, `curation.py`, and the `music/_*_commands.py` files) to silence a confirmed discord.py/mypy ParamSpec-inference false positive that otherwise fires on essentially every `@commands.command`/`@commands.hybrid_command` definition — see the comment above that override in `pyproject.toml` before adding more modules to it. Tests live in `tests/` (`pip install pytest && pytest`) and run in CI too. Please run `ruff`, `mypy` and `pytest` locally before opening a PR.
 
 ---
 

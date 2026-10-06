@@ -48,14 +48,10 @@ class CommandHelpersMixin(MusicCogBase):
     async def _disable_persistent_modes(self, guild_id: int, player: GuildPlayer | None) -> list[str]:
         disabled: list[str] = []
         if await self.bot.database.get_stay_connected(guild_id):
-            await self.bot.database.set_stay_connected(
-                guild_id, False, default_prefix=self.bot.settings.default_prefix
-            )
+            await self.bot.database.set_stay_connected(guild_id, False)
             disabled.append("24/7 mode")
         if await self.bot.database.get_autoplay(guild_id):
-            await self.bot.database.set_autoplay(
-                guild_id, False, default_prefix=self.bot.settings.default_prefix
-            )
+            await self.bot.database.set_autoplay(guild_id, False)
             disabled.append("autoplay")
         if player is not None:
             player.stay_connected = False

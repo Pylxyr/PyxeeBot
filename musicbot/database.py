@@ -9,8 +9,29 @@ from typing import Any
 
 import aiosqlite
 
-_CURRENT_SCHEMA_VERSION = 6
+_CURRENT_SCHEMA_VERSION = 7
 _HISTORY_MAX_ROWS = 5000
+
+# `prefix` is nullable: NULL means "use the bot's DEFAULT_PREFIX". It used to be NOT NULL,
+# so toggling any unrelated setting inserted the *current* default as if the guild had
+# chosen it, permanently pinning the guild to that value (schema v7 fixes this going
+# forward; rows already pinned before the migration can't be told apart from real choices).
+_GUILD_SETTINGS_DDL = """
+    CREATE TABLE {name} (
+        guild_id                 INTEGER PRIMARY KEY,
+        prefix                   TEXT,
+        dj_role_id               INTEGER,
+        stay_connected           INTEGER NOT NULL DEFAULT 0,
+        autoplay                 INTEGER NOT NULL DEFAULT 0,
+        show_requester_mentions  INTEGER NOT NULL DEFAULT 0,
+        show_link_previews       INTEGER NOT NULL DEFAULT 1,
+        volume                   INTEGER NOT NULL DEFAULT 100
+    )
+"""
+_GUILD_SETTINGS_COLUMNS = (
+    "guild_id, prefix, dj_role_id, stay_connected, autoplay, "
+    "show_requester_mentions, show_link_previews, volume"
+)
 
 
 class Database:
@@ -54,20 +75,7 @@ class Database:
     async def _create_tables(self) -> None:
         conn = self._require_conn()
 
-        await conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS guild_settings (
-                guild_id                 INTEGER PRIMARY KEY,
-                prefix                   TEXT    NOT NULL,
-                dj_role_id               INTEGER,
-                stay_connected           INTEGER NOT NULL DEFAULT 0,
-                autoplay                 INTEGER NOT NULL DEFAULT 0,
-                show_requester_mentions  INTEGER NOT NULL DEFAULT 0,
-                show_link_previews       INTEGER NOT NULL DEFAULT 1,
-                volume                   INTEGER NOT NULL DEFAULT 100
-            )
-            """
-        )
+        await conn.execute(_GUILD_SETTINGS_DDL.format(name="IF NOT EXISTS guild_settings"))
 
         await conn.execute(
             """
@@ -145,9 +153,9 @@ class Database:
 
         if row is None:
             async with conn.execute("PRAGMA table_info(guild_settings)") as cursor:
-                existing = {r["name"] async for r in cursor}
+                existing = {r["name"]: r["notnull"] async for r in cursor}
             if "volume" in existing:
-                current = 6
+                current = 6 if existing.get("prefix") else 7
             elif "show_link_previews" in existing:
                 current = 5
             elif "show_requester_mentions" in existing:
@@ -200,12 +208,24 @@ class Database:
             current = 6
             await conn.execute("UPDATE schema_version SET version = ?", (current,))
 
+        if current < 7:
+            # SQLite can't drop a NOT NULL constraint in place, so rebuild the table.
+            await conn.execute("DROP TABLE IF EXISTS guild_settings_new")
+            await conn.execute(_GUILD_SETTINGS_DDL.format(name="guild_settings_new"))
+            await conn.execute(
+                f"INSERT INTO guild_settings_new ({_GUILD_SETTINGS_COLUMNS}) "
+                f"SELECT {_GUILD_SETTINGS_COLUMNS} FROM guild_settings"
+            )
+            await conn.execute("DROP TABLE guild_settings")
+            await conn.execute("ALTER TABLE guild_settings_new RENAME TO guild_settings")
+            current = 7
+            await conn.execute("UPDATE schema_version SET version = ?", (current,))
+
     # `guild_settings` has five columns (stay_connected, autoplay,
     # show_requester_mentions, show_link_previews, volume) that are all read/written
     # through the exact same shape: check an in-memory cache, fall back to a SELECT
-    # with a fixed default, and on write do an upsert that also seeds `prefix` (via
-    # `default_prefix`) so the row exists even if this is the very first setting ever
-    # touched for that guild. `column` is always one of the fixed string literals
+    # with a fixed default, and on write do an upsert (leaving `prefix` NULL when the row
+    # is created, so the guild keeps following DEFAULT_PREFIX). `column` is always one of the fixed string literals
     # passed by the wrapper methods below — never user input — so interpolating it
     # into the SQL here doesn't open any injection risk.
     async def _get_guild_bool_setting(
@@ -229,22 +249,20 @@ class Database:
         column: str,
         cache: dict[int, bool],
         enabled: bool,
-        default_prefix: str,
     ) -> None:
         if self._conn is None:
             return
         async with self._write_lock:
             await self._conn.execute(
                 f"""
-                INSERT INTO guild_settings (guild_id, prefix, {column})
-                VALUES (?, ?, ?)
+                INSERT INTO guild_settings (guild_id, {column})
+                VALUES (?, ?)
                 ON CONFLICT(guild_id) DO UPDATE SET {column} = excluded.{column}
                 """,
-                (guild_id, default_prefix, int(enabled)),
+                (guild_id, int(enabled)),
             )
             await self._conn.commit()
         cache[guild_id] = enabled
-        self._prefix_cache.setdefault(guild_id, default_prefix)
 
     async def _get_guild_int_setting(
         self, guild_id: int, column: str, cache: dict[int, int], default: int
@@ -267,22 +285,20 @@ class Database:
         column: str,
         cache: dict[int, int],
         value: int,
-        default_prefix: str,
     ) -> None:
         if self._conn is None:
             return
         async with self._write_lock:
             await self._conn.execute(
                 f"""
-                INSERT INTO guild_settings (guild_id, prefix, {column})
-                VALUES (?, ?, ?)
+                INSERT INTO guild_settings (guild_id, {column})
+                VALUES (?, ?)
                 ON CONFLICT(guild_id) DO UPDATE SET {column} = excluded.{column}
                 """,
-                (guild_id, default_prefix, value),
+                (guild_id, value),
             )
             await self._conn.commit()
         cache[guild_id] = value
-        self._prefix_cache.setdefault(guild_id, default_prefix)
 
     async def get_prefix(self, guild_id: int) -> str | None:
         if self._conn is None:
@@ -329,22 +345,20 @@ class Database:
         self,
         guild_id: int,
         role_id: int | None,
-        default_prefix: str = "!",
     ) -> None:
         if self._conn is None:
             return
         async with self._write_lock:
             await self._conn.execute(
                 """
-                INSERT INTO guild_settings (guild_id, prefix, dj_role_id)
-                VALUES (?, ?, ?)
+                INSERT INTO guild_settings (guild_id, dj_role_id)
+                VALUES (?, ?)
                 ON CONFLICT(guild_id) DO UPDATE SET dj_role_id = excluded.dj_role_id
                 """,
-                (guild_id, default_prefix, role_id),
+                (guild_id, role_id),
             )
             await self._conn.commit()
         self._dj_role_cache[guild_id] = role_id
-        self._prefix_cache.setdefault(guild_id, default_prefix)
 
     async def save_playlist(
         self,
@@ -393,6 +407,25 @@ class Database:
             except Exception:
                 await self._conn.rollback()
                 raise
+
+    async def get_playlist_owner(self, guild_id: int, name: str) -> int | None:
+        if self._conn is None:
+            return None
+        async with self._conn.execute(
+            "SELECT created_by FROM saved_playlists WHERE guild_id = ? AND name = ?",
+            (guild_id, name),
+        ) as cursor:
+            row = await cursor.fetchone()
+        return int(row["created_by"]) if row else None
+
+    async def count_playlists(self, guild_id: int) -> int:
+        if self._conn is None:
+            return 0
+        async with self._conn.execute(
+            "SELECT COUNT(*) AS n FROM saved_playlists WHERE guild_id = ?", (guild_id,)
+        ) as cursor:
+            row = await cursor.fetchone()
+        return int(row["n"]) if row else 0
 
     async def list_playlists(self, guild_id: int) -> list[sqlite3.Row]:
         if self._conn is None:
@@ -506,29 +539,23 @@ class Database:
             guild_id, "stay_connected", self._stay_connected_cache, False
         )
 
-    async def set_stay_connected(self, guild_id: int, enabled: bool, default_prefix: str = "!") -> None:
-        await self._set_guild_bool_setting(
-            guild_id, "stay_connected", self._stay_connected_cache, enabled, default_prefix
-        )
+    async def set_stay_connected(self, guild_id: int, enabled: bool) -> None:
+        await self._set_guild_bool_setting(guild_id, "stay_connected", self._stay_connected_cache, enabled)
 
     async def get_autoplay(self, guild_id: int) -> bool:
         return await self._get_guild_bool_setting(guild_id, "autoplay", self._autoplay_cache, False)
 
-    async def set_autoplay(self, guild_id: int, enabled: bool, default_prefix: str = "!") -> None:
-        await self._set_guild_bool_setting(
-            guild_id, "autoplay", self._autoplay_cache, enabled, default_prefix
-        )
+    async def set_autoplay(self, guild_id: int, enabled: bool) -> None:
+        await self._set_guild_bool_setting(guild_id, "autoplay", self._autoplay_cache, enabled)
 
     async def get_show_requester_mentions(self, guild_id: int) -> bool:
         return await self._get_guild_bool_setting(
             guild_id, "show_requester_mentions", self._show_requester_mentions_cache, False
         )
 
-    async def set_show_requester_mentions(
-        self, guild_id: int, enabled: bool, default_prefix: str = "!"
-    ) -> None:
+    async def set_show_requester_mentions(self, guild_id: int, enabled: bool) -> None:
         await self._set_guild_bool_setting(
-            guild_id, "show_requester_mentions", self._show_requester_mentions_cache, enabled, default_prefix
+            guild_id, "show_requester_mentions", self._show_requester_mentions_cache, enabled
         )
 
     async def get_show_link_previews(self, guild_id: int) -> bool:
@@ -536,16 +563,16 @@ class Database:
             guild_id, "show_link_previews", self._show_link_previews_cache, True
         )
 
-    async def set_show_link_previews(self, guild_id: int, enabled: bool, default_prefix: str = "!") -> None:
+    async def set_show_link_previews(self, guild_id: int, enabled: bool) -> None:
         await self._set_guild_bool_setting(
-            guild_id, "show_link_previews", self._show_link_previews_cache, enabled, default_prefix
+            guild_id, "show_link_previews", self._show_link_previews_cache, enabled
         )
 
     async def get_volume(self, guild_id: int) -> int:
         return await self._get_guild_int_setting(guild_id, "volume", self._volume_cache, 100)
 
-    async def set_volume(self, guild_id: int, volume: int, default_prefix: str = "!") -> None:
-        await self._set_guild_int_setting(guild_id, "volume", self._volume_cache, volume, default_prefix)
+    async def set_volume(self, guild_id: int, volume: int) -> None:
+        await self._set_guild_int_setting(guild_id, "volume", self._volume_cache, volume)
 
     async def add_play_history(self, guild_id: int, title: str, webpage_url: str, requester_id: int) -> None:
         if self._conn is None:

@@ -7,7 +7,11 @@ from discord.ext import commands
 
 from musicbot.cogs.music._base import MusicCogBase
 from musicbot.cogs.music._context import GuildContext
-from musicbot.cogs.music.constants import EMBED_COLOUR
+from musicbot.cogs.music.constants import (
+    EMBED_COLOUR,
+    MAX_PLAYLIST_NAME_LENGTH,
+    MAX_SAVED_PLAYLISTS_PER_GUILD,
+)
 from musicbot.cogs.music.models import Track, format_requester
 
 
@@ -27,9 +31,24 @@ class PlaylistCommandsMixin(MusicCogBase):
         if not player or (not player.current and not player.queue):
             await context.send("Nothing is loaded to save.")
             return
+        playlist_name = name.lower()
+        if len(playlist_name) > MAX_PLAYLIST_NAME_LENGTH:
+            await context.send(f"Playlist names are limited to `{MAX_PLAYLIST_NAME_LENGTH}` characters.")
+            return
+        owner_id = await self.bot.database.get_playlist_owner(context.guild.id, playlist_name)
+        if owner_id is None:
+            if await self.bot.database.count_playlists(context.guild.id) >= MAX_SAVED_PLAYLISTS_PER_GUILD:
+                await context.send(
+                    f"This server already has `{MAX_SAVED_PLAYLISTS_PER_GUILD}` saved playlists — "
+                    "delete one first."
+                )
+                return
+        elif owner_id != context.author.id and not await self._is_dj(context.author):
+            await context.send("Only the playlist's creator or a DJ can overwrite it.")
+            return
         entries = player.snapshot()
-        await self.bot.database.save_playlist(context.guild.id, name.lower(), context.author.id, entries)
-        await context.send(f"Saved `{len(entries)}` tracks to playlist `{name.lower()}`.")
+        await self.bot.database.save_playlist(context.guild.id, playlist_name, context.author.id, entries)
+        await context.send(f"Saved `{len(entries)}` tracks to playlist `{playlist_name}`.")
 
     @playlist.command(name="list")
     @commands.guild_only()

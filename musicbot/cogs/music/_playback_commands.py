@@ -430,9 +430,7 @@ class PlaybackCommandsMixin(MusicCogBase):
         await self._require_dj(context)
         self._remember_channel(player, context.channel)
         player.set_volume(level)
-        await self.bot.database.set_volume(
-            context.guild.id, player.volume_percent, default_prefix=self.bot.settings.default_prefix
-        )
+        await self.bot.database.set_volume(context.guild.id, player.volume_percent)
         suffix = " (above 100% may clip on some tracks)" if player.volume_percent > 100 else ""
         await context.send(f"🔊 Volume set to `{player.volume_percent}%`.{suffix}")
         await self._refresh_now_playing_message(context.guild.id)

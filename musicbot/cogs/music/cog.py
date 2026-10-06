@@ -122,16 +122,6 @@ class MusicCog(
                 await self._http_session.close()
         self._ytdl_executor.shutdown(wait=False)
 
-    async def cog_command_error(self, context: commands.Context[Any], error: Exception) -> None:
-        if isinstance(error, commands.CommandOnCooldown):
-            await context.send(f"Slow down — retry in `{error.retry_after:.1f}s`.", delete_after=6)
-        elif isinstance(error, commands.CheckFailure):
-            await context.send(str(error), delete_after=8)
-        elif isinstance(error, commands.BadArgument):
-            await context.send(str(error), delete_after=8)
-        else:
-            raise error
-
     def _bg_task(self, coro: Any, *, name: str | None = None) -> asyncio.Task[Any]:
         task = asyncio.create_task(coro, name=name)
 

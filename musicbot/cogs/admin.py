@@ -38,7 +38,11 @@ async def _is_authorized_owner(context: commands.Context[Any]) -> bool:
         return True
     if bot.owner_id is not None and user.id == bot.owner_id:
         return True
-    return bool(bot.owner_ids) and user.id in bot.owner_ids
+    if bot.owner_ids and user.id in bot.owner_ids:
+        return True
+    # Raised (rather than returning False) so the global error handler can show a real
+    # message instead of discord.py's default "The check functions for command ... failed".
+    raise commands.NotOwner("Only the bot owner can use this command.")
 
 
 def _bot_owner_check() -> Any:
@@ -66,9 +70,14 @@ def _swap_cookies_file(target: Path, backup: Path, new_content: str) -> None:
     os.replace(tmp, target)
 
 
-def _restore_cookies_backup(target: Path, backup: Path) -> None:
-    if backup.exists():
-        shutil.copy2(backup, target)
+def _restore_cookies_backup(target: Path, backup: Path, *, had_previous: bool) -> None:
+    if had_previous:
+        if backup.exists():
+            shutil.copy2(backup, target)
+    else:
+        # There was no cookie file before this refresh, so "rolling back" means removing
+        # the one that just failed its live test rather than leaving it in place.
+        target.unlink(missing_ok=True)
 
 
 class AdminCog(commands.Cog):
@@ -102,9 +111,7 @@ class AdminCog(commands.Cog):
         guild_id = context.guild.id
         current = await self.bot.database.get_stay_connected(guild_id)
         new_value = not current
-        await self.bot.database.set_stay_connected(
-            guild_id, new_value, default_prefix=self.bot.settings.default_prefix
-        )
+        await self.bot.database.set_stay_connected(guild_id, new_value)
         music = _music_cog(self.bot)
         player = music.players.get(guild_id) if music else None
         if player is not None:
@@ -122,9 +129,7 @@ class AdminCog(commands.Cog):
         guild_id = context.guild.id
         current = await self.bot.database.get_autoplay(guild_id)
         new_value = not current
-        await self.bot.database.set_autoplay(
-            guild_id, new_value, default_prefix=self.bot.settings.default_prefix
-        )
+        await self.bot.database.set_autoplay(guild_id, new_value)
         state = "enabled" if new_value else "disabled"
         message = f"Autoplay {state}."
         if new_value and not self.bot.settings.lastfm_api_key:
@@ -139,9 +144,7 @@ class AdminCog(commands.Cog):
         guild_id = context.guild.id
         current = await self.bot.database.get_show_requester_mentions(guild_id)
         new_value = not current
-        await self.bot.database.set_show_requester_mentions(
-            guild_id, new_value, default_prefix=self.bot.settings.default_prefix
-        )
+        await self.bot.database.set_show_requester_mentions(guild_id, new_value)
         music = _music_cog(self.bot)
         player = music.players.get(guild_id) if music else None
         if player is not None:
@@ -162,9 +165,7 @@ class AdminCog(commands.Cog):
         guild_id = context.guild.id
         current = await self.bot.database.get_show_link_previews(guild_id)
         new_value = not current
-        await self.bot.database.set_show_link_previews(
-            guild_id, new_value, default_prefix=self.bot.settings.default_prefix
-        )
+        await self.bot.database.set_show_link_previews(guild_id, new_value)
         music = _music_cog(self.bot)
         player = music.players.get(guild_id) if music else None
         if player is not None:
@@ -281,6 +282,7 @@ class AdminCog(commands.Cog):
             return
 
         backup_path = cookies_path.with_suffix(cookies_path.suffix + ".bak")
+        had_previous = cookies_path.exists()
         try:
             await asyncio.to_thread(_swap_cookies_file, cookies_path, backup_path, text)
         except OSError as exc:
@@ -307,11 +309,12 @@ class AdminCog(commands.Cog):
             return
 
         with contextlib.suppress(OSError):
-            await asyncio.to_thread(_restore_cookies_backup, cookies_path, backup_path)
+            await asyncio.to_thread(
+                _restore_cookies_backup, cookies_path, backup_path, had_previous=had_previous
+            )
         music._reset_ytdl_options()
-        await context.author.send(
-            f"❌ New cookies failed a live test (`{error}`) — rolled back to the previous file."
-        )
+        outcome = "rolled back to the previous file" if had_previous else "removed the new file"
+        await context.author.send(f"❌ New cookies failed a live test (`{error}`) — {outcome}.")
 
     @commands.command(name="commands", aliases=["cmds"])
     async def commands_list(self, context: GuildContext) -> None:
@@ -341,7 +344,6 @@ class AdminCog(commands.Cog):
         await self.bot.database.set_dj_role_id(
             context.guild.id,
             role.id,
-            default_prefix=self.bot.settings.default_prefix,
         )
         await context.send(f"DJ role set to {role.mention}.")
 
@@ -353,7 +355,6 @@ class AdminCog(commands.Cog):
         await self.bot.database.set_dj_role_id(
             context.guild.id,
             None,
-            default_prefix=self.bot.settings.default_prefix,
         )
         await context.send("DJ role cleared. Members with Manage Server still count as DJs.")
 

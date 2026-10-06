@@ -28,6 +28,7 @@ class Settings:
     log_dir: Path
     ytdlp_cookies_file: Path | None
     ytdlp_js_runtime_path: str | None
+    allow_private_urls: bool
     ytdlp_socket_timeout: int
     ytdlp_prefetch_count: int
     ytdlp_concurrent_extracts: int
@@ -111,6 +112,8 @@ def load_settings() -> Settings:
         log_dir=log_dir,
         ytdlp_cookies_file=ytdlp_cookies_file,
         ytdlp_js_runtime_path=ytdlp_js_runtime_path,
+        allow_private_urls=os.getenv("ALLOW_PRIVATE_URLS", "false").strip().lower()
+        in {"1", "true", "yes", "on"},
         ytdlp_socket_timeout=max(5, _int_env("YTDLP_SOCKET_TIMEOUT", 15)),
         ytdlp_prefetch_count=max(0, _int_env("YTDLP_PREFETCH_COUNT", 1)),
         ytdlp_concurrent_extracts=max(1, _int_env("YTDLP_CONCURRENT_EXTRACTS", 1)),

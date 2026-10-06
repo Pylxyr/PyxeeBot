@@ -38,7 +38,13 @@ class GuildPlayer:
         self.volume_percent: int = 100
 
         self.voice_client: discord.VoiceClient | None = None
-        self.queue: deque[Track] = deque(maxlen=bot.settings.max_queue_size)
+        # Deliberately not a maxlen deque: a maxlen deque silently drops the opposite end
+        # when full, which made internal re-queues (seek, volume change, previous track,
+        # resolve retry, loop modes) throw away an unrelated queued track. The cap is
+        # enforced explicitly in enqueue()/replace_queue() instead, and internal re-queues
+        # may exceed it by the one track they put back.
+        self.max_queue_size: int = bot.settings.max_queue_size
+        self.queue: deque[Track] = deque()
         self.history: deque[Track] = deque(maxlen=20)
         self.current: Track | None = None
         self._total_duration: int = 0
@@ -96,9 +102,7 @@ class GuildPlayer:
         return self.voice_client
 
     def replace_queue(self, tracks: list[Track]) -> None:
-        cap = self.queue.maxlen
-        trimmed = tracks[:cap] if cap is not None else tracks
-        self.queue = deque(trimmed, maxlen=cap)
+        self.queue = deque(tracks[: self.max_queue_size])
         self._total_duration = sum(t.duration for t in self.queue)
 
     def note_duration_change(self, track: Track, delta: int) -> None:
@@ -115,29 +119,26 @@ class GuildPlayer:
             self._total_duration = max(0, self._total_duration + delta)
 
     def _insert_track(self, track: Track, *, front: bool) -> None:
-        """Insert `track` at either end of the (maxlen-bounded) queue, evicting the
-        opposite end first if the queue is already full, and keeping `_total_duration`
-        in sync either way.
+        """Insert `track` at either end of the queue and keep `_total_duration` in sync.
 
-        This is the one place that owns the "evict-then-insert" bookkeeping; `enqueue`
-        and every other call site that needs to push a track back onto the front or
-        back of the queue (skip/previous, seek, the player loop's resolve-retry
-        requeue, and both loop-mode requeues) should go through this instead of
-        repeating the maxlen/duration arithmetic inline, so the invariant only has to
-        be kept correct in one spot.
+        This is the one place that owns the duration bookkeeping; `enqueue` and every
+        internal re-queue (skip/previous, seek, the player loop's resolve-retry requeue,
+        and both loop-mode requeues) go through it. It never evicts anything and does
+        not enforce the size cap — user-facing adds do that via `enqueue`.
         """
-        if len(self.queue) == self.queue.maxlen:
-            evicted = self.queue[-1] if front else self.queue[0]
-            self._total_duration = max(0, self._total_duration - evicted.duration)
         self._total_duration += track.duration
         if front:
             self.queue.appendleft(track)
         else:
             self.queue.append(track)
 
-    async def enqueue(self, track: Track, *, front: bool = False) -> None:
+    async def enqueue(self, track: Track, *, front: bool = False) -> bool:
+        """Add a user-requested track. Returns False (and adds nothing) if the queue is full."""
+        if len(self.queue) >= self.max_queue_size:
+            return False
         self._insert_track(track, front=front)
         self.next_event.set()
+        return True
 
     def pause(self) -> bool:
         if not self.voice_client or not self.voice_client.is_playing():
