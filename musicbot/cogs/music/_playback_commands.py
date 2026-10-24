@@ -33,8 +33,11 @@ class PlaybackCommandsMixin(MusicCogBase):
     @commands.guild_only()
     @commands.cooldown(1, 5, commands.BucketType.guild)
     async def leave(self, context: GuildContext) -> None:
-        await self._require_dj(context)
         gid = context.guild.id
+        # While 24/7 mode (!stay) is on, only DJs, mods (Manage Server) and bot owners may
+        # disconnect the bot; otherwise anyone can.
+        if await self.bot.database.get_stay_connected(gid):
+            await self._require_dj(context)
         await self._cancel_curation_activity(gid)
         if not self.players.get(gid):
             await context.send("I am not connected.")

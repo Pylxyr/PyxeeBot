@@ -115,3 +115,58 @@ def test_public_urls_and_non_http_queries_pass(settings: types.SimpleNamespace) 
         ]
 
     assert asyncio.run(main()) == [True, True]
+
+
+def _leave_ctx(guild_id: int = 5) -> types.SimpleNamespace:
+    sent: list[str] = []
+
+    async def send(content: str, **_: object) -> None:
+        sent.append(content)
+
+    ctx = types.SimpleNamespace(
+        guild=types.SimpleNamespace(id=guild_id),
+        author=types.SimpleNamespace(id=1),
+        send=send,
+        sent=sent,
+    )
+    return ctx
+
+
+@pytest.mark.parametrize(
+    ("stay", "is_dj", "allowed"),
+    [(True, False, False), (True, True, True), (False, False, True), (False, True, True)],
+)
+def test_leave_is_restricted_to_djs_only_while_24_7_is_on(
+    settings: types.SimpleNamespace, stay: bool, is_dj: bool, allowed: bool
+) -> None:
+    async def get_stay_connected(_guild_id: int) -> bool:
+        return stay
+
+    async def main() -> None:
+        cog = MusicCog(
+            types.SimpleNamespace(  # type: ignore[arg-type]
+                settings=settings,
+                database=types.SimpleNamespace(get_stay_connected=get_stay_connected),
+            )
+        )
+        try:
+
+            async def fake_is_dj(_member: object) -> bool:
+                return is_dj
+
+            async def fake_cancel(_guild_id: int) -> None:
+                return None
+
+            cog._is_dj = fake_is_dj  # type: ignore[method-assign]
+            cog._cancel_curation_activity = fake_cancel  # type: ignore[method-assign]
+            ctx = _leave_ctx()
+            if allowed:
+                await cog.leave.callback(cog, ctx)  # type: ignore[misc]
+                assert ctx.sent == ["I am not connected."]
+            else:
+                with pytest.raises(commands.CheckFailure):
+                    await cog.leave.callback(cog, ctx)  # type: ignore[misc]
+        finally:
+            cog._ytdl_executor.shutdown(wait=False)
+
+    asyncio.run(main())

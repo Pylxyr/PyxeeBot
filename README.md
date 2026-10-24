@@ -217,7 +217,7 @@ Default prefix is `!` (change per server with `!setprefix`). "DJ" means the conf
 | Command | Aliases | Description |
 |---|---|---|
 | `!join` | `summon` | Join your voice channel |
-| `!leave` | `disconnect` | Leave the voice channel |
+| `!leave` | `disconnect` | Leave the voice channel (DJ/mod/owner only while 24/7 is on) |
 | `!play <query>` | `p` | Queue a URL, playlist, or search query |
 | `!playnext <query>` | `pn` | Queue a track immediately after the current one (DJ-only) |
 | `!pause` | — | Pause playback |

@@ -129,7 +129,7 @@ class PyxeeHelpCommand(commands.HelpCommand):
         "playnext": "Insert a track next in queue. Plain text uses YouTube Music direct.",
         "search": "Browse results and pick one to queue. Use when !play gets the wrong track.",
         "join": "Dock into your current voice channel.",
-        "leave": "Disconnect and wipe the active session.",
+        "leave": "Disconnect and wipe the active session (DJ/mod only while 24/7 is on).",
         "pause": "Freeze playback in place.",
         "resume": "Resume the paused track.",
         "skip": "Vote-skip or instantly skip if you have control.",
