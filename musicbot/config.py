@@ -27,6 +27,7 @@ class Settings:
     log_to_file: bool
     log_dir: Path
     ytdlp_cookies_file: Path | None
+    ytdlp_cache_dir: Path
     ytdlp_js_runtime_path: str | None
     allow_private_urls: bool
     ytdlp_socket_timeout: int
@@ -44,6 +45,7 @@ class Settings:
     error_announce: bool
     lastfm_api_key: str | None
     restore_queue_on_restart: bool
+    sync_slash_commands: bool
     bot_activity_url: str
 
 
@@ -60,6 +62,16 @@ def _parse_owner_ids(raw_value: str) -> tuple[int, ...]:
                 f"BOT_OWNERS must be a comma-separated list of user IDs, got: {chunk!r}"
             ) from None
     return tuple(ids)
+
+
+_TRUTHY = {"1", "true", "yes", "on"}
+
+
+def _bool_env(name: str, default: bool) -> bool:
+    raw = os.getenv(name, "").strip().lower()
+    if not raw:
+        return default
+    return raw in _TRUTHY
 
 
 def _int_env(name: str, default: int) -> int:
@@ -95,6 +107,17 @@ def load_settings() -> Settings:
     if ytdlp_cookies_file and not ytdlp_cookies_file.is_absolute():
         ytdlp_cookies_file = BASE_DIR / ytdlp_cookies_file
 
+    # yt-dlp keeps the YouTube player JS, its preprocessed form and solved challenges in a
+    # cache directory. Its default (~/.cache/yt-dlp) is read-only under the shipped systemd
+    # unit (ProtectHome=read-only), which silently turned every extraction into a cold one:
+    # re-download and re-process the player, re-run the JS solver. Keeping it under data/
+    # (a ReadWritePaths entry) makes the cache actually work.
+    cache_dir_raw = os.getenv("YTDLP_CACHE_DIR", "").strip()
+    ytdlp_cache_dir = Path(cache_dir_raw) if cache_dir_raw else DATA_DIR / "ytdlp-cache"
+    if not ytdlp_cache_dir.is_absolute():
+        ytdlp_cache_dir = BASE_DIR / ytdlp_cache_dir
+    ytdlp_cache_dir.mkdir(parents=True, exist_ok=True)
+
     ytdlp_js_runtime_path = os.getenv("YTDLP_JS_RUNTIME_PATH", "").strip() or None
 
     return Settings(
@@ -108,12 +131,12 @@ def load_settings() -> Settings:
         max_playlist_size=max(1, _int_env("MAX_PLAYLIST_SIZE", 25)),
         idle_timeout_seconds=max(30, _int_env("IDLE_TIMEOUT_SECONDS", 180)),
         empty_channel_timeout_seconds=max(15, _int_env("EMPTY_CHANNEL_TIMEOUT_SECONDS", 60)),
-        log_to_file=os.getenv("LOG_TO_FILE", "true").strip().lower() in {"1", "true", "yes", "on"},
+        log_to_file=_bool_env("LOG_TO_FILE", True),
         log_dir=log_dir,
         ytdlp_cookies_file=ytdlp_cookies_file,
+        ytdlp_cache_dir=ytdlp_cache_dir,
         ytdlp_js_runtime_path=ytdlp_js_runtime_path,
-        allow_private_urls=os.getenv("ALLOW_PRIVATE_URLS", "false").strip().lower()
-        in {"1", "true", "yes", "on"},
+        allow_private_urls=_bool_env("ALLOW_PRIVATE_URLS", False),
         ytdlp_socket_timeout=max(5, _int_env("YTDLP_SOCKET_TIMEOUT", 15)),
         ytdlp_prefetch_count=max(0, _int_env("YTDLP_PREFETCH_COUNT", 1)),
         ytdlp_concurrent_extracts=max(1, _int_env("YTDLP_CONCURRENT_EXTRACTS", 1)),
@@ -124,12 +147,12 @@ def load_settings() -> Settings:
         ytdlp_resolve_cache_size=max(16, _int_env("YTDLP_RESOLVE_CACHE_SIZE", 128)),
         ytdlp_resolve_cache_ttl_seconds=max(60, _int_env("YTDLP_RESOLVE_CACHE_TTL_SECONDS", 1800)),
         ytdlp_extract_timeout_seconds=max(5, _int_env("YTDLP_EXTRACT_TIMEOUT_SECONDS", 45)),
-        np_auto_refresh=os.getenv("NP_AUTO_REFRESH", "false").strip().lower() in {"1", "true", "yes", "on"},
+        np_auto_refresh=_bool_env("NP_AUTO_REFRESH", False),
         np_auto_refresh_interval=max(15, _int_env("NP_AUTO_REFRESH_INTERVAL", 30)),
-        error_announce=os.getenv("ERROR_ANNOUNCE", "true").strip().lower() in {"1", "true", "yes", "on"},
+        error_announce=_bool_env("ERROR_ANNOUNCE", True),
         lastfm_api_key=os.getenv("LASTFM_API_KEY", "").strip() or None,
-        restore_queue_on_restart=os.getenv("RESTORE_QUEUE_ON_RESTART", "true").strip().lower()
-        in {"1", "true", "yes", "on"},
+        restore_queue_on_restart=_bool_env("RESTORE_QUEUE_ON_RESTART", True),
+        sync_slash_commands=_bool_env("SYNC_SLASH_COMMANDS", False),
         bot_activity_url=os.getenv("BOT_ACTIVITY_URL", "pylxyr.github.io/PyxeeBot-Page/").strip()
         or "pylxyr.github.io/PyxeeBot-Page/",
     )

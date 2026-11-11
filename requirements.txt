@@ -1,4 +1,16 @@
-discord.py[voice]==2.7.1
-yt-dlp[default,curl-cffi]==2026.08.19
-python-dotenv==1.2.2
-aiosqlite==0.21.0
+discord.py==2.7.1
+# discord.py[voice] would pull PyNaCl<1.6, which pins the voice stack to a libsodium that carries
+# CVE-2025-69277. The voice extra is just these two packages, so they're listed directly and
+# PyNaCl can sit on the fixed 1.6.x line. discord.py only calls nacl.secret.Aead / SecretBox and
+# nacl.utils.random, all unchanged in 1.6 (exercised by tests/test_voice_crypto.py).
+PyNaCl==1.6.2
+davey==0.2.0
+# Optional speedups discord.py picks up automatically when importable: orjson for gateway/HTTP
+# JSON, zstandard for the gateway's zstd transport compression (cheaper than zlib-stream on a
+# small CPU). Deliberately not the full discord.py[speed] extra — aiodns would replace the
+# resolver every aiohttp session uses, which is more risk than a 1-core VPS needs.
+orjson==3.13.0
+zstandard==0.25.0; python_version < "3.14"
+yt-dlp[default,curl-cffi]==2026.10.26
+python-dotenv==1.2.4
+aiosqlite==0.22.1

@@ -56,6 +56,10 @@ class Database:
         await self._conn.execute("PRAGMA synchronous = NORMAL")
         await self._conn.execute("PRAGMA foreign_keys = ON")
         await self._conn.execute("PRAGMA busy_timeout = 5000")
+        # Small-host tuning: keep temp tables in RAM, cap the WAL file, and let SQLite
+        # memory-map reads cheaply (read-only use of page cache, no extra heap).
+        await self._conn.execute("PRAGMA temp_store = MEMORY")
+        await self._conn.execute("PRAGMA journal_size_limit = 6144000")
         await self._create_tables()
 
     async def close(self) -> None:

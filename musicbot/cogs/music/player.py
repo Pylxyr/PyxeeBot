@@ -72,6 +72,15 @@ class GuildPlayer:
 
         self.player_task: asyncio.Task[None] | None = None
 
+        # Bumped whenever the session is torn down from outside the loop (stop(), disconnect()).
+        # The loop takes a copy when it pops a track and compares it after every await that can
+        # take a while (resolving, URL re-validation, spawning ffmpeg), so work that was already
+        # in flight when the user hit !stop is discarded instead of starting playback afterwards.
+        self._epoch = 0
+        # Set by skip() when the current track is still being prepared (nothing is playing yet,
+        # so there is nothing to stop); the loop honours it just before playback would start.
+        self._skip_pending = False
+
     @classmethod
     async def create(
         cls,
@@ -170,6 +179,8 @@ class GuildPlayer:
         self.announce_channel_id = channel_id
 
     async def stop(self) -> None:
+        self._epoch += 1
+        self._skip_pending = False
         self.queue.clear()
         self.history.clear()
         self._total_duration = 0
@@ -234,6 +245,8 @@ class GuildPlayer:
         return True
 
     async def disconnect(self, *, intentional: bool = False) -> None:
+        self._epoch += 1
+        self._skip_pending = False
         for task in (self.idle_task, self.empty_channel_task):
             if task:
                 task.cancel()
@@ -257,6 +270,12 @@ class GuildPlayer:
     def skip(self) -> bool:
         if self.voice_client and (self.voice_client.is_playing() or self.voice_client.is_paused()):
             self.voice_client.stop()
+            return True
+        if self.current is not None:
+            # Popped from the queue but not audible yet (still resolving / starting ffmpeg).
+            # There is nothing to stop, so remember the request and let the loop drop the
+            # track before it plays — previously this reported "Skipped" and did nothing.
+            self._skip_pending = True
             return True
         return False
 
@@ -345,15 +364,33 @@ class GuildPlayer:
             await self.disconnect(intentional=True)
             self.bot.dispatch("musicbot_queue_updated", self.guild)
 
+    def _drop_if_abandoned(self, epoch: int) -> bool:
+        """True if the track popped for this loop iteration must not start playing.
+
+        Two cases: the session was torn down (stop()/disconnect()) while the loop was awaiting
+        something — those already reset all state, so there is nothing left to clean up — or the
+        user skipped the track before it became audible, which is consumed here.
+        """
+        if epoch != self._epoch:
+            return True
+        if self._skip_pending:
+            self._skip_pending = False
+            self.current = None
+            self.bot.dispatch("musicbot_queue_updated", self.guild)
+            return True
+        return False
+
     async def _player_loop(self) -> None:
         try:
             while True:
                 try:
-                    await self._wait_for_track()
+                    epoch = await self._wait_for_track()
                     if not self.current:
                         continue
 
                     resolved_track = await self.track_resolver(self.current)
+                    if self._drop_if_abandoned(epoch):
+                        continue
                     if resolved_track is None:
                         failed_track = self.current
                         key = failed_track.query or failed_track.webpage_url
@@ -394,29 +431,31 @@ class GuildPlayer:
                     self.current = resolved_track
 
                     _url_age = time.monotonic() - resolved_track.resolved_at
-                    if (
-                        resolved_track.stream_url
-                        and _url_age >= STREAM_URL_REFRESH_AGE_SECONDS
-                        and not await self.validate_stream_url(resolved_track)
-                    ):
-                        self.logger.info(
-                            "Stream URL pre-validation failed for %s, forcing re-resolve.",
-                            resolved_track.webpage_url,
-                        )
-                        resolved_track.stream_url = ""
-                        resolved_track.resolved_at = 0.0
-                        re_resolved = await self.track_resolver(self.current)
-                        if re_resolved is None:
-                            self.bot.dispatch(
-                                "musicbot_track_skipped_error",
-                                self.guild,
-                                self.current,
-                                "Stream URL expired and could not be refreshed, skipping.",
-                            )
-                            self.current = None
-                            self.bot.dispatch("musicbot_queue_updated", self.guild)
+                    if resolved_track.stream_url and _url_age >= STREAM_URL_REFRESH_AGE_SECONDS:
+                        still_valid = await self.validate_stream_url(resolved_track)
+                        if self._drop_if_abandoned(epoch):
                             continue
-                        self.current = re_resolved
+                        if not still_valid:
+                            self.logger.info(
+                                "Stream URL pre-validation failed for %s, forcing re-resolve.",
+                                resolved_track.webpage_url,
+                            )
+                            resolved_track.stream_url = ""
+                            resolved_track.resolved_at = 0.0
+                            re_resolved = await self.track_resolver(self.current)
+                            if self._drop_if_abandoned(epoch):
+                                continue
+                            if re_resolved is None:
+                                self.bot.dispatch(
+                                    "musicbot_track_skipped_error",
+                                    self.guild,
+                                    self.current,
+                                    "Stream URL expired and could not be refreshed, skipping.",
+                                )
+                                self.current = None
+                                self.bot.dispatch("musicbot_queue_updated", self.guild)
+                                continue
+                            self.current = re_resolved
 
                     if not self.voice_client or not self.voice_client.is_connected():
                         reconnected = await self._try_reconnect()
@@ -439,10 +478,32 @@ class GuildPlayer:
                     # elapsed_seconds reading.
                     resume_offset = self.current.start_offset
                     source = await self.audio_source_factory(self.current, self.volume_percent)
-                    finished = asyncio.Event()
-                    _loop = asyncio.get_running_loop()
 
-                    def after_playback(error: Exception | None) -> None:
+                    # Building the source starts an ffmpeg process, so from here on every path
+                    # that doesn't hand the source to the voice client has to clean it up, or
+                    # the process is leaked (each one costs real memory on a 1 GB host).
+                    if self._drop_if_abandoned(epoch):
+                        source.cleanup()
+                        continue
+                    voice_client = self.voice_client
+                    if voice_client is None:
+                        # The voice connection vanished while the source was being prepared.
+                        # This used to `break` out of the loop, which left the guild with a
+                        # player that never played anything again until it was re-created.
+                        source.cleanup()
+                        self.current = None
+                        continue
+
+                    finished = asyncio.Event()
+                    loop = asyncio.get_running_loop()
+
+                    def after_playback(
+                        error: Exception | None,
+                        _loop: asyncio.AbstractEventLoop = loop,
+                        _finished: asyncio.Event = finished,
+                    ) -> None:
+                        # Runs on discord.py's player thread. The loop/event are bound as
+                        # defaults so a callback can only ever signal its own track.
                         if error:
                             _loop.call_soon_threadsafe(
                                 self.bot.dispatch,
@@ -450,13 +511,16 @@ class GuildPlayer:
                                 self.guild,
                                 error,
                             )
-                        _loop.call_soon_threadsafe(finished.set)
+                        _loop.call_soon_threadsafe(_finished.set)
 
                     self.started_at = time.monotonic() - resume_offset
                     self._pause_started = self._total_paused = 0.0
-                    if self.voice_client is None:
-                        break
-                    self.voice_client.play(source, after=after_playback)
+                    try:
+                        voice_client.play(source, after=after_playback)
+                    except BaseException:
+                        source.cleanup()
+                        self.started_at = 0.0
+                        raise
 
                     # Account for resume_offset (e.g. after a !seek) so a reposition close
                     # to the end of a track doesn't schedule the preload as if playback
@@ -513,12 +577,15 @@ class GuildPlayer:
                     await self._cancel_near_end_task()
                     self.bot.dispatch("musicbot_playback_error", self.guild, exc)
                     self.current = None
+                    self.started_at = self._pause_started = self._total_paused = 0.0
                     await asyncio.sleep(1)
 
         except asyncio.CancelledError:
             pass
 
-    async def _wait_for_track(self) -> None:
+    async def _wait_for_track(self) -> int:
+        """Block until a track is available, pop it into `current`, and return the epoch it
+        was popped in (see `_epoch`)."""
         while not self.queue:
             self.current = None
             self.next_event.clear()
@@ -531,8 +598,10 @@ class GuildPlayer:
                 await self.idle_task
         self.idle_task = None
         self.current = self.queue.popleft()
+        self._skip_pending = False
         self._total_duration = max(0, self._total_duration - self.current.duration)
         self.bot.dispatch("musicbot_queue_updated", self.guild)
+        return self._epoch
 
     def rearm_idle_timer(self) -> None:
         if self.idle_task is None or self.idle_task.done():

@@ -199,6 +199,8 @@ Settings are read from `.env`; every value except `DISCORD_TOKEN` has a default.
 | `YTDLP_COOKIES_FILE` | — | Path to Netscape cookies file. Use `data/cookies.txt` — the systemd unit only makes `data/` and `logs/` writable, which `!refreshcookies` needs |
 | `ALLOW_PRIVATE_URLS` | `false` | Allow URLs that resolve to private/loopback/link-local addresses (blocked by default to stop users pointing the bot at your internal network) |
 | `YTDLP_JS_RUNTIME_PATH` | — | Path to a JS runtime binary, for sites requiring JS signature decryption. If unset, yt-dlp auto-detects a `deno` binary on `PATH` — the setup wizards install Deno system-wide for exactly this. Only set this to pin a different runtime/path (e.g. Node) instead |
+| `YTDLP_CACHE_DIR` | `data/ytdlp-cache` | Where yt-dlp keeps the player JS and solved challenges. Must be writable; the default sits under `data/`, which the systemd unit allows (the default `~/.cache` is read-only there, making every extraction cold) |
+| `SYNC_SLASH_COMMANDS` | `false` | Sync slash commands to Discord at startup. Owners can also run `!sync` on demand |
 | `OPUS_BITRATE_KBPS` | `64` | Opus encoding bitrate (64–256) |
 | `NP_AUTO_REFRESH` | `false` | Auto-refresh the now-playing panel on a timer |
 | `NP_AUTO_REFRESH_INTERVAL` | `30` | Auto-refresh interval in seconds |

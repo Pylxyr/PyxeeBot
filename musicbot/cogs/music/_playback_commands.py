@@ -18,6 +18,21 @@ from musicbot.cogs.music.constants import (
 from musicbot.cogs.music.models import NowPlayingController
 
 
+async def _edit_status(
+    message: discord.Message | discord.WebhookMessage, content: str, *, suppress: bool
+) -> None:
+    """Edit the "Searching…" status message.
+
+    Only a regular `discord.Message` (prefix invocation) accepts `suppress=`; the
+    `WebhookMessage` returned by a slash-command followup does not, so passing it
+    unconditionally raised TypeError once hybrid commands were synced.
+    """
+    if isinstance(message, discord.Message):
+        await message.edit(content=content, suppress=suppress)
+    else:
+        await message.edit(content=content)
+
+
 class PlaybackCommandsMixin(MusicCogBase):
     @commands.hybrid_command(name="join", aliases=["summon"])
     @commands.guild_only()
@@ -181,7 +196,7 @@ class PlaybackCommandsMixin(MusicCogBase):
                 )
             self._restored_guilds.discard(context.guild.id)
         await (
-            fetch_msg.edit(content=result, suppress=not player.show_link_previews)
+            _edit_status(fetch_msg, result, suppress=not player.show_link_previews)
             if fetch_msg
             else context.send(result, suppress_embeds=not player.show_link_previews)
         )
@@ -219,8 +234,9 @@ class PlaybackCommandsMixin(MusicCogBase):
         self._persist_snapshot(context.guild.id)
         self._kick_pipeline(context.guild.id)
         await self._refresh_now_playing_message(context.guild.id)
-        await fetch_msg.edit(
-            content=f"Queued next: [{track.escaped_title}]({track.webpage_url}).",
+        await _edit_status(
+            fetch_msg,
+            f"Queued next: [{track.escaped_title}]({track.webpage_url}).",
             suppress=not player.show_link_previews,
         )
 

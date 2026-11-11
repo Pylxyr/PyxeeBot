@@ -125,6 +125,7 @@ class PyxeeHelpCommand(commands.HelpCommand):
         "stay": "Toggle 24/7 mode — bot stays connected when the queue empties.",
         "autoplay": "Toggle autoplay — queue a similar Last.fm track when the queue empties.",
         "stats": "Show bot process stats (owner only).",
+        "sync": "Owner-only: sync slash commands to Discord.",
         "play": "Queue a URL, playlist, or search. Uses YouTube Music for best accuracy.",
         "playnext": "Insert a track next in queue. Plain text uses YouTube Music direct.",
         "search": "Browse results and pick one to queue. Use when !play gets the wrong track.",
@@ -318,16 +319,24 @@ class PyxeeHelpCommand(commands.HelpCommand):
 
 class MusicBot(commands.Bot):
     def __init__(self, settings: Settings, database: Database) -> None:
-        intents = discord.Intents.default()
-        intents.message_content = True
+        # Only what the bot uses: guild/DM messages (prefix commands + the cookie-upload DM),
+        # message content, guild + voice state. Discord's `default()` set also streams reaction,
+        # typing, emoji, invite, scheduled-event, etc. dispatches nobody here listens to, each
+        # of which costs CPU and cache memory on a 1 GB / 1/8-OCPU host. Interactions
+        # (buttons, selects, slash commands) don't need an intent.
+        intents = discord.Intents.none()
         intents.guilds = True
         intents.voice_states = True
-        intents.members = False
+        intents.guild_messages = True
+        intents.dm_messages = True
+        intents.message_content = True
 
         super().__init__(
             command_prefix=self._resolve_prefix,
             intents=intents,
-            max_messages=256,
+            # Nothing reads the message cache (no edit/delete/reaction handlers); with
+            # max_messages=None discord.py doesn't keep one at all.
+            max_messages=None,
             help_command=PyxeeHelpCommand(),
             case_insensitive=True,
             # Track titles and other user-controlled text end up in plain-content messages;
@@ -353,6 +362,15 @@ class MusicBot(commands.Bot):
         # it as optional via get_cog(...) is None checks, so this is safe to skip.
         if self.settings.lastfm_api_key:
             await self.add_cog(CurationCog(self))
+        # Hybrid commands exist but were never synced, so they only ever worked as prefix
+        # commands. Syncing is opt-in (SYNC_SLASH_COMMANDS=true) and runs once per start; the
+        # owner-only `!sync` command does the same on demand.
+        if self.settings.sync_slash_commands:
+            try:
+                synced = await self.tree.sync()
+                logging.getLogger(__name__).info("Synced %d application commands.", len(synced))
+            except discord.HTTPException as exc:
+                logging.getLogger(__name__).warning("Application command sync failed: %s", exc)
 
     async def _populate_owner_ids(self) -> None:
         if not self.owner_id and not self.owner_ids:
@@ -504,7 +522,14 @@ async def _async_run() -> None:
     settings = load_settings()
     configure_logging(settings)
     database = Database(settings.db_path)
-    await database.initialize()
+    try:
+        await database.initialize()
+    except BaseException:
+        # aiosqlite runs a non-daemon worker thread; if initialize() fails after connecting
+        # (bad schema, locked file) and the connection is never closed, the process hangs
+        # at exit instead of failing fast and letting systemd restart it.
+        await database.close()
+        raise
     async with MusicBot(settings=settings, database=database) as bot:
         loop = asyncio.get_running_loop()
 

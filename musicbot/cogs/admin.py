@@ -209,6 +209,15 @@ class AdminCog(commands.Cog):
         )
         await context.send(embed=embed)
 
+    @commands.command(name="sync")
+    @_bot_owner_check()
+    @commands.cooldown(1, 30, commands.BucketType.user)
+    async def sync(self, context: commands.Context[Any]) -> None:
+        """Owner-only: push slash commands to Discord (global sync)."""
+        async with context.typing():
+            synced = await self.bot.tree.sync()
+        await context.send(f"Synced `{len(synced)}` application commands.")
+
     @commands.hybrid_command(name="refreshcookies")
     @commands.guild_only()
     @_bot_owner_check()

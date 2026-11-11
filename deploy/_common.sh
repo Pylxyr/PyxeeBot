@@ -420,6 +420,8 @@ run_setup() {
       printf '# NEAR_END_PREFETCH_SECONDS=30\n'
       printf '# YTDLP_COOKIES_FILE=data/cookies.txt\n'
       printf '# YTDLP_JS_RUNTIME_PATH=\n'
+      printf '# YTDLP_CACHE_DIR=\n'
+      printf '# SYNC_SLASH_COMMANDS=false\n'
       printf '\n'
       printf '# Audio quality (kbps, 64-256)\n'
       printf '# OPUS_BITRATE_KBPS=64\n'

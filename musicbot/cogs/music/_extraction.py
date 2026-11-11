@@ -4,6 +4,7 @@ import asyncio
 import re
 import time
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import PurePath
 from typing import Any, cast
 from urllib.parse import parse_qs, urlparse
 
@@ -22,6 +23,28 @@ from musicbot.cogs.music.constants import (
     YTDL_OPTIONS,
 )
 from musicbot.cogs.music.models import Track
+
+
+# yt-dlp's names for the JS runtimes it can drive for YouTube's challenges. The key in the
+# `js_runtimes` option selects which runtime implementation (and CLI flags) yt-dlp uses, so it
+# has to match the binary the path actually points at.
+_KNOWN_JS_RUNTIMES = ("deno", "node", "bun", "quickjs")
+
+
+def js_runtime_options(path: str) -> dict[str, dict[str, str]]:
+    """Build yt-dlp's `js_runtimes` option for an explicit runtime binary path.
+
+    The runtime name is taken from the binary's file name (``/usr/local/bin/deno`` -> deno,
+    ``node22`` / ``nodejs`` -> node). It used to be hard-coded to ``node``, so pointing
+    YTDLP_JS_RUNTIME_PATH at Deno (the runtime the setup scripts install) made yt-dlp launch it
+    with Node's command line and fail every YouTube extraction. Unrecognised names keep the old
+    ``node`` behaviour.
+    """
+    file_name = PurePath(path).name.lower()
+    for name in _KNOWN_JS_RUNTIMES:
+        if file_name.startswith(name):  # also covers node22, nodejs, deno-2.9
+            return {name: {"path": path}}
+    return {"node": {"path": path}}
 
 
 class ExtractionMixin(MusicCogBase):
@@ -73,8 +96,11 @@ class ExtractionMixin(MusicCogBase):
                         self.bot.settings.ytdlp_cookies_file,
                     )
                     self._warned_missing_cookiefile = True
+            cache_dir = getattr(self.bot.settings, "ytdlp_cache_dir", None)
+            if cache_dir is not None:
+                base["cachedir"] = str(cache_dir)
             if self.bot.settings.ytdlp_js_runtime_path:
-                base["js_runtimes"] = {"node": {"path": self.bot.settings.ytdlp_js_runtime_path}}
+                base["js_runtimes"] = js_runtime_options(self.bot.settings.ytdlp_js_runtime_path)
             self._ytdl_base_options = base
             fp = dict(base)
             fp["extract_flat"] = "in_playlist"
