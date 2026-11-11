@@ -22,12 +22,18 @@ concurrency:
 jobs:
   ci:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.11 is the floor and the version the server runs; newer ones catch deprecations
+        # (and dependency wheels that stop installing) before an OS/Python upgrade does.
+        python-version: ["3.11", "3.12", "3.13"]
     steps:
       - uses: actions/checkout@v4.2.2
 
       - uses: actions/setup-python@v5.6.0
         with:
-          python-version: "3.11"
+          python-version: ${{ matrix.python-version }}
           cache: pip
 
       - name: System dependencies
@@ -39,7 +45,7 @@ jobs:
           pip install -r requirements.txt ruff mypy pip-audit pytest
 
       - name: Lint
-        run: ruff check musicbot/ bot.py
+        run: ruff check musicbot/ tests/ bot.py
 
       - name: Format check (pull requests)
         # Fork PRs can't push the auto-commit below (GITHUB_TOKEN is read-only for
@@ -47,11 +53,11 @@ jobs:
         # the only real formatting gate they get — `ruff format` without `--check`
         # always exits 0, so it can't fail a PR on its own.
         if: github.event_name == 'pull_request'
-        run: ruff format --check musicbot/ bot.py
+        run: ruff format --check musicbot/ tests/ bot.py
 
       - name: Auto-format with Ruff
-        if: github.event_name != 'pull_request'
-        run: ruff format musicbot/ bot.py
+        if: github.event_name != 'pull_request' && matrix.python-version == '3.11'
+        run: ruff format musicbot/ tests/ bot.py
 
       - name: Commit formatting changes
         # Only on push: for pull_request (including from forks), GITHUB_TOKEN is
@@ -59,7 +65,7 @@ jobs:
         # above — GitHub enforces that restriction itself for fork PRs — so this
         # step would just fail (or silently do nothing) on external contributions
         # instead of committing anything.
-        if: github.event_name == 'push'
+        if: github.event_name == 'push' && matrix.python-version == '3.11'
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
           commit_message: "style: auto-format python code with ruff"
@@ -74,12 +80,10 @@ jobs:
         # NB: if you add an --ignore-vuln here, leave a comment above it explaining
         # why (false positive / not reachable / fix pending upstream) and revisit
         # it periodically — an unexplained ignore is easy to forget about.
-        #
-        # CVE-2025-69277 (aliases PYSEC-2026-1448 / PYSEC-2026-3002): PyNaCl 1.5.0, which
-        # discord.py[voice] pulls in. The fix is PyNaCl 1.6.2, but discord.py declares
-        # `PyNaCl<1.6`, so it can't be upgraded here — fix pending upstream. Drop this
-        # ignore once a discord.py release allows PyNaCl >= 1.6.2.
-        run: pip-audit --ignore-vuln CVE-2025-69277
+        # (The former CVE-2025-69277 ignore is gone: requirements.txt now pins PyNaCl 1.6.x
+        # directly instead of going through discord.py's `[voice]` extra.)
+        if: matrix.python-version == '3.11'
+        run: pip-audit
 
   deploy:
     runs-on: ubuntu-latest
